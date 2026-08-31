@@ -29,13 +29,14 @@ jobs:
 
       - name: Build WASM Core
         run: |
+          mkdir -p web-frontend/src/wasm
           cd core-engine
           wasm-pack build --target web --out-dir ../web-frontend/src/wasm
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 
       - name: Install & Build Web Frontend
         run: |
@@ -45,6 +46,8 @@ jobs:
 
       - name: Setup Pages
         uses: actions/configure-pages@v4
+        with:
+          enablement: true
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
