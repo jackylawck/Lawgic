@@ -29,16 +29,20 @@ export const SudokuBoard: React.FC<Props> = ({ puzzleData }) => {
     const flatClues = puzzleData.puzzle.flat();
     setGridValues([...flatClues]);
 
-    init().then(() => {
-      try {
-        const wasmInstance = new SudokuEngine(new Uint8Array(flatClues));
-        setEngine(wasmInstance);
-        setCandidates(Array.from(wasmInstance.get_candidates()));
-        setErrorMessage(null);
-      } catch (err: any) {
-        setErrorMessage(`Init Error: ${err}`);
-      }
-    });
+    init()
+      .then(() => {
+        try {
+          const wasmInstance = new SudokuEngine(new Uint8Array(flatClues));
+          setEngine(wasmInstance);
+          setCandidates(Array.from(wasmInstance.get_candidates()));
+          setErrorMessage(null);
+        } catch (err: any) {
+          setErrorMessage(`Init Error: ${err}`);
+        }
+      })
+      .catch((err: any) => {
+        setErrorMessage(`WASM Load Error: ${err}`);
+      });
   }, [puzzleData, t]);
 
   const handleInput = useCallback((idx: number, val: number) => {
@@ -111,7 +115,7 @@ export const SudokuBoard: React.FC<Props> = ({ puzzleData }) => {
             <div
               key={idx}
               onClick={() => setSelectedIdx(idx)}
-              className={`w-11 h-11 sm:w-12 sm:h-12 flex items-center justify-center cursor-pointer transition-colors relative
+              className={`w-10 h-10 sm:w-12 sm:h-12 flex items-center justify-center cursor-pointer transition-colors relative
                 ${borderBottom} ${borderRight}
                 ${isSelected ? 'bg-indigo-950/80 ring-2 ring-indigo-500 z-10' : 'hover:bg-slate-800/60'}
                 ${isInitial ? 'font-bold text-slate-100 bg-slate-800/40' : 'text-indigo-300 font-medium'}
