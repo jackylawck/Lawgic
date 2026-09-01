@@ -11,11 +11,33 @@ html, body {
   -webkit-font-smoothing: antialiased;
 }
 
-/* 隱藏題型橫向滾動條 */
 .scrollbar-none::-webkit-scrollbar {
   display: none;
 }
 .scrollbar-none {
   -ms-overflow-style: none;
   scrollbar-width: none;
+}
+
+/* 🔥 連勝心跳呼吸動效 */
+@keyframes flame-pulse {
+  0%, 100% {
+    box-shadow: 0 0 15px rgba(249, 115, 22, 0.25), inset 0 0 10px rgba(249, 115, 22, 0.15);
+  }
+  50% {
+    box-shadow: 0 0 30px rgba(249, 115, 22, 0.5), inset 0 0 20px rgba(249, 115, 22, 0.3);
+  }
+}
+.animate-flame-heat {
+  animation: flame-pulse 2s ease-in-out infinite;
+}
+
+/* 🎉 通關多巴胺慶典閃爍 */
+@keyframes victory-glow {
+  0% { opacity: 0; transform: scale(0.98); }
+  50% { opacity: 1; transform: scale(1); }
+  100% { opacity: 0; transform: scale(1.02); }
+}
+.animate-victory-pulse {
+  animation: victory-glow 1.2s ease-out forwards;
 }
