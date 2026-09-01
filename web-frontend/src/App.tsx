@@ -54,6 +54,7 @@ const MainDashboard: React.FC = () => {
   const [currentLevel, setCurrentLevel] = useState<TierKey>('kids');
   const [puzzleIndex, setPuzzleIndex] = useState<number>(0);
   const [isZPDMode, setIsZPDMode] = useState<boolean>(true);
+  const [neuroToast, setNeuroToast] = useState<string | null>(null);
 
   const filteredPuzzles = useMemo(() => {
     const rawList = PUZZLE_CATALOG[selectedType] || [];
@@ -87,13 +88,29 @@ const MainDashboard: React.FC = () => {
       reader.onload = (event) => {
         const text = event.target?.result as string;
         if (importProfileJSON(text)) {
-          alert('LogiCore V5 神經動力學大腦檔案載入成功！');
+          alert('LogiCore V5.1 神經動力學大腦檔案載入成功！');
         } else {
           alert('檔案格式錯誤，匯入失敗。');
         }
       };
       reader.readAsText(file);
     }
+  };
+
+  const handleScheduleClick = () => {
+    if (!topSchedule) return;
+
+    if (topSchedule.item.isConsolidated) {
+      setNeuroToast('🧠 神經科學發現：您上次練習此題型約 24 小時前，大腦正在高速固化邏輯迴路！現在複習，記憶保留率可提升 25%！');
+    } else {
+      setNeuroToast(`⚡ 記憶衰退預警：該題型已閒置 ${topSchedule.item.daysInactive} 天，已切換至溫手感題目以重新激活神經通路。`);
+    }
+
+    setSelectedType(topSchedule.targetType);
+    setCurrentLevel(topSchedule.puzzle.tier as TierKey);
+    setPuzzleIndex(0);
+
+    setTimeout(() => setNeuroToast(null), 5000);
   };
 
   return (
@@ -104,7 +121,7 @@ const MainDashboard: React.FC = () => {
           <h1 className="text-2xl font-black bg-gradient-to-r from-indigo-400 via-cyan-300 to-emerald-400 bg-clip-text text-transparent">
             LogiCore
           </h1>
-          <p className="text-[11px] text-slate-500 font-mono">Biphasic Neuro-Dynamics · V5 Final</p>
+          <p className="text-[11px] text-slate-500 font-mono">Biphasic Neuro-Dynamics · V5.1 Masterpiece</p>
         </div>
         <div className="flex items-center gap-2">
           <button
@@ -132,6 +149,13 @@ const MainDashboard: React.FC = () => {
         </div>
       </header>
 
+      {/* 神經動態 Toast 提示 */}
+      {neuroToast && (
+        <div className="w-full max-w-xl mb-3 px-3.5 py-2.5 bg-indigo-950/90 border border-indigo-500/80 rounded-xl text-xs text-indigo-200 text-center animate-fade-in shadow-lg shadow-indigo-950/50 font-medium">
+          {neuroToast}
+        </div>
+      )}
+
       {/* 巔峰段位與離線固化/記憶預警條 */}
       <div className="w-full max-w-xl mb-3 flex flex-wrap items-center justify-between gap-2 px-3 py-2 bg-gradient-to-r from-indigo-950/40 to-slate-900/60 rounded-xl border border-indigo-900/40 text-xs">
         <div className="flex items-center gap-2">
@@ -147,14 +171,10 @@ const MainDashboard: React.FC = () => {
 
         {topSchedule && (
           <button
-            onClick={() => {
-              setSelectedType(topSchedule.targetType);
-              setCurrentLevel(topSchedule.puzzle.tier as TierKey);
-              setPuzzleIndex(0);
-            }}
+            onClick={handleScheduleClick}
             className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition flex items-center gap-1 border ${
               topSchedule.item.isConsolidated
-                ? 'bg-emerald-950/80 text-emerald-300 border-emerald-600 hover:bg-emerald-900/80'
+                ? 'bg-emerald-950/90 text-emerald-200 border-emerald-500 hover:bg-emerald-900 shadow-sm shadow-emerald-900/50 animate-pulse'
                 : 'bg-cyan-950/80 text-cyan-300 border-cyan-700 hover:bg-cyan-900/80'
             }`}
           >
