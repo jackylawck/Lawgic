@@ -17,7 +17,7 @@ export interface SolveRecord {
 }
 
 export interface TypeCognitiveState {
-  // 🔥 MIRT 4維能力特質向量 \vec{\theta} (-3.0 ~ +3.0)
+  // MIRT 4維能力特質向量 \vec{\theta} (-3.0 ~ +3.0)
   theta: Record<CognitiveDimension, number>;
   strength: number;     // 記憶強度 S (0.0 ~ 10.0)
   stability: number;    // 記憶穩固度 F (1.0 ~ 10.0)
@@ -42,7 +42,7 @@ interface SecuredStoragePayload {
   seal: string;
 }
 
-const STORAGE_KEY = 'LOGICORE_LEARNER_PROFILE_SEC_V6';
+const STORAGE_KEY = 'LOGICORE_LEARNER_PROFILE_SEC_V6_1';
 
 function generateDataSeal(data: LearnerProfile): string {
   const serialized = `${data.userId}:${data.history.length}:${data.morale.toFixed(2)}:${Object.keys(data.peakRecords).length}`;
@@ -51,7 +51,7 @@ function generateDataSeal(data: LearnerProfile): string {
     hash = (hash << 5) - hash + serialized.charCodeAt(i);
     hash |= 0;
   }
-  return `SEAL_V6_${Math.abs(hash).toString(16)}`;
+  return `SEAL_V6_1_${Math.abs(hash).toString(16)}`;
 }
 
 const BASE_TIER_DELTA: Record<TierKey, number> = {
@@ -76,7 +76,7 @@ const INITIAL_THETA: Record<CognitiveDimension, number> = {
 };
 
 const INITIAL_PROFILE: LearnerProfile = {
-  userId: 'player_mirt_v6',
+  userId: 'player_mirt_v6_1',
   morale: 1.0,
   history: [],
   typeStates: {},
@@ -136,7 +136,7 @@ export function useLearnerProfile() {
       };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
     } catch (e) {
-      console.error('[Security Warning] Failed to persist V6 profile:', e);
+      console.error('[Security Warning] Failed to persist V6.1 profile:', e);
     }
   }, [profile]);
 
@@ -156,7 +156,7 @@ export function useLearnerProfile() {
         consecutivePlateau: 0,
       };
 
-      // 1. 神經動力學校準
+      // 1. 神經動力學前置時間校準
       const lastTime = prev.lastPlayedAt[record.engineType] || now;
       const elapsedDays = Math.max(0, (now - lastTime) / (1000 * 60 * 60 * 24));
       const { strength: baseStrength } = calculateDynamicStrength(rawState.strength, rawState.stability, elapsedDays);
@@ -167,7 +167,7 @@ export function useLearnerProfile() {
       const itemDifficultyOffset = Math.log(Math.max(0.2, Math.min(3.0, record.timeSpentSec / baseTime)));
       const fineGrainedDelta = baseDelta + itemDifficultyOffset * 0.3;
 
-      // 3. 🔥【MIRT 多維貝氏更新】：根據題目的負荷權重向量進行投影估算
+      // 3. 🔥【MIRT 4維能力投影計算】
       const load = record.cognitiveLoad || { spatial: 0.25, numeric: 0.25, workingMemory: 0.25, inhibition: 0.25 };
       const effectiveAbility =
         (rawState.theta.spatial || 0) * load.spatial +
@@ -178,17 +178,42 @@ export function useLearnerProfile() {
       const expectedProb = 1 / (1 + Math.exp(-(effectiveAbility - fineGrainedDelta)));
       const actualScore = record.isSuccess ? 1.0 : 0.0;
       const residual = actualScore - expectedProb;
-      const learningRate = 0.3;
 
-      // 各維度依負荷權重單獨更新，徹底消除維度污染
-      const updatedTheta: Record<CognitiveDimension, number> = {
-        spatial: Math.max(-3.0, Math.min(3.0, (rawState.theta.spatial || 0) + learningRate * load.spatial * residual)),
-        numeric: Math.max(-3.0, Math.min(3.0, (rawState.theta.numeric || 0) + learningRate * load.numeric * residual)),
-        workingMemory: Math.max(-3.0, Math.min(3.0, (rawState.theta.workingMemory || 0) + learningRate * load.workingMemory * residual)),
-        inhibition: Math.max(-3.0, Math.min(3.0, (rawState.theta.inhibition || 0) + learningRate * load.inhibition * residual)),
+      // 4. 🔥【漸進測量動態學習率衰減（信心加權）】
+      const adaptiveLR = 0.35 / Math.sqrt(rawState.totalAttempts + 1);
+
+      // 5. 🔥【斯皮爾曼 g 因子多變量貝氏收縮更新（Covariance = 0.35）】
+      const COV = 0.35;
+      const calcDimUpdate = (directWeight: number, otherWeightsSum: number, currentDimTheta: number) => {
+        const effectiveGradient = directWeight + COV * otherWeightsSum;
+        const deltaTheta = adaptiveLR * effectiveGradient * residual;
+        return Math.max(-3.0, Math.min(3.0, currentDimTheta + deltaTheta));
       };
 
-      // 4. 雙相記憶更新
+      const updatedTheta: Record<CognitiveDimension, number> = {
+        spatial: calcDimUpdate(
+          load.spatial,
+          load.numeric + load.workingMemory + load.inhibition,
+          rawState.theta.spatial || 0
+        ),
+        numeric: calcDimUpdate(
+          load.numeric,
+          load.spatial + load.workingMemory + load.inhibition,
+          rawState.theta.numeric || 0
+        ),
+        workingMemory: calcDimUpdate(
+          load.workingMemory,
+          load.spatial + load.numeric + load.inhibition,
+          rawState.theta.workingMemory || 0
+        ),
+        inhibition: calcDimUpdate(
+          load.inhibition,
+          load.spatial + load.numeric + load.workingMemory,
+          rawState.theta.inhibition || 0
+        ),
+      };
+
+      // 6. 雙相記憶更新
       let newStrength = baseStrength;
       let newStability = rawState.stability;
       if (record.isSuccess) {
@@ -198,12 +223,12 @@ export function useLearnerProfile() {
         newStrength = Math.max(0.5, baseStrength * 0.7);
       }
 
-      // 5. EWMA 平滑解題時長
+      // 7. EWMA 平滑解題時長
       const smoothedTime = rawState.avgTimeSec > 0
         ? Math.round(rawState.avgTimeSec * 0.65 + record.timeSpentSec * 0.35)
         : record.timeSpentSec;
 
-      // 6. 士氣調節
+      // 8. 士氣均值回歸與挫折保護
       const inactiveDaysGlobal = Math.max(0, (now - (prev.lastGlobalActiveAt || now)) / (1000 * 60 * 60 * 24));
       let currentMorale = prev.morale;
       if (inactiveDaysGlobal > 3) {
@@ -217,7 +242,7 @@ export function useLearnerProfile() {
         currentMorale = Math.min(1.4, currentMorale + 0.05);
       }
 
-      // 7. 巔峰段位更新
+      // 9. 巔峰段位更新
       const updatedPeaks = { ...prev.peakRecords };
       if (record.isSuccess) {
         const currentPeak = updatedPeaks[record.engineType];
@@ -268,7 +293,6 @@ export function useLearnerProfile() {
     });
   }, []);
 
-  // 8. 多維複合能力投影之 ZPD 難度評估
   const getZPDRecommendedTier = useCallback(
     (engineType: string, load?: CognitiveLoadVector): TierKey => {
       const state = profile.typeStates[engineType];
@@ -293,7 +317,6 @@ export function useLearnerProfile() {
     [profile.typeStates, profile.morale]
   );
 
-  // 9. 計算全域 4 維認知平均指標
   const globalCognitiveProfile = useCallback((): Record<CognitiveDimension, number> => {
     const types = Object.values(profile.typeStates);
     if (types.length === 0) return { ...INITIAL_THETA };
@@ -319,7 +342,7 @@ export function useLearnerProfile() {
     const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(profile, null, 2));
     const downloadAnchor = document.createElement('a');
     downloadAnchor.setAttribute("href", dataStr);
-    downloadAnchor.setAttribute("download", `logicore_mirt_v6_${Date.now()}.json`);
+    downloadAnchor.setAttribute("download", `logicore_mirt_v6_1_${Date.now()}.json`);
     document.body.appendChild(downloadAnchor);
     downloadAnchor.click();
     downloadAnchor.remove();
