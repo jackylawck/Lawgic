@@ -3,6 +3,15 @@ import sudokuPuzzles from './sudoku.json';
 import skyscraperPuzzles from './skyscraper.json';
 import mazePuzzles from './maze.json';
 
+export type PuzzleCategory = 
+  | 'grid_csp' 
+  | 'grid_logic' 
+  | 'topological' 
+  | 'arithmetic' 
+  | 'elimination';
+
+export type TierKey = 'kids' | 'intermediate' | 'expert' | 'master';
+
 export interface CognitiveLoadVector {
   spatial: number;
   numeric: number;
@@ -12,9 +21,9 @@ export interface CognitiveLoadVector {
 
 export interface PuzzleEntity {
   id: string;
-  category: string;
+  category: PuzzleCategory;
   engine_type: string;
-  tier: string;
+  tier: TierKey;
   puzzle: any;
   solution: any;
   metrics: { decision_depth: number; propagation_steps?: number };
@@ -34,7 +43,7 @@ export const PUZZLE_CATALOG: Record<string, PuzzleEntity[]> = {
   futoshiki: [],
   jigsaw: [],
   dominoes: [],
-  maze: (mazePuzzles as unknown) as PuzzleEntity[], // 👈 掛載迷宮題庫
+  maze: (mazePuzzles as unknown) as PuzzleEntity[],
 };
 
 export const getAllPuzzles = (): PuzzleEntity[] => {
