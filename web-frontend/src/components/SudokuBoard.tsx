@@ -1,3 +1,4 @@
+// web-frontend/src/components/SudokuBoard.tsx
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import init, { SudokuEngine } from '../wasm/sudoku_wasm';
 import { verifyPuzzleChecksum } from '../utils/integrity';
@@ -27,43 +28,50 @@ export const SudokuBoard: React.FC<Props> = ({ puzzleData }) => {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isCompleted, setIsCompleted] = useState<boolean>(false);
 
-  // 認知追蹤：計時與衝突記錄
   const startTimeRef = useRef<number>(Date.now());
   const conflictCountRef = useRef<number>(0);
   const hasRecordedRef = useRef<boolean>(false);
 
-  // 重置題目狀態與計時器
   useEffect(() => {
+    let isMounted = true;
     startTimeRef.current = Date.now();
     conflictCountRef.current = 0;
     hasRecordedRef.current = false;
     setIsCompleted(false);
 
-    if (!verifyPuzzleChecksum(puzzleData)) {
-      setErrorMessage(t.errors.securityAlert);
-      return;
-    }
+    // 企業級非同步校驗
+    verifyPuzzleChecksum(puzzleData).then((isValid) => {
+      if (!isMounted) return;
+      if (!isValid) {
+        setErrorMessage(t.errors.securityAlert);
+        return;
+      }
 
-    const flatClues = puzzleData.puzzle.flat();
-    setGridValues([...flatClues]);
+      const flatClues = puzzleData.puzzle.flat();
+      setGridValues([...flatClues]);
 
-    init()
-      .then(() => {
-        try {
-          const wasmInstance = new SudokuEngine(new Uint8Array(flatClues));
-          setEngine(wasmInstance);
-          setCandidates(Array.from(wasmInstance.get_candidates()));
-          setErrorMessage(null);
-        } catch (err: any) {
-          setErrorMessage(`Init Error: ${err}`);
-        }
-      })
-      .catch((err: any) => {
-        setErrorMessage(`WASM Load Error: ${err}`);
-      });
+      init()
+        .then(() => {
+          if (!isMounted) return;
+          try {
+            const wasmInstance = new SudokuEngine(new Uint8Array(flatClues));
+            setEngine(wasmInstance);
+            setCandidates(Array.from(wasmInstance.get_candidates()));
+            setErrorMessage(null);
+          } catch (err: any) {
+            setErrorMessage(`Init Error: ${err}`);
+          }
+        })
+        .catch((err: any) => {
+          if (isMounted) setErrorMessage(`WASM Load Error: ${err}`);
+        });
+    });
+
+    return () => {
+      isMounted = false;
+    };
   }, [puzzleData, t]);
 
-  // 驗證是否通關
   const checkVictory = useCallback((currentGrid: number[]) => {
     const flatSol = puzzleData.solution.flat();
     if (flatSol.length === 81 && currentGrid.every((v, i) => v === flatSol[i])) {
@@ -101,7 +109,6 @@ export const SudokuBoard: React.FC<Props> = ({ puzzleData }) => {
       setCandidates(Array.from(engine.get_candidates()));
       setErrorMessage(null);
 
-      // 檢查是否完成整張盤面
       checkVictory(nextGrid);
     } catch (err: any) {
       setErrorMessage(err.toString());
@@ -135,10 +142,9 @@ export const SudokuBoard: React.FC<Props> = ({ puzzleData }) => {
 
   return (
     <div className="flex flex-col items-center select-none w-full max-w-sm sm:max-w-md mx-auto">
-      {/* 警示與勝利提示條 */}
       {isCompleted ? (
         <div className="mb-3 w-full px-4 py-2.5 bg-emerald-950/80 text-emerald-300 text-sm font-bold rounded-xl border border-emerald-500 text-center animate-bounce shadow-lg shadow-emerald-900/40">
-          🎉 挑戰成功！已記入認知大腦歷程
+          🎉 挑戰成功！已安全記入認知歷程
         </div>
       ) : errorMessage ? (
         <div className="mb-3 w-full px-3 py-2 bg-red-950/80 text-red-200 text-xs sm:text-sm rounded-lg border border-red-700 text-center animate-pulse">
@@ -146,7 +152,6 @@ export const SudokuBoard: React.FC<Props> = ({ puzzleData }) => {
         </div>
       ) : null}
 
-      {/* 9x9 盤面 */}
       <div className="w-full aspect-square grid grid-cols-9 border-2 border-slate-700 bg-slate-900 shadow-2xl rounded-xl overflow-hidden p-1 gap-0.5">
         {Array.from({ length: 81 }).map((_, idx) => {
           const r = Math.floor(idx / 9);
@@ -185,7 +190,6 @@ export const SudokuBoard: React.FC<Props> = ({ puzzleData }) => {
         })}
       </div>
 
-      {/* 數字鍵盤 */}
       <div className="grid grid-cols-5 gap-1.5 w-full mt-4">
         {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((num) => (
           <button
@@ -206,9 +210,8 @@ export const SudokuBoard: React.FC<Props> = ({ puzzleData }) => {
         </button>
       </div>
 
-      {/* 狀態監控列 */}
       <div className="mt-4 flex items-center justify-between w-full px-2 text-xs font-mono text-slate-400">
-        <span className="text-emerald-400 font-medium">✓ {t.ui.verified}</span>
+        <span className="text-emerald-400 font-medium">✓ SHA-256 WebCrypto Verified</span>
         <span>Decision Depth: {puzzleData.metrics.decision_depth}</span>
       </div>
     </div>
