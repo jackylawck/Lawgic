@@ -5,23 +5,21 @@ import { SudokuBoard } from '../components/SudokuBoard';
 import { MazeBoard } from '../components/MazeBoard';
 
 interface Props {
-  puzzle?: PuzzleEntity;
-  puzzleData?: PuzzleEntity;
+  puzzle: PuzzleEntity;
 }
 
-export const PuzzleRenderer: React.FC<Props> = ({ puzzle, puzzleData }) => {
-  const currentPuzzle = puzzle || puzzleData;
-  if (!currentPuzzle) return null;
+export const PuzzleRenderer: React.FC<Props> = ({ puzzle }) => {
+  const engineType = puzzle.engine_type || 'sudoku';
 
-  switch (currentPuzzle.engine_type) {
-    case 'sudoku':
-      return <SudokuBoard puzzleData={currentPuzzle} puzzle={currentPuzzle} />;
+  switch (engineType) {
     case 'maze':
-      return <MazeBoard puzzleData={currentPuzzle} puzzle={currentPuzzle} />;
+      return <MazeBoard puzzleData={puzzle} />;
+    case 'sudoku':
+      return <SudokuBoard puzzleData={puzzle} />;
     default:
       return (
-        <div className="p-8 border border-dashed border-slate-800 rounded-xl text-center text-xs font-mono text-slate-400">
-          題型 [{currentPuzzle.engine_type}] 渲染器就緒中
+        <div className="p-6 text-center font-mono text-xs text-slate-500 border border-dashed border-slate-800 rounded-xl">
+          Engine [{engineType}] is loading or currently registered in secondary queue.
         </div>
       );
   }
