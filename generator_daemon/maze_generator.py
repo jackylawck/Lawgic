@@ -18,7 +18,7 @@ export class WebMazeGenerator {
     // 1. 初始化全牆壁 (1: 牆, 0: 通路)
     const grid: number[][] = Array.from({ length: height }, () => Array(width).fill(1));
 
-    // 2. DFS 遞迴回溯挖路
+    // 2. DFS 遞迴回溯挖路 (生成完美迷宮)
     const carve = (x: number, y: number) => {
       grid[y][x] = 0;
       const dirs = [
@@ -43,7 +43,7 @@ export class WebMazeGenerator {
     const start: [number, number] = [1, 1];
     const end: [number, number] = [width - 2, height - 2];
 
-    // 3. BFS 最短路徑求解 (保證解法存在)
+    // 3. BFS 求最短路徑
     const queue: [number, number, [number, number][]][] = [[start[0], start[1], [start]]];
     const visited = new Set<string>([`${start[0]},${start[1]}`]);
     let solution: [number, number][] = [start, end];
