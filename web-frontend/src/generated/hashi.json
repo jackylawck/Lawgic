@@ -1,0 +1,11 @@
+[
+  {
+    "id": "hashi_i01",
+    "engine_type": "hashi",
+    "difficulty_tier": "intermediate",
+    "puzzle": { "islands": [{"r": 0, "c": 0, "num": 2}, {"r": 0, "c": 4, "num": 2}] },
+    "solution": { "bridges": [] },
+    "metrics": { "decision_depth": 1 },
+    "checksum": "mock_checksum"
+  }
+]
