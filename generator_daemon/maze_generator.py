@@ -1,244 +1,217 @@
-// web-frontend/src/engines/mazeGenerator.ts
-import { PuzzleEntity, TierKey } from '../generated';
+# generator_daemon/maze_generator.py
+import json
+import hashlib
+import random
+from collections import deque
+from typing import List, Tuple, Dict, Any, Set
 
-export class WebMazeGenerator {
-  static generate(tier: TierKey): PuzzleEntity {
-    // 基準維度設定
-    const sizeMap: Record<TierKey, number> = {
-      kids: 11,
-      intermediate: 15,
-      expert: 19,
-      master: 25,
-    };
+class AcademicMazeEngineV2:
+    def __init__(self, width: int, height: int):
+        self.width = width if width % 2 == 1 else width + 1
+        self.height = height if height % 2 == 1 else height + 1
+        self.grid: List[List[int]] = []
+        self.solution: List[Tuple[int, int]] = []
 
-    const size = sizeMap[tier] || 11;
-    const width = size;
-    const height = size;
+    def generate(self) -> Dict[str, Any]:
+        self.grid = [[1 for _ in range(self.width)] for _ in range(self.height)]
+        
+        start_x, start_y = 1, 1
+        self.grid[start_y][start_x] = 0
+        
+        walls: List[Tuple[int, int, int, int]] = []
+        for dx, dy in [(0, 2), (2, 0), (0, -2), (-2, 0)]:
+            nx, ny = start_x + dx, start_y + dy
+            if 0 < nx < self.width and 0 < ny < self.height:
+                walls.append((start_x, start_y, nx, ny))
 
-    // 1. 初始化全牆壁網格 (1: 牆, 0: 通路)
-    const grid: number[][] = Array.from({ length: height }, () => Array(width).fill(1));
+        while walls:
+            idx = random.randrange(len(walls))
+            wx, wy, nx, ny = walls.pop(idx)
 
-    // 2. Randomized Prim 生成樹演算法
-    const startX = 1;
-    const startY = 1;
-    grid[startY][startX] = 0;
+            if self.grid[ny][nx] == 1:
+                self.grid[wy + (ny - wy) // 2][wx + (nx - wx) // 2] = 0
+                self.grid[ny][nx] = 0
 
-    const walls: [number, number, number, number][] = [];
-    for (const [dx, dy] of [[0, 2], [2, 0], [0, -2], [-2, 0]]) {
-      const nx = startX + dx;
-      const ny = startY + dy;
-      if (nx > 0 && nx < width - 1 && ny > 0 && ny < height - 1) {
-        walls.push([startX, startY, nx, ny]);
-      }
-    }
+                for dx, dy in [(0, 2), (2, 0), (0, -2), (-2, 0)]:
+                    nnx, nny = nx + dx, ny + dy
+                    if 0 < nnx < self.width and 0 < nny < self.height and self.grid[nny][nnx] == 1:
+                        walls.append((nx, ny, nnx, nny))
 
-    while (walls.length > 0) {
-      const idx = Math.floor(Math.random() * walls.length);
-      const [wx, wy, nx, ny] = walls.splice(idx, 1)[0];
+        start: Tuple[int, int] = (1, 1)
+        end: Tuple[int, int] = (self.width - 2, self.height - 2)
 
-      if (grid[ny][nx] === 1) {
-        grid[wy + Math.floor((ny - wy) / 2)][wx + Math.floor((nx - wx) / 2)] = 0;
-        grid[ny][nx] = 0;
+        self.solution = self._bfs_shortest_path(start, end)
 
-        for (const [dx, dy] of [[0, 2], [2, 0], [0, -2], [-2, 0]]) {
-          const nnx = nx + dx;
-          const nny = ny + dy;
-          if (nnx > 0 && nnx < width - 1 && nny > 0 && nny < height - 1 && grid[nny][nnx] === 1) {
-            walls.push([nx, ny, nnx, nny]);
-          }
+        turn_count = self._count_solution_turns(self.solution)
+        fork_nodes, decision_fork_count = self._extract_decision_forks()
+        dead_ends = self._extract_dead_ends()
+        mean_dead_depth = self._calculate_mean_dead_end_depth(dead_ends)
+        path_len = len(self.solution)
+
+        spatial_load = min(1.0, 0.35 + (turn_count / max(6, self.width * 1.2)) * 0.45 + (path_len / (self.width * self.height * 0.5)) * 0.2)
+        working_memory_load = min(1.0, 0.30 + (decision_fork_count / max(4, path_len * 0.4)) * 0.55 + (self.width / 30.0) * 0.15)
+        inhibition_load = min(1.0, 0.25 + (mean_dead_depth / 6.0) * 0.50 + (len(dead_ends) / max(3, self.width)) * 0.25)
+
+        if path_len < 24 and mean_dead_depth <= 2.0:
+            tier = "kids"
+        elif path_len < 38 and mean_dead_depth <= 3.5:
+            tier = "intermediate"
+        elif path_len < 58:
+            tier = "expert"
+        else:
+            tier = "master"
+
+        payload: Dict[str, Any] = {
+            "id": f"maze_{tier}_{random.randint(10000, 99999)}",
+            "category": "topological",
+            "engine_type": "maze",
+            "tier": tier,
+            "puzzle": {
+                "width": self.width,
+                "height": self.height,
+                "start": list(start),
+                "end": list(end),
+                "grid": self.grid
+            },
+            "solution": self.solution,
+            "metrics": {
+                "decision_depth": path_len,
+                "turn_count": turn_count,
+                "decision_forks": decision_fork_count,
+                "mean_dead_end_depth": round(mean_dead_depth, 2),
+                "propagation_steps": self.width * self.height
+            },
+            "cognitiveLoad": {
+                "spatial": round(spatial_load, 3),
+                "numeric": 0.0,
+                "workingMemory": round(working_memory_load, 3),
+                "inhibition": round(inhibition_load, 3)
+            }
         }
-      }
-    }
 
-    const start: [number, number] = [1, 1];
-    const end: [number, number] = [width - 2, height - 2];
+        canonical = json.dumps(payload, sort_keys=True, separators=(',', ':'))
+        payload["checksum"] = hashlib.sha256(canonical.encode('utf-8')).hexdigest()
+        return payload
 
-    // 3. 求解主基準路徑
-    let solution = this._bfs(grid, width, height, start, end);
+    def _bfs_shortest_path(self, start: Tuple[int, int], end: Tuple[int, int]) -> List[Tuple[int, int]]:
+        queue = deque([(start[0], start[1], [start])])
+        visited = set([start])
+        while queue:
+            cx, cy, path = queue.popleft()
+            if (cx, cy) == end:
+                return path
+            for dx, dy in [(0, 1), (0, -1), (1, 0), (-1, 0)]:
+                nx, ny = cx + dx, cy + dy
+                if 0 <= nx < self.width and 0 <= ny < self.height and self.grid[ny][nx] == 0:
+                    if (nx, ny) not in visited:
+                        visited.add((nx, ny))
+                        queue.append((nx, ny, path + [(nx, ny)]))
+        return [start, end]
 
-    // 4. 🧠 智力遊戲設計升級 1：策略性博弈環路注入 (Strategic Bet Cycles)
-    this._injectStrategicBets(grid, width, height, solution, tier);
+    def _count_solution_turns(self, path: List[Tuple[int, int]]) -> int:
+        if len(path) < 3:
+            return 0
+        turns = 0
+        for i in range(1, len(path) - 1):
+            dx1, dy1 = path[i][0] - path[i - 1][0], path[i][1] - path[i - 1][1]
+            dx2, dy2 = path[i + 1][0] - path[i][0], path[i + 1][1] - path[i][1]
+            if (dx1, dy1) != (dx2, dy2):
+                turns += 1
+        return turns
 
-    // 重新計算注入環路後的真實最短路徑
-    solution = this._bfs(grid, width, height, start, end);
+    def _extract_decision_forks(self) -> Tuple[List[Tuple[int, int]], int]:
+        sol_set = set(self.solution)
+        forks = []
+        on_path_forks = 0
+        for y in range(1, self.height - 1):
+            for x in range(1, self.width - 1):
+                if self.grid[y][x] == 0:
+                    passages = sum(1 for dx, dy in [(0, 1), (0, -1), (1, 0), (-1, 0)] if self.grid[y + dy][x + dx] == 0)
+                    if passages >= 3:
+                        forks.append((x, y))
+                        if (x, y) in sol_set:
+                            on_path_forks += 1
+        return forks, on_path_forks
 
-    // 5. 🧠 智力遊戲設計升級 2：計算「路徑選擇熵（Path Entropy）」與圖論指標
-    const turnCount = this._countTurns(solution);
-    const forkCount = this._countForks(grid, width, height);
-    const deadEndDepth = this._avgDeadEndDepth(grid, width, height);
-    const pathEntropy = this._computePathEntropy(grid, width, height, solution);
+    def _extract_dead_ends(self) -> List[Tuple[int, int]]:
+        dead_ends = []
+        for y in range(1, self.height - 1):
+            for x in range(1, self.width - 1):
+                if self.grid[y][x] == 0 and (x, y) != (1, 1) and (x, y) != (self.width - 2, self.height - 2):
+                    passages = sum(1 for dx, dy in [(0, 1), (0, -1), (1, 0), (-1, 0)] if self.grid[y + dy][x + dx] == 0)
+                    if passages == 1:
+                        dead_ends.append((x, y))
+        return dead_ends
 
-    // 6. 感知干擾度設定 (Visual Noise)
-    const visualNoiseScore =
-      tier === 'kids' ? 0.15 : tier === 'intermediate' ? 0.4 : tier === 'expert' ? 0.7 : 0.95;
+    def _calculate_mean_dead_end_depth(self, dead_ends: List[Tuple[int, int]]) -> float:
+        if not dead_ends:
+            return 1.0
+        depths = []
+        for sx, sy in dead_ends:
+            depth = 1
+            curr = (sx, sy)
+            visited = set([curr])
+            while True:
+                neighbors = []
+                for dx, dy in [(0, 1), (0, -1), (1, 0), (-1, 0)]:
+                    nx, ny = curr[0] + dx, curr[1] + dy
+                    if 0 <= nx < self.width and 0 <= ny < self.height and self.grid[ny][nx] == 0:
+                        if (nx, ny) not in visited:
+                            neighbors.append((nx, ny))
+                if len(neighbors) == 1:
+                    visited.add(neighbors[0])
+                    curr = neighbors[0]
+                    depth += 1
+                else:
+                    break
+            depths.append(depth)
+        return sum(depths) / len(depths)
 
-    // 7. 雙層非線性認知負荷向量
-    const spatialLoad = Math.min(1.0, 0.35 + (turnCount / Math.max(6, width * 1.1)) * 0.45);
-    const workingMemoryLoad = Math.min(
-      1.0,
-      0.30 + (pathEntropy / 3.0) * 0.45 + visualNoiseScore * 0.25
-    );
-    const inhibitionLoad = Math.min(
-      1.0,
-      0.25 + (deadEndDepth / 5.0) * 0.40 + (visualNoiseScore > 0.5 ? 0.35 : 0.15)
-    );
 
-    const id = `maze_${tier}_gen_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+def canonical_fingerprint(grid: List[List[int]]) -> str:
+    variants = []
+    curr = grid
+    for _ in range(4):
+        curr = [list(row) for row in zip(*curr[::-1])]
+        variants.append("".join("".join(map(str, r)) for r in curr))
+        variants.append("".join("".join(map(str, r[::-1])) for r in curr))
+    return min(variants)
 
-    return {
-      id,
-      category: 'topological',
-      engine_type: 'maze',
-      tier,
-      puzzle: {
-        width,
-        height,
-        start,
-        end,
-        grid,
-        visualNoise: visualNoiseScore,
-      },
-      solution,
-      metrics: {
-        decision_depth: solution.length,
-        propagation_steps: width * height,
-      },
-      cognitiveLoad: {
-        spatial: Number(spatialLoad.toFixed(2)),
-        numeric: 0.0,
-        workingMemory: Number(workingMemoryLoad.toFixed(2)),
-        inhibition: Number(inhibitionLoad.toFixed(2)),
-      },
-      checksum: `gen_${id}`,
-    };
-  }
 
-  private static _bfs(
-    grid: number[][],
-    width: number,
-    height: number,
-    start: [number, number],
-    end: [number, number]
-  ): [number, number][] {
-    const queue: [number, number, [number, number][]][] = [[start[0], start[1], [start]]];
-    const visited = new Set<string>([`${start[0]},${start[1]}`]);
+if __name__ == "__main__":
+    import os
+    output_dir = "../web-frontend/src/generated/"
+    os.makedirs(output_dir, exist_ok=True)
 
-    while (queue.length > 0) {
-      const [cx, cy, path] = queue.shift()!;
-      if (cx === end[0] && cy === end[1]) return path;
+    seen_fingerprints: Set[str] = set()
+    all_mazes: List[Dict[str, Any]] = []
 
-      for (const [dx, dy] of [[0, 1], [0, -1], [1, 0], [-1, 0]]) {
-        const nx = cx + dx;
-        const ny = cy + dy;
-        if (nx >= 0 && nx < width && ny >= 0 && ny < height && grid[ny][nx] === 0) {
-          const key = `${nx},${ny}`;
-          if (!visited.has(key)) {
-            visited.add(key);
-            queue.push([nx, ny, [...path, [nx, ny]]]);
-          }
-        }
-      }
-    }
-    return [start, end];
-  }
+    target_tiers = [
+        {"size": (9, 9), "count": 12},
+        {"size": (11, 11), "count": 12},
+        {"size": (13, 13), "count": 14},
+        {"size": (17, 17), "count": 14},
+    ]
 
-  /**
-   * 策略性賭局環路：尋找兩條實質不同路徑之間的隔牆並打通，製造「冒險捷徑 vs 穩健繞路」抉擇
-   */
-  private static _injectStrategicBets(
-    grid: number[][],
-    width: number,
-    height: number,
-    solution: [number, number][],
-    tier: TierKey
-  ): void {
-    const count = tier === 'kids' ? 1 : tier === 'intermediate' ? 2 : 3;
-    let injected = 0;
-    const candidates: [number, number][] = [];
+    for spec in target_tiers:
+        w, h = spec["size"]
+        needed = spec["count"]
+        generated = 0
+        attempts = 0
 
-    for (let y = 2; y < height - 2; y++) {
-      for (let x = 2; x < width - 2; x++) {
-        if (grid[y][x] === 1) {
-          const hOpen = grid[y][x - 1] === 0 && grid[y][x + 1] === 0;
-          const vOpen = grid[y - 1][x] === 0 && grid[y + 1][x] === 0;
+        while generated < needed and attempts < needed * 50:
+            attempts += 1
+            engine = AcademicMazeEngineV2(width=w, height=h)
+            maze_obj = engine.generate()
+            fp = canonical_fingerprint(maze_obj["puzzle"]["grid"])
 
-          if (hOpen || vOpen) {
-            candidates.push([x, y]);
-          }
-        }
-      }
-    }
+            if fp not in seen_fingerprints:
+                seen_fingerprints.add(fp)
+                all_mazes.append(maze_obj)
+                generated += 1
 
-    while (injected < count && candidates.length > 0) {
-      const idx = Math.floor(Math.random() * candidates.length);
-      const [cx, cy] = candidates.splice(idx, 1)[0];
-      grid[cy][cx] = 0;
-      injected++;
-    }
-  }
+    output_path = os.path.join(output_dir, "maze.json")
+    with open(output_path, "w", encoding="utf-8") as f:
+        json.dump(all_mazes, f, indent=2, ensure_ascii=False)
 
-  private static _computePathEntropy(
-    grid: number[][],
-    width: number,
-    height: number,
-    solution: [number, number][]
-  ): number {
-    let totalForksOnPath = 0;
-    for (const [x, y] of solution) {
-      const branches = [[0, 1], [0, -1], [1, 0], [-1, 0]].filter(
-        ([dx, dy]) =>
-          x + dx >= 0 && x + dx < width && y + dy >= 0 && y + dy < height && grid[y + dy][x + dx] === 0
-      ).length;
-      if (branches >= 3) totalForksOnPath += branches - 1;
-    }
-    return Math.max(1.0, totalForksOnPath / Math.max(1, solution.length * 0.2));
-  }
-
-  private static _countTurns(path: [number, number][]): number {
-    if (path.length < 3) return 0;
-    let turns = 0;
-    for (let i = 1; i < path.length - 1; i++) {
-      const dx1 = path[i][0] - path[i - 1][0];
-      const dy1 = path[i][1] - path[i - 1][1];
-      const dx2 = path[i + 1][0] - path[i][0];
-      const dy2 = path[i + 1][1] - path[i][1];
-      if (dx1 !== dx2 || dy1 !== dy2) turns++;
-    }
-    return turns;
-  }
-
-  private static _countForks(grid: number[][], width: number, height: number): number {
-    let forks = 0;
-    for (let y = 1; y < height - 1; y++) {
-      for (let x = 1; x < width - 1; x++) {
-        if (grid[y][x] === 0) {
-          const p = [[0, 1], [0, -1], [1, 0], [-1, 0]].filter(
-            ([dx, dy]) => grid[y + dy][x + dx] === 0
-          ).length;
-          if (p >= 3) forks++;
-        }
-      }
-    }
-    return forks;
-  }
-
-  private static _avgDeadEndDepth(grid: number[][], width: number, height: number): number {
-    let totalDepth = 0;
-    let count = 0;
-
-    for (let y = 1; y < height - 1; y++) {
-      for (let x = 1; x < width - 1; x++) {
-        if (grid[y][x] === 0 && !(x === 1 && y === 1) && !(x === width - 2 && y === height - 2)) {
-          const neighbors = [[0, 1], [0, -1], [1, 0], [-1, 0]].filter(
-            ([dx, dy]) => grid[y + dy][x + dx] === 0
-          );
-          if (neighbors.length === 1) {
-            count++;
-            totalDepth += 2.5;
-          }
-        }
-      }
-    }
-    return count > 0 ? totalDepth / count : 1.5;
-  }
-}
+    print(f"✅ 已成功產出 {len(all_mazes)} 題至 {output_path}")
