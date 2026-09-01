@@ -1,4 +1,5 @@
-import React, { useState, useMemo } from 'react';
+// web-frontend/src/App.tsx
+import React, { useState, useMemo, useRef } from 'react';
 import { ErrorBoundary } from 'react-error-boundary';
 import { LanguageProvider, useLanguage } from './contexts/LanguageContext';
 import { PuzzleRenderer } from './registry/RendererRegistry';
@@ -34,11 +35,20 @@ const EngineFallbackUI: React.FC<{ resetErrorBoundary: () => void }> = ({ resetE
 
 const MainDashboard: React.FC = () => {
   const { t, lang } = useLanguage();
-  const { profile, getZPDRecommendedTier } = useLearnerProfile();
-  const { forgottenTypes, overallPeakTier, getNextForgottenPuzzle } = useLongTermScheduler(
+  const {
     profile,
-    PUZZLE_CATALOG
-  );
+    getZPDRecommendedTier,
+    exportProfileJSON,
+    importProfileJSON,
+  } = useLearnerProfile();
+
+  const {
+    sortedForgottenTypes,
+    overallPeakTier,
+    getTopForgottenReview,
+  } = useLongTermScheduler(profile, PUZZLE_CATALOG);
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [selectedType, setSelectedType] = useState<string>('sudoku');
   const [currentLevel, setCurrentLevel] = useState<TierKey>('kids');
@@ -66,8 +76,25 @@ const MainDashboard: React.FC = () => {
   const activeList = filteredPuzzles[activeLevel] || [];
   const activePuzzle = activeList.length > 0 ? activeList[puzzleIndex % activeList.length] : null;
 
-  const typeStats = profile.typeMastery[selectedType] || { solved: 0, totalAttempts: 0 };
+  const typeStats = profile.typeMastery[selectedType] || { solved: 0, totalAttempts: 0, avgTimeSec: 0 };
   const currentPeak = profile.peakRecords[selectedType];
+  const topForgotten = getTopForgottenReview();
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const text = event.target?.result as string;
+        if (importProfileJSON(text)) {
+          alert('大腦認知檔案匯入成功！');
+        } else {
+          alert('檔案格式錯誤，匯入失敗。');
+        }
+      };
+      reader.readAsText(file);
+    }
+  };
 
   return (
     <main className="min-h-screen bg-slate-950 text-slate-100 flex flex-col items-center py-6 px-4 font-sans selection:bg-indigo-500">
@@ -77,12 +104,35 @@ const MainDashboard: React.FC = () => {
           <h1 className="text-2xl font-black bg-gradient-to-r from-indigo-400 via-cyan-300 to-emerald-400 bg-clip-text text-transparent">
             LogiCore
           </h1>
-          <p className="text-[11px] text-slate-500 font-mono">Lifelong Cognitive Companion · ZPD Adaptive</p>
+          <p className="text-[11px] text-slate-500 font-mono">Cognitive Neuroscience Framework · ZPD v3</p>
         </div>
-        <LangSwitcher />
+        <div className="flex items-center gap-2">
+          <button
+            onClick={exportProfileJSON}
+            title="匯出個人大腦檔案"
+            className="p-1.5 bg-slate-900 border border-slate-800 hover:border-slate-700 text-slate-300 rounded-lg text-xs"
+          >
+            💾 備份
+          </button>
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            title="匯入大腦檔案"
+            className="p-1.5 bg-slate-900 border border-slate-800 hover:border-slate-700 text-slate-300 rounded-lg text-xs"
+          >
+            📂 載入
+          </button>
+          <input
+            type="file"
+            ref={fileInputRef}
+            onChange={handleFileUpload}
+            accept=".json"
+            className="hidden"
+          />
+          <LangSwitcher />
+        </div>
       </header>
 
-      {/* 終身巔峰與遺忘曲線調度條 */}
+      {/* 終身巔峰與記憶急迫度喚醒條 */}
       <div className="w-full max-w-xl mb-3 flex flex-wrap items-center justify-between gap-2 px-3 py-2 bg-gradient-to-r from-indigo-950/40 to-slate-900/60 rounded-xl border border-indigo-900/40 text-xs">
         <div className="flex items-center gap-2">
           <span className="px-2.5 py-0.5 bg-amber-500/20 text-amber-300 border border-amber-500/40 rounded-full font-bold">
@@ -90,43 +140,31 @@ const MainDashboard: React.FC = () => {
           </span>
           {currentPeak && (
             <span className="text-slate-400 font-mono text-[11px]">
-              本項最佳: {t.difficulty[currentPeak.tier]} ({currentPeak.timeSpentSec}s)
+              最佳: {t.difficulty[currentPeak.tier]} ({currentPeak.timeSpentSec}s)
             </span>
           )}
         </div>
 
-        {forgottenTypes.length > 0 && (
+        {topForgotten && (
           <button
             onClick={() => {
-              const res = getNextForgottenPuzzle();
-              if (res) {
-                setSelectedType(res.targetType);
-                setCurrentLevel(res.puzzle.tier as TierKey);
-                setPuzzleIndex(0);
-              }
+              setSelectedType(topForgotten.targetType);
+              setCurrentLevel(topForgotten.puzzle.tier as TierKey);
+              setPuzzleIndex(0);
             }}
-            className="px-2.5 py-1 bg-cyan-950 text-cyan-300 border border-cyan-700 hover:bg-cyan-900/80 rounded-lg text-[11px] font-semibold transition"
+            className="px-2.5 py-1 bg-cyan-950 text-cyan-300 border border-cyan-700 hover:bg-cyan-900/80 rounded-lg text-[11px] font-semibold transition flex items-center gap-1"
           >
-            🕰️ 遺忘複習 ({forgottenTypes.join(', ')})
+            <span>🕰️ {topForgotten.days}天未練</span>
+            <span className="text-cyan-400 uppercase font-bold">({topForgotten.targetType})</span>
           </button>
         )}
       </div>
 
-      {/* 認知歷程指示條 */}
+      {/* 即時認知流暢度與 EWMA 指標 */}
       <div className="w-full max-w-xl mb-4 px-3 py-2 bg-slate-900/60 rounded-xl border border-slate-800 flex items-center justify-between text-xs font-mono">
-        <div className="flex items-center gap-2">
-          <span className="text-slate-400">通關累計:</span>
-          <span className="text-emerald-400 font-bold">
-            {profile.history.filter((h) => h.isSuccess).length} 題
-          </span>
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="text-slate-400">勝率:</span>
-          <span className="text-cyan-400 font-bold">
-            {typeStats.totalAttempts > 0
-              ? `${Math.round((typeStats.solved / typeStats.totalAttempts) * 100)}%`
-              : '0%'}
-          </span>
+        <div className="flex items-center gap-3">
+          <span className="text-slate-400">通關: <b className="text-emerald-400">{profile.history.filter((h) => h.isSuccess).length}</b></span>
+          <span className="text-slate-400">EWMA均時: <b className="text-indigo-300">{typeStats.avgTimeSec}s</b></span>
         </div>
         <button
           onClick={() => setIsZPDMode(!isZPDMode)}
@@ -136,7 +174,7 @@ const MainDashboard: React.FC = () => {
               : 'bg-slate-800 text-slate-400 hover:text-slate-200'
           }`}
         >
-          {isZPDMode ? '🧠 ZPD 自適應' : '手動選階'}
+          {isZPDMode ? '🧠 ZPD 鷹架引導' : '手動選階'}
         </button>
       </div>
 
