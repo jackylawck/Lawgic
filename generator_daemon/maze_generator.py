@@ -3,7 +3,7 @@ import { PuzzleEntity, TierKey } from '../generated';
 
 export class WebMazeGenerator {
   static generate(tier: TierKey): PuzzleEntity {
-    // 依據階梯決定迷宮維度（資優硬核尺寸）
+    // 基準維度設定
     const sizeMap: Record<TierKey, number> = {
       kids: 11,
       intermediate: 15,
@@ -15,20 +15,20 @@ export class WebMazeGenerator {
     const width = size;
     const height = size;
 
-    // 1. 初始化全牆壁 (1: 牆, 0: 通路)
+    // 1. 初始化全牆壁網格 (1: 牆, 0: 通路)
     const grid: number[][] = Array.from({ length: height }, () => Array(width).fill(1));
 
-    // 2. Randomized Prim 生成樹演算法 (保證連通與唯一解)
-    const start_x = 1;
-    const start_y = 1;
-    grid[start_y][start_x] = 0;
+    // 2. Randomized Prim 生成樹演算法
+    const startX = 1;
+    const startY = 1;
+    grid[startY][startX] = 0;
 
     const walls: [number, number, number, number][] = [];
     for (const [dx, dy] of [[0, 2], [2, 0], [0, -2], [-2, 0]]) {
-      const nx = start_x + dx;
-      const ny = start_y + dy;
+      const nx = startX + dx;
+      const ny = startY + dy;
       if (nx > 0 && nx < width - 1 && ny > 0 && ny < height - 1) {
-        walls.push([start_x, start_y, nx, ny]);
+        walls.push([startX, startY, nx, ny]);
       }
     }
 
@@ -53,17 +53,79 @@ export class WebMazeGenerator {
     const start: [number, number] = [1, 1];
     const end: [number, number] = [width - 2, height - 2];
 
-    // 3. BFS 求解唯一最優路徑
+    // 3. 求解主基準路徑
+    let solution = this._bfs(grid, width, height, start, end);
+
+    // 4. 🧠 智力遊戲設計升級 1：策略性博弈環路注入 (Strategic Bet Cycles)
+    this._injectStrategicBets(grid, width, height, solution, tier);
+
+    // 重新計算注入環路後的真實最短路徑
+    solution = this._bfs(grid, width, height, start, end);
+
+    // 5. 🧠 智力遊戲設計升級 2：計算「路徑選擇熵（Path Entropy）」與圖論指標
+    const turnCount = this._countTurns(solution);
+    const forkCount = this._countForks(grid, width, height);
+    const deadEndDepth = this._avgDeadEndDepth(grid, width, height);
+    const pathEntropy = this._computePathEntropy(grid, width, height, solution);
+
+    // 6. 感知干擾度設定 (Visual Noise)
+    const visualNoiseScore =
+      tier === 'kids' ? 0.15 : tier === 'intermediate' ? 0.4 : tier === 'expert' ? 0.7 : 0.95;
+
+    // 7. 雙層非線性認知負荷向量
+    const spatialLoad = Math.min(1.0, 0.35 + (turnCount / Math.max(6, width * 1.1)) * 0.45);
+    const workingMemoryLoad = Math.min(
+      1.0,
+      0.30 + (pathEntropy / 3.0) * 0.45 + visualNoiseScore * 0.25
+    );
+    const inhibitionLoad = Math.min(
+      1.0,
+      0.25 + (deadEndDepth / 5.0) * 0.40 + (visualNoiseScore > 0.5 ? 0.35 : 0.15)
+    );
+
+    const id = `maze_${tier}_gen_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+
+    return {
+      id,
+      category: 'topological',
+      engine_type: 'maze',
+      tier,
+      puzzle: {
+        width,
+        height,
+        start,
+        end,
+        grid,
+        visualNoise: visualNoiseScore,
+      },
+      solution,
+      metrics: {
+        decision_depth: solution.length,
+        propagation_steps: width * height,
+      },
+      cognitiveLoad: {
+        spatial: Number(spatialLoad.toFixed(2)),
+        numeric: 0.0,
+        workingMemory: Number(workingMemoryLoad.toFixed(2)),
+        inhibition: Number(inhibitionLoad.toFixed(2)),
+      },
+      checksum: `gen_${id}`,
+    };
+  }
+
+  private static _bfs(
+    grid: number[][],
+    width: number,
+    height: number,
+    start: [number, number],
+    end: [number, number]
+  ): [number, number][] {
     const queue: [number, number, [number, number][]][] = [[start[0], start[1], [start]]];
     const visited = new Set<string>([`${start[0]},${start[1]}`]);
-    let solution: [number, number][] = [start, end];
 
     while (queue.length > 0) {
       const [cx, cy, path] = queue.shift()!;
-      if (cx === end[0] && cy === end[1]) {
-        solution = path;
-        break;
-      }
+      if (cx === end[0] && cy === end[1]) return path;
 
       for (const [dx, dy] of [[0, 1], [0, -1], [1, 0], [-1, 0]]) {
         const nx = cx + dx;
@@ -77,38 +139,106 @@ export class WebMazeGenerator {
         }
       }
     }
+    return [start, end];
+  }
 
-    // 4. 計算轉彎數
-    let turnCount = 0;
-    for (let i = 1; i < solution.length - 1; i++) {
-      const dx1 = solution[i][0] - solution[i - 1][0];
-      const dy1 = solution[i][1] - solution[i - 1][1];
-      const dx2 = solution[i + 1][0] - solution[i][0];
-      const dy2 = solution[i + 1][1] - solution[i][1];
-      if (dx1 !== dx2 || dy1 !== dy2) turnCount++;
+  /**
+   * 策略性賭局環路：尋找兩條實質不同路徑之間的隔牆並打通，製造「冒險捷徑 vs 穩健繞路」抉擇
+   */
+  private static _injectStrategicBets(
+    grid: number[][],
+    width: number,
+    height: number,
+    solution: [number, number][],
+    tier: TierKey
+  ): void {
+    const count = tier === 'kids' ? 1 : tier === 'intermediate' ? 2 : 3;
+    let injected = 0;
+    const candidates: [number, number][] = [];
+
+    for (let y = 2; y < height - 2; y++) {
+      for (let x = 2; x < width - 2; x++) {
+        if (grid[y][x] === 1) {
+          const hOpen = grid[y][x - 1] === 0 && grid[y][x + 1] === 0;
+          const vOpen = grid[y - 1][x] === 0 && grid[y + 1][x] === 0;
+
+          if (hOpen || vOpen) {
+            candidates.push([x, y]);
+          }
+        }
+      }
     }
 
-    const pathLen = solution.length;
-    const id = `maze_${tier}_gen_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+    while (injected < count && candidates.length > 0) {
+      const idx = Math.floor(Math.random() * candidates.length);
+      const [cx, cy] = candidates.splice(idx, 1)[0];
+      grid[cy][cx] = 0;
+      injected++;
+    }
+  }
 
-    return {
-      id,
-      category: 'topological',
-      engine_type: 'maze',
-      tier,
-      puzzle: { width, height, start, end, grid },
-      solution,
-      metrics: {
-        decision_depth: pathLen,
-        propagation_steps: width * height,
-      },
-      cognitiveLoad: {
-        spatial: Math.min(1.0, 0.45 + (turnCount / (width * 1.2)) * 0.45),
-        numeric: 0.0,
-        workingMemory: Math.min(1.0, 0.4 + size / 30),
-        inhibition: Math.min(1.0, 0.5 + size / 40),
-      },
-      checksum: `gen_${id}`,
-    };
+  private static _computePathEntropy(
+    grid: number[][],
+    width: number,
+    height: number,
+    solution: [number, number][]
+  ): number {
+    let totalForksOnPath = 0;
+    for (const [x, y] of solution) {
+      const branches = [[0, 1], [0, -1], [1, 0], [-1, 0]].filter(
+        ([dx, dy]) =>
+          x + dx >= 0 && x + dx < width && y + dy >= 0 && y + dy < height && grid[y + dy][x + dx] === 0
+      ).length;
+      if (branches >= 3) totalForksOnPath += branches - 1;
+    }
+    return Math.max(1.0, totalForksOnPath / Math.max(1, solution.length * 0.2));
+  }
+
+  private static _countTurns(path: [number, number][]): number {
+    if (path.length < 3) return 0;
+    let turns = 0;
+    for (let i = 1; i < path.length - 1; i++) {
+      const dx1 = path[i][0] - path[i - 1][0];
+      const dy1 = path[i][1] - path[i - 1][1];
+      const dx2 = path[i + 1][0] - path[i][0];
+      const dy2 = path[i + 1][1] - path[i][1];
+      if (dx1 !== dx2 || dy1 !== dy2) turns++;
+    }
+    return turns;
+  }
+
+  private static _countForks(grid: number[][], width: number, height: number): number {
+    let forks = 0;
+    for (let y = 1; y < height - 1; y++) {
+      for (let x = 1; x < width - 1; x++) {
+        if (grid[y][x] === 0) {
+          const p = [[0, 1], [0, -1], [1, 0], [-1, 0]].filter(
+            ([dx, dy]) => grid[y + dy][x + dx] === 0
+          ).length;
+          if (p >= 3) forks++;
+        }
+      }
+    }
+    return forks;
+  }
+
+  private static _avgDeadEndDepth(grid: number[][], width: number, height: number): number {
+    let totalDepth = 0;
+    let count = 0;
+
+    for (let y = 1; y < height - 1; y++) {
+      for (let x = 1; x < width - 1; x++) {
+        if (grid[y][x] === 0 && !(x === 1 && y === 1) && !(x === width - 2 && y === height - 2)) {
+          const neighbors = [[0, 1], [0, -1], [1, 0], [-1, 0]].filter(
+            ([dx, dy]) => grid[y + dy][x + dx] === 0
+          );
+          if (neighbors.length === 1) {
+            count++;
+            totalDepth += 2.5;
+          }
+        }
+      }
+    }
+    return count > 0 ? totalDepth / count : 1.5;
   }
 }
