@@ -202,28 +202,33 @@ const MainDashboard: React.FC = () => {
 
   const lastMoveTimeRef = useRef<number>(0);
 
-const handleJoystickMove = useCallback((x: number, y: number) => {
-  const now = Date.now();
-  // 設置 160ms 節流，避免搖桿持續推到底時移動過快
-  if (now - lastMoveTimeRef.current < 160) return;
+  const handleJoystickMove = useCallback((x: number, y: number) => {
+    const now = Date.now();
+    if (now - lastMoveTimeRef.current < 160) return;
 
-  const threshold = 0.45;
-  let dx = 0;
-  let dy = 0;
+    const threshold = 0.45;
+    let dx = 0;
+    let dy = 0;
 
-  if (x > threshold) dx = 1;
-  else if (x < -threshold) dx = -1;
+    if (x > threshold) dx = 1;
+    else if (x < -threshold) dx = -1;
 
-  if (y > threshold) dy = 1;
-  else if (y < -threshold) dy = -1;
+    if (y > threshold) dy = 1;
+    else if (y < -threshold) dy = -1;
 
-  if (dx !== 0 || dy !== 0) {
-    lastMoveTimeRef.current = now;
-    window.dispatchEvent(
-      new CustomEvent('logicore:joystick-move', { detail: { dx, dy } })
-    );
-  }
-}, []);
+    if (dx !== 0 || dy !== 0) {
+      lastMoveTimeRef.current = now;
+      window.dispatchEvent(
+        new CustomEvent('logicore:joystick-move', { detail: { dx, dy } })
+      );
+    }
+  }, []);
+
+  const handleJoystickRotate = useCallback((x: number, y: number) => {}, []);
+
+  const handleJoystickAction = useCallback(() => {
+    if (navigator.vibrate) navigator.vibrate(15);
+  }, []);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
