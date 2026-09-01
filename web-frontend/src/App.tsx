@@ -35,36 +35,52 @@ const PUZZLE_METAS: PuzzleMeta[] = [
 
 const LEVEL_KEYS: TierKey[] = ['kids', 'intermediate', 'expert', 'master'];
 
-const TIER_NAMES_PRO: Record<TierKey, string> = {
+const TIER_NAMES_PRO_ZH: Record<TierKey, string> = {
   kids: '4x4 奠基',
   intermediate: '6x6 突破',
   expert: '9x9 精通',
   master: '變體深淵',
 };
 
-const TIER_NAMES_CHILD: Record<TierKey, string> = {
+const TIER_NAMES_PRO_EN: Record<TierKey, string> = {
+  kids: '4x4 Basics',
+  intermediate: '6x6 Advance',
+  expert: '9x9 Mastery',
+  master: 'Abyss',
+};
+
+const TIER_NAMES_CHILD_ZH: Record<TierKey, string> = {
   kids: '🌱 小小種子',
   intermediate: '🌿 發芽小樹',
   expert: '🌳 森林守護者',
   master: '🏰 邏輯小騎士',
 };
 
+const TIER_NAMES_CHILD_EN: Record<TierKey, string> = {
+  kids: '🌱 Sprout',
+  intermediate: '🌿 Sapling',
+  expert: '🌳 Guardian',
+  master: '🏰 Knight',
+};
+
 const CHILD_SAFE_IDS = new Set(['maze', 'hashi', 'sudoku', 'jigsaw']);
 
 const EngineFallbackUI: React.FC<{ resetErrorBoundary: () => void }> = ({ resetErrorBoundary }) => (
   <div className="flex flex-col items-center justify-center p-6 bg-red-950/40 border border-red-800 text-center my-4 font-mono">
-    <p className="text-red-300 text-xs">盤面渲染異常</p>
+    <p className="text-red-300 text-xs">Render Exception Occurred</p>
     <button
       onClick={resetErrorBoundary}
       className="mt-3 px-3 py-1 bg-red-900/60 hover:bg-red-800 text-red-100 text-[10px] border border-red-700"
     >
-      重試
+      Retry
     </button>
   </div>
 );
 
 const MainDashboard: React.FC = () => {
-  const { t } = useLanguage();
+  const { lang } = useLanguage();
+  const isEn = lang === 'en';
+
   const {
     profile,
     getZPDRecommendedTier,
@@ -80,7 +96,6 @@ const MainDashboard: React.FC = () => {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // 模式狀態
   const [isProZen, setIsProZen] = useState<boolean>(true);
   const [isChildMode, setIsChildMode] = useState<boolean>(false);
   const [selectedType, setSelectedType] = useState<string>('sudoku');
@@ -90,14 +105,10 @@ const MainDashboard: React.FC = () => {
   const [showDetail, setShowDetail] = useState<boolean>(false);
   const [neuroToast, setNeuroToast] = useState<string | null>(null);
 
-  // ⏱️ 即時碼錶
   const [elapsed, setElapsed] = useState<number>(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  // ⚡ 瞬間二進制視覺反饋狀態 (400ms 綠/紅邊框脈衝)
   const [flashFeedback, setFlashFeedback] = useState<'success' | 'failure' | null>(null);
 
-  // 🕹️ 判斷當前是否為空間探索類題型（需要虛擬搖桿支援）
   const isSpatialExplorationType = selectedType === 'maze' || selectedType === 'skyscraper';
 
   const visibleMetas = useMemo(() => {
@@ -134,7 +145,6 @@ const MainDashboard: React.FC = () => {
     return dims.reduce((min, d) => (globalRadar[d] < globalRadar[min] ? d : min), dims[0]);
   }, [globalRadar]);
 
-  // 今日平均速度 (Pace)
   const todayAvg = useMemo(() => {
     const startOfToday = new Date().setHours(0, 0, 0, 0);
     const todaySuccesses = profile.history.filter((h) => h.isSuccess && h.timestamp >= startOfToday);
@@ -143,7 +153,6 @@ const MainDashboard: React.FC = () => {
     return Math.round(avg);
   }, [profile.history]);
 
-  // 監聽答題紀錄，觸發 400ms 二進制反饋
   useEffect(() => {
     if (profile.history.length === 0) return;
     const last = profile.history[profile.history.length - 1];
@@ -154,7 +163,6 @@ const MainDashboard: React.FC = () => {
     }
   }, [profile.history]);
 
-  // 控制動作
   const handlePrevPuzzle = useCallback(() => {
     if (navigator.vibrate) navigator.vibrate(8);
     setPuzzleIndex((prev) => (prev > 0 ? prev - 1 : Math.max(0, activeList.length - 1)));
@@ -181,28 +189,23 @@ const MainDashboard: React.FC = () => {
     if (targetMeta && targetMeta.id !== selectedType) {
       setSelectedType(targetMeta.id);
       setPuzzleIndex(0);
-      setNeuroToast(`🧭 載入最弱迴路訓練【${targetMeta.nameZh}】`);
+      setNeuroToast(
+        isEn
+          ? `🧭 Loading targeted training for weakest pathway: [${targetMeta.nameEn}]`
+          : `🧭 載入最弱迴路訓練【${targetMeta.nameZh}】`
+      );
     } else {
       setPuzzleIndex((prev) => (prev + 1) % (activeList.length || 1));
     }
     setTimeout(() => setNeuroToast(null), 3500);
-  }, [visibleMetas, weakestDimension, selectedType, activeList.length]);
+  }, [visibleMetas, weakestDimension, selectedType, activeList.length, isEn]);
 
-  // 🕹️ 搖桿控制回調處理
-  const handleJoystickMove = useCallback((x: number, y: number) => {
-    // 輸出給迷宮位移或平移視角
-  }, []);
-
-  const handleJoystickRotate = useCallback((x: number, y: number) => {
-    // 輸出給 3D 視角旋轉
-  }, []);
-
+  const handleJoystickMove = useCallback((x: number, y: number) => {}, []);
+  const handleJoystickRotate = useCallback((x: number, y: number) => {}, []);
   const handleJoystickAction = useCallback(() => {
     if (navigator.vibrate) navigator.vibrate(15);
-    // 觸發空間互動/落子/確認動作
   }, []);
 
-  // ⌨️ 全域鍵盤快捷鍵 (N / P / R / Z)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
@@ -239,7 +242,6 @@ const MainDashboard: React.FC = () => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [handleNextPuzzle, handlePrevPuzzle, handleRandomPuzzle]);
 
-  // 重設計時器
   useEffect(() => {
     setElapsed(0);
     if (timerRef.current) clearInterval(timerRef.current);
@@ -258,9 +260,9 @@ const MainDashboard: React.FC = () => {
       reader.onload = (event) => {
         const text = event.target?.result as string;
         if (importProfileJSON(text)) {
-          setNeuroToast('🧠 檔案載入成功');
+          setNeuroToast(isEn ? '🧠 Brain Profile Loaded' : '🧠 檔案載入成功');
         } else {
-          setNeuroToast('⚠️ 格式錯誤');
+          setNeuroToast(isEn ? '⚠️ Invalid JSON File' : '⚠️ 格式錯誤');
         }
         setTimeout(() => setNeuroToast(null), 2500);
       };
@@ -275,16 +277,18 @@ const MainDashboard: React.FC = () => {
     setPuzzleIndex(0);
     setNeuroToast(
       topSchedule.item.isConsolidated
-        ? '🌙 24h 睡眠固化窗口已啟動（難度對齊個人巔峰）'
-        : `⚡ 記憶衰退喚醒：${topSchedule.targetType}`
+        ? (isEn ? '🌙 24h Sleep Consolidation Window Active' : '🌙 24h 睡眠固化窗口已啟動')
+        : (isEn ? `⚡ Memory Awakening: ${topSchedule.targetType}` : `⚡ 記憶衰退喚醒：${topSchedule.targetType}`)
     );
     setTimeout(() => setNeuroToast(null), 3500);
   };
 
-  const tierNames = isChildMode ? TIER_NAMES_CHILD : TIER_NAMES_PRO;
+  const tierNames = isChildMode
+    ? (isEn ? TIER_NAMES_CHILD_EN : TIER_NAMES_CHILD_ZH)
+    : (isEn ? TIER_NAMES_PRO_EN : TIER_NAMES_PRO_ZH);
 
   // ==========================
-  // ⚙️ 視圖 1：純粹主義賽道工作臺 (Pro Zen Track Mode)
+  // ⚙️ 視圖 1：純粹賽道工作臺 (Pro Zen Track Mode)
   // ==========================
   if (isProZen) {
     return (
@@ -295,7 +299,7 @@ const MainDashboard: React.FC = () => {
               LOGICORE
             </span>
             <span className="text-[9px] text-slate-500 border border-slate-800 px-1 py-0.5">
-              {currentMeta.nameZh}
+              {isEn ? currentMeta.nameEn : currentMeta.nameZh}
             </span>
           </div>
 
@@ -308,9 +312,9 @@ const MainDashboard: React.FC = () => {
             <button
               onClick={() => setIsProZen(false)}
               className="text-slate-500 hover:text-slate-300 px-1.5 py-0.5 border border-slate-800 hover:border-slate-600 transition text-[9px]"
-              title="切換至沉浸模式"
+              title={isEn ? "Switch to Immersive Mode" : "切換至沉浸模式"}
             >
-              🎨 沉浸
+              {isEn ? '🎨 Visual' : '🎨 沉浸'}
             </button>
             <button
               onClick={() => {
@@ -320,10 +324,10 @@ const MainDashboard: React.FC = () => {
               }}
               className="text-slate-500 hover:text-slate-300 px-1.5 py-0.5 border border-slate-800 hover:border-slate-600 transition text-[9px]"
             >
-              {isChildMode ? '兒童' : '成人'}
+              {isChildMode ? (isEn ? 'Child' : '兒童') : (isEn ? 'Adult' : '成人')}
             </button>
-            <button onClick={exportProfileJSON} className="text-slate-600 hover:text-slate-300 px-1" title="備份">💾</button>
-            <button onClick={() => fileInputRef.current?.click()} className="text-slate-600 hover:text-slate-300 px-1" title="載入">📂</button>
+            <button onClick={exportProfileJSON} className="text-slate-600 hover:text-slate-300 px-1" title={isEn ? "Backup" : "備份"}>💾</button>
+            <button onClick={() => fileInputRef.current?.click()} className="text-slate-600 hover:text-slate-300 px-1" title={isEn ? "Load" : "載入"}>📂</button>
             <input type="file" ref={fileInputRef} onChange={handleFileUpload} accept=".json" className="hidden" />
             <LangSwitcher />
           </div>
@@ -352,7 +356,7 @@ const MainDashboard: React.FC = () => {
                     : 'border-transparent text-slate-500 hover:text-slate-300'
                 }`}
               >
-                {pt.nameZh} <span className="text-[8px] opacity-40">({count})</span>
+                {isEn ? pt.nameEn : pt.nameZh} <span className="text-[8px] opacity-40">({count})</span>
               </button>
             );
           })}
@@ -360,7 +364,6 @@ const MainDashboard: React.FC = () => {
 
         {activePuzzle ? (
           <section className="flex flex-col items-center w-full max-w-sm sm:max-w-md">
-            {/* 包含 400ms 瞬間二進制邊框脈衝之容器 */}
             <div
               className={`w-full p-1 bg-slate-900/60 border-2 transition-all duration-150 ${
                 flashFeedback === 'success'
@@ -382,13 +385,12 @@ const MainDashboard: React.FC = () => {
               </ErrorBoundary>
             </div>
 
-            {/* 🕹️ 自適應虛擬搖桿（僅空間題型顯示） */}
             {isSpatialExplorationType && (
               <VirtualGamepad
                 onMove={handleJoystickMove}
                 onRotate={handleJoystickRotate}
                 onAction={handleJoystickAction}
-                actionLabel="STEP"
+                actionLabel={isEn ? "STEP" : "動作"}
               />
             )}
 
@@ -397,13 +399,13 @@ const MainDashboard: React.FC = () => {
                 onClick={handlePrevPuzzle}
                 className="py-2.5 bg-slate-900 hover:bg-slate-800 active:scale-[0.99] text-slate-400 hover:text-slate-200 text-[10px] font-mono border border-slate-800 transition"
               >
-                ◀ 上一題 (P)
+                {isEn ? '◀ Prev (P)' : '◀ 上一題 (P)'}
               </button>
               <button
                 onClick={handleNextPuzzle}
                 className="py-2.5 bg-slate-800 hover:bg-slate-700 active:scale-[0.99] text-slate-200 hover:text-white text-[10px] font-mono border border-slate-700 transition"
               >
-                下一題 ▶ (N)
+                {isEn ? 'Next ▶ (N)' : '下一題 ▶ (N)'}
               </button>
             </div>
 
@@ -411,20 +413,20 @@ const MainDashboard: React.FC = () => {
               <div className="flex gap-3">
                 <span className="text-slate-300">⏱️ {String(Math.floor(elapsed / 60)).padStart(2, '0')}:{String(elapsed % 60).padStart(2, '0')}</span>
                 {todayAvg !== null && (
-                  <span className="text-slate-500">⚡ 今日均時: {todayAvg}s</span>
+                  <span className="text-slate-500">⚡ {isEn ? 'Avg' : '今日均時'}: {todayAvg}s</span>
                 )}
-                <span className="text-slate-500">進度: {puzzleIndex + 1}/{activeList.length}</span>
+                <span className="text-slate-500">{isEn ? 'Progress' : '進度'}: {puzzleIndex + 1}/{activeList.length}</span>
               </div>
               <div className="flex gap-2 text-[8px] text-slate-500">
-                <kbd className="px-1 border border-slate-800">N</kbd>下一題 
-                <kbd className="px-1 border border-slate-800">P</kbd>上一題 
-                <kbd className="px-1 border border-slate-800">R</kbd>隨機
+                <kbd className="px-1 border border-slate-800">N</kbd>{isEn ? 'Next' : '下一題'} 
+                <kbd className="px-1 border border-slate-800">P</kbd>{isEn ? 'Prev' : '上一題'} 
+                <kbd className="px-1 border border-slate-800">R</kbd>{isEn ? 'Rand' : '隨機'}
               </div>
             </div>
           </section>
         ) : (
           <div className="mt-12 p-8 border border-slate-800 text-center max-w-sm font-mono">
-            <p className="text-slate-500 text-xs">題庫尚未加載</p>
+            <p className="text-slate-500 text-xs">{isEn ? 'No puzzles available' : '題庫尚未加載'}</p>
           </div>
         )}
 
@@ -437,10 +439,10 @@ const MainDashboard: React.FC = () => {
             {showDetail ? (
               <span className="text-slate-300">
                 θ: {globalRadar.spatial}s / {globalRadar.numeric}n / {globalRadar.workingMemory}w / {globalRadar.inhibition}i
-                &nbsp;· 士氣 {profile.morale}x &nbsp;· 巔峰 {t.difficulty[overallPeakTier]}
+                &nbsp;· {isEn ? 'Morale' : '士氣'} {profile.morale}x
               </span>
             ) : (
-              <span className="text-slate-600">⏎ Hover 查看 MIRT 指標 · 鍵盤快速鍵已啟用</span>
+              <span className="text-slate-600">{isEn ? '⏎ Hover for MIRT Stats · Shortcuts Enabled' : '⏎ Hover 查看 MIRT 指標 · 鍵盤快速鍵已啟用'}</span>
             )}
           </div>
         </div>
@@ -449,7 +451,7 @@ const MainDashboard: React.FC = () => {
   }
 
   // ==========================
-  // 🎨 視圖 2：沉浸神經美學模式
+  // 🎨 視圖 2：沉浸模式 (Immersive Visual Mode)
   // ==========================
   return (
     <main
@@ -466,7 +468,7 @@ const MainDashboard: React.FC = () => {
               LogiCore
             </h1>
             <p className="text-[9px] text-slate-500 font-mono tracking-widest uppercase">
-              {isChildMode ? '🌟 奇幻邏輯遊樂園' : '🔬 MIRT V7 全域競技'}
+              {isChildMode ? (isEn ? '🌟 Junior Playground' : '🌟 奇幻邏輯遊樂園') : (isEn ? '🔬 MIRT V7 Arena' : '🔬 MIRT V7 全域競技')}
             </p>
           </div>
         </div>
@@ -475,9 +477,9 @@ const MainDashboard: React.FC = () => {
           <button
             onClick={() => setIsProZen(true)}
             className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-slate-900 border border-slate-700 text-slate-300 hover:border-slate-500 transition"
-            title="切換至硬核工作臺"
+            title={isEn ? "Switch to Pro Workbench" : "切換至硬核工作臺"}
           >
-            ⚙️ 純粹
+            {isEn ? '⚙️ Pro Zen' : '⚙️ 純粹'}
           </button>
           <button
             onClick={() => {
@@ -491,16 +493,16 @@ const MainDashboard: React.FC = () => {
                 : 'bg-slate-900 border-slate-700 text-slate-300 hover:border-slate-500'
             }`}
           >
-            {isChildMode ? '👶 兒童' : '👤 成人'}
+            {isChildMode ? (isEn ? '👶 Junior' : '👶 兒童') : (isEn ? '👤 Pro' : '👤 成人')}
           </button>
 
           <div className="flex items-center gap-1 px-2.5 py-1 rounded-full border text-[10px] font-mono font-bold bg-orange-950/80 border-orange-500 text-orange-300">
             <span>🔥</span>
-            <span>{profile.streak} 連勝</span>
+            <span>{profile.streak} {isEn ? 'Wins' : '連勝'}</span>
           </div>
 
-          <button onClick={exportProfileJSON} className="p-1.5 bg-slate-900/80 border border-slate-700/60 hover:border-slate-500 rounded-lg text-[10px] text-slate-400 hover:text-white transition" title="備份">💾</button>
-          <button onClick={() => fileInputRef.current?.click()} className="p-1.5 bg-slate-900/80 border border-slate-700/60 hover:border-slate-500 rounded-lg text-[10px] text-slate-400 hover:text-white transition" title="載入">📂</button>
+          <button onClick={exportProfileJSON} className="p-1.5 bg-slate-900/80 border border-slate-700/60 hover:border-slate-500 rounded-lg text-[10px] text-slate-400 hover:text-white transition" title={isEn ? "Backup" : "備份"}>💾</button>
+          <button onClick={() => fileInputRef.current?.click()} className="p-1.5 bg-slate-900/80 border border-slate-700/60 hover:border-slate-500 rounded-lg text-[10px] text-slate-400 hover:text-white transition" title={isEn ? "Load" : "載入"}>📂</button>
           <input type="file" ref={fileInputRef} onChange={handleFileUpload} accept=".json" className="hidden" />
           <LangSwitcher />
         </div>
@@ -526,16 +528,16 @@ const MainDashboard: React.FC = () => {
               <span className="text-2xl">{topSchedule.item.isConsolidated ? '🌙' : '⚡'}</span>
               <div>
                 <div className="text-[10px] font-bold uppercase tracking-wider opacity-70">
-                  {topSchedule.item.isConsolidated ? '🧠 突觸固化黃金期 (16-48h)' : '🔄 記憶衰退喚醒'}
+                  {topSchedule.item.isConsolidated ? (isEn ? '🧠 Synaptic Peak (16-48h)' : '🧠 突觸固化黃金期 (16-48h)') : (isEn ? '🔄 Memory Reactivation' : '🔄 記憶衰退喚醒')}
                 </div>
                 <div className="text-sm font-bold">
-                  {topSchedule.targetType} · 強度 S={topSchedule.item.currentStrength}
-                  {topSchedule.item.isConsolidated && <span className="ml-2 text-emerald-300 text-[10px]">+25% 增益</span>}
+                  {topSchedule.targetType} · {isEn ? 'Strength' : '強度'} S={topSchedule.item.currentStrength}
+                  {topSchedule.item.isConsolidated && <span className="ml-2 text-emerald-300 text-[10px]">+25% Boost</span>}
                 </div>
               </div>
             </div>
             <div className="text-[10px] px-3 py-1.5 bg-white/10 rounded-full backdrop-blur border border-white/10 font-bold">
-              立即收割 ↗
+              {isEn ? 'Harvest ↗' : '立即收割 ↗'}
             </div>
           </div>
         </div>
@@ -559,7 +561,7 @@ const MainDashboard: React.FC = () => {
               }`}
             >
               <span>{pt.icon}</span>
-              <span>{pt.nameZh}</span>
+              <span>{isEn ? pt.nameEn : pt.nameZh}</span>
               <span className="text-[8px] opacity-50">({count})</span>
             </button>
           );
@@ -569,25 +571,25 @@ const MainDashboard: React.FC = () => {
       {!isChildMode && (
         <div className="w-full max-w-xl mb-3 px-3 py-2 bg-slate-900/60 rounded-xl border border-slate-800/80 grid grid-cols-4 gap-2 text-center text-[9px] font-mono">
           <div>
-            <span className="text-slate-400 block">空間幾何</span>
+            <span className="text-slate-400 block">{isEn ? 'Spatial' : '空間幾何'}</span>
             <div className="w-full bg-slate-800 h-1.5 rounded-full mt-1 overflow-hidden">
               <div className="bg-cyan-400 h-full" style={{ width: `${currentLoad.spatial * 100}%` }} />
             </div>
           </div>
           <div>
-            <span className="text-slate-400 block">數感運算</span>
+            <span className="text-slate-400 block">{isEn ? 'Numeric' : '數感運算'}</span>
             <div className="w-full bg-slate-800 h-1.5 rounded-full mt-1 overflow-hidden">
               <div className="bg-emerald-400 h-full" style={{ width: `${currentLoad.numeric * 100}%` }} />
             </div>
           </div>
           <div>
-            <span className="text-slate-400 block">工作記憶</span>
+            <span className="text-slate-400 block">{isEn ? 'Working Mem' : '工作記憶'}</span>
             <div className="w-full bg-slate-800 h-1.5 rounded-full mt-1 overflow-hidden">
               <div className="bg-indigo-400 h-full" style={{ width: `${currentLoad.workingMemory * 100}%` }} />
             </div>
           </div>
           <div>
-            <span className="text-slate-400 block">抑制控制</span>
+            <span className="text-slate-400 block">{isEn ? 'Inhibition' : '抑制控制'}</span>
             <div className="w-full bg-slate-800 h-1.5 rounded-full mt-1 overflow-hidden">
               <div className="bg-amber-400 h-full" style={{ width: `${currentLoad.inhibition * 100}%` }} />
             </div>
@@ -618,13 +620,12 @@ const MainDashboard: React.FC = () => {
             </ErrorBoundary>
           </div>
 
-          {/* 🕹️ 自適應虛擬搖桿（僅空間題型顯示） */}
           {isSpatialExplorationType && (
             <VirtualGamepad
               onMove={handleJoystickMove}
               onRotate={handleJoystickRotate}
               onAction={handleJoystickAction}
-              actionLabel="TRIGGER"
+              actionLabel={isEn ? "TRIGGER" : "觸發"}
             />
           )}
 
@@ -633,7 +634,7 @@ const MainDashboard: React.FC = () => {
               onClick={handleNextPuzzle}
               className="py-3.5 bg-slate-900/90 hover:bg-slate-800 active:scale-[0.98] text-slate-300 hover:text-white rounded-2xl text-xs font-bold shadow-md transition-all border border-slate-700/60 flex items-center justify-center gap-1.5"
             >
-              <span>🎲 輕鬆探索</span>
+              <span>🎲 {isEn ? 'Explore' : '輕鬆探索'}</span>
               <span className="text-[10px] opacity-50 font-mono">({puzzleIndex + 1}/{activeList.length})</span>
             </button>
 
@@ -641,19 +642,21 @@ const MainDashboard: React.FC = () => {
               onClick={handleExpedition}
               className="py-3.5 bg-gradient-to-r from-cyan-600 via-indigo-600 to-violet-600 hover:from-cyan-500 hover:to-indigo-500 active:scale-[0.98] text-white rounded-2xl text-xs font-bold shadow-xl shadow-cyan-600/25 transition-all border border-cyan-400/30 flex items-center justify-center gap-1.5"
             >
-              <span>🗺️ 未知領域</span>
-              <span className="text-[10px] opacity-75">探索推薦 ↗</span>
+              <span>🗺️ {isEn ? 'Unknown Frontier' : '未知領域'}</span>
+              <span className="text-[10px] opacity-75">{isEn ? 'Targeted ↗' : '探索推薦 ↗'}</span>
             </button>
           </div>
 
           <div className="mt-2 text-[9px] text-slate-500 font-mono tracking-wider">
-            {isZPDMode ? `🧠 智能階梯 · ${tierNames[activeLevel]}` : `🎛️ 手動探索 · ${tierNames[activeLevel]}`}
+            {isZPDMode
+              ? `🧠 ${isEn ? 'Adaptive ZPD' : '智能階梯'} · ${tierNames[activeLevel]}`
+              : `🎛️ ${isEn ? 'Manual Mode' : '手動探索'} · ${tierNames[activeLevel]}`}
           </div>
         </section>
       ) : (
         <div className="mt-12 p-10 border border-dashed border-slate-800/60 rounded-3xl text-center max-w-sm backdrop-blur-sm bg-slate-900/30">
           <p className="text-indigo-400 text-3xl mb-2">{currentMeta.icon}</p>
-          <p className="text-slate-300 text-sm font-semibold">{currentMeta.nameZh} 題庫準備中</p>
+          <p className="text-slate-300 text-sm font-semibold">{isEn ? currentMeta.nameEn : currentMeta.nameZh} {isEn ? 'Ready Soon' : '題庫準備中'}</p>
         </div>
       )}
     </main>
