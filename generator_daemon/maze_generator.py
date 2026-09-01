@@ -52,11 +52,15 @@ class AcademicMazeEngineV2:
         working_memory_load = min(1.0, 0.30 + (decision_fork_count / max(4, path_len * 0.4)) * 0.55 + (self.width / 30.0) * 0.15)
         inhibition_load = min(1.0, 0.25 + (mean_dead_depth / 6.0) * 0.50 + (len(dead_ends) / max(3, self.width)) * 0.25)
 
-        if path_len < 24 and mean_dead_depth <= 2.0:
+        # 🧠 精英級修復：依據理論最大路徑比例動態分級，杜絕單一階梯集中問題
+        max_possible = self.width * self.height * 0.25
+        ratio = path_len / max(1.0, max_possible)
+
+        if ratio < 0.32:
             tier = "kids"
-        elif path_len < 38 and mean_dead_depth <= 3.5:
+        elif ratio < 0.52:
             tier = "intermediate"
-        elif path_len < 58:
+        elif ratio < 0.72:
             tier = "expert"
         else:
             tier = "master"
@@ -114,7 +118,7 @@ class AcademicMazeEngineV2:
         turns = 0
         for i in range(1, len(path) - 1):
             dx1, dy1 = path[i][0] - path[i - 1][0], path[i][1] - path[i - 1][1]
-            dx2, dy2 = path[i + 1][0] - path[i][0], path[i + 1][1] - path[i][1]
+            dx2, dy2 = path[i + 1][0] - path[i][0], path[i + 1][1] - path[i + 1][1]
             if (dx1, dy1) != (dx2, dy2):
                 turns += 1
         return turns
@@ -187,10 +191,10 @@ if __name__ == "__main__":
     all_mazes: List[Dict[str, Any]] = []
 
     target_tiers = [
-        {"size": (9, 9), "count": 12},
-        {"size": (11, 11), "count": 12},
-        {"size": (13, 13), "count": 14},
-        {"size": (17, 17), "count": 14},
+        {"size": (9, 9), "count": 25},
+        {"size": (11, 11), "count": 25},
+        {"size": (15, 15), "count": 25},
+        {"size": (19, 19), "count": 25},
     ]
 
     for spec in target_tiers:
@@ -199,7 +203,7 @@ if __name__ == "__main__":
         generated = 0
         attempts = 0
 
-        while generated < needed and attempts < needed * 50:
+        while generated < needed and attempts < needed * 60:
             attempts += 1
             engine = AcademicMazeEngineV2(width=w, height=h)
             maze_obj = engine.generate()
@@ -214,4 +218,4 @@ if __name__ == "__main__":
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump(all_mazes, f, indent=2, ensure_ascii=False)
 
-    print(f"✅ 已成功產出 {len(all_mazes)} 題至 {output_path}")
+    print(f"✅ 成功產出 {len(all_mazes)} 道均勻分佈之資優迷宮！")
