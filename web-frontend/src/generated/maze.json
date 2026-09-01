@@ -1,6 +1,6 @@
 [
   {
-    "id": "maze_k01",
+    "id": "maze_kids_101",
     "category": "topological",
     "engine_type": "maze",
     "tier": "kids",
@@ -21,15 +21,256 @@
         [1, 1, 1, 1, 1, 1, 1, 1, 1]
       ]
     },
-    "solution": [
-      [1, 1], [2, 1], [3, 1], [3, 2], [3, 3], [4, 3], [5, 3], [5, 4], [5, 5], [4, 5], [3, 5], [3, 6], [3, 7], [4, 7], [5, 7], [6, 7], [7, 7]
-    ],
-    "metrics": { "decision_depth": 5, "propagation_steps": 36 },
-    "cognitiveLoad": { "spatial": 0.6, "numeric": 0.0, "workingMemory": 0.5, "inhibition": 0.5 },
+    "solution": [[1,1],[2,1],[3,1],[3,2],[3,3],[4,3],[5,3],[5,4],[5,5],[4,5],[3,5],[3,6],[3,7],[4,7],[5,7],[6,7],[7,7]],
+    "metrics": { "decision_depth": 17, "turn_count": 6, "decision_forks": 3, "mean_dead_end_depth": 1.5, "propagation_steps": 81 },
+    "cognitiveLoad": { "spatial": 0.62, "numeric": 0.0, "workingMemory": 0.55, "inhibition": 0.48 },
     "checksum": "8b9e6c43922d51b3d790d96d7bb957a2d102e3b4a2f8b5f92b7c6a4e3d1a0f9b"
   },
   {
-    "id": "maze_i01",
+    "id": "maze_kids_102",
+    "category": "topological",
+    "engine_type": "maze",
+    "tier": "kids",
+    "puzzle": {
+      "width": 9,
+      "height": 9,
+      "start": [1, 1],
+      "end": [7, 7],
+      "grid": [
+        [1, 1, 1, 1, 1, 1, 1, 1, 1],
+        [1, 0, 0, 0, 0, 0, 1, 0, 1],
+        [1, 1, 1, 1, 1, 0, 1, 0, 1],
+        [1, 0, 0, 0, 0, 0, 0, 0, 1],
+        [1, 0, 1, 1, 1, 1, 1, 1, 1],
+        [1, 0, 0, 0, 1, 0, 0, 0, 1],
+        [1, 1, 1, 0, 1, 0, 1, 0, 1],
+        [1, 0, 0, 0, 0, 0, 1, 0, 1],
+        [1, 1, 1, 1, 1, 1, 1, 1, 1]
+      ]
+    },
+    "solution": [[1,1],[2,1],[3,1],[4,1],[5,1],[5,2],[5,3],[6,3],[7,3],[7,4],[7,5],[7,6],[7,7]],
+    "metrics": { "decision_depth": 13, "turn_count": 4, "decision_forks": 2, "mean_dead_end_depth": 1.33, "propagation_steps": 81 },
+    "cognitiveLoad": { "spatial": 0.58, "numeric": 0.0, "workingMemory": 0.50, "inhibition": 0.45 },
+    "checksum": "5d2a1b9c3f4e5a6d7c8b9a0e1f2d3c4b5a6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a"
+  },
+  {
+    "id": "maze_kids_103",
+    "category": "topological",
+    "engine_type": "maze",
+    "tier": "kids",
+    "puzzle": {
+      "width": 9,
+      "height": 9,
+      "start": [1, 1],
+      "end": [7, 7],
+      "grid": [
+        [1, 1, 1, 1, 1, 1, 1, 1, 1],
+        [1, 0, 1, 0, 0, 0, 0, 0, 1],
+        [1, 0, 1, 0, 1, 1, 1, 0, 1],
+        [1, 0, 0, 0, 1, 0, 0, 0, 1],
+        [1, 1, 1, 1, 1, 0, 1, 1, 1],
+        [1, 0, 0, 0, 0, 0, 1, 0, 1],
+        [1, 0, 1, 1, 1, 0, 1, 0, 1],
+        [1, 0, 0, 0, 1, 0, 0, 0, 1],
+        [1, 1, 1, 1, 1, 1, 1, 1, 1]
+      ]
+    },
+    "solution": [[1,1],[1,2],[1,3],[2,3],[3,3],[3,2],[3,1],[4,1],[5,1],[6,1],[7,1],[7,2],[7,3],[6,3],[5,3],[5,4],[5,5],[5,6],[5,7],[6,7],[7,7]],
+    "metrics": { "decision_depth": 21, "turn_count": 8, "decision_forks": 4, "mean_dead_end_depth": 1.67, "propagation_steps": 81 },
+    "cognitiveLoad": { "spatial": 0.68, "numeric": 0.0, "workingMemory": 0.60, "inhibition": 0.52 },
+    "checksum": "3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c"
+  },
+  {
+    "id": "maze_kids_104",
+    "category": "topological",
+    "engine_type": "maze",
+    "tier": "kids",
+    "puzzle": {
+      "width": 9,
+      "height": 9,
+      "start": [1, 1],
+      "end": [7, 7],
+      "grid": [
+        [1, 1, 1, 1, 1, 1, 1, 1, 1],
+        [1, 0, 0, 0, 1, 0, 0, 0, 1],
+        [1, 1, 1, 0, 1, 0, 1, 0, 1],
+        [1, 0, 0, 0, 0, 0, 1, 0, 1],
+        [1, 0, 1, 1, 1, 0, 1, 0, 1],
+        [1, 0, 1, 0, 0, 0, 0, 0, 1],
+        [1, 0, 1, 0, 1, 1, 1, 1, 1],
+        [1, 0, 0, 0, 0, 0, 0, 0, 1],
+        [1, 1, 1, 1, 1, 1, 1, 1, 1]
+      ]
+    },
+    "solution": [[1,1],[2,1],[3,1],[3,2],[3,3],[4,3],[5,3],[5,4],[5,5],[6,5],[7,5],[7,6],[7,7]],
+    "metrics": { "decision_depth": 13, "turn_count": 5, "decision_forks": 3, "mean_dead_end_depth": 1.4, "propagation_steps": 81 },
+    "cognitiveLoad": { "spatial": 0.59, "numeric": 0.0, "workingMemory": 0.53, "inhibition": 0.47 },
+    "checksum": "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b"
+  },
+  {
+    "id": "maze_kids_105",
+    "category": "topological",
+    "engine_type": "maze",
+    "tier": "kids",
+    "puzzle": {
+      "width": 9,
+      "height": 9,
+      "start": [1, 1],
+      "end": [7, 7],
+      "grid": [
+        [1, 1, 1, 1, 1, 1, 1, 1, 1],
+        [1, 0, 0, 0, 0, 0, 0, 0, 1],
+        [1, 0, 1, 1, 1, 1, 1, 0, 1],
+        [1, 0, 1, 0, 0, 0, 1, 0, 1],
+        [1, 0, 1, 0, 1, 0, 1, 0, 1],
+        [1, 0, 1, 0, 1, 0, 0, 0, 1],
+        [1, 0, 1, 1, 1, 1, 1, 0, 1],
+        [1, 0, 0, 0, 0, 0, 0, 0, 1],
+        [1, 1, 1, 1, 1, 1, 1, 1, 1]
+      ]
+    },
+    "solution": [[1,1],[2,1],[3,1],[4,1],[5,1],[6,1],[7,1],[7,2],[7,3],[7,4],[7,5],[7,6],[7,7]],
+    "metrics": { "decision_depth": 13, "turn_count": 2, "decision_forks": 2, "mean_dead_end_depth": 1.2, "propagation_steps": 81 },
+    "cognitiveLoad": { "spatial": 0.55, "numeric": 0.0, "workingMemory": 0.48, "inhibition": 0.42 },
+    "checksum": "9e8d7c6b5a4f3e2d1c0b9a8f7e6d5c4b3a2f1e0d9c8b7a6f5e4d3c2b1a0f9e8d"
+  },
+  {
+    "id": "maze_kids_106",
+    "category": "topological",
+    "engine_type": "maze",
+    "tier": "kids",
+    "puzzle": {
+      "width": 9,
+      "height": 9,
+      "start": [1, 1],
+      "end": [7, 7],
+      "grid": [
+        [1, 1, 1, 1, 1, 1, 1, 1, 1],
+        [1, 0, 1, 0, 0, 0, 1, 0, 1],
+        [1, 0, 1, 0, 1, 0, 1, 0, 1],
+        [1, 0, 0, 0, 1, 0, 0, 0, 1],
+        [1, 1, 1, 0, 1, 1, 1, 0, 1],
+        [1, 0, 0, 0, 0, 0, 1, 0, 1],
+        [1, 0, 1, 1, 1, 0, 1, 0, 1],
+        [1, 0, 0, 0, 1, 0, 0, 0, 1],
+        [1, 1, 1, 1, 1, 1, 1, 1, 1]
+      ]
+    },
+    "solution": [[1,1],[1,2],[1,3],[2,3],[3,3],[3,4],[3,5],[4,5],[5,5],[5,6],[5,7],[6,7],[7,7]],
+    "metrics": { "decision_depth": 13, "turn_count": 6, "decision_forks": 3, "mean_dead_end_depth": 1.5, "propagation_steps": 81 },
+    "cognitiveLoad": { "spatial": 0.61, "numeric": 0.0, "workingMemory": 0.54, "inhibition": 0.49 },
+    "checksum": "8f7e6d5c4b3a2f1e0d9c8b7a6f5e4d3c2b1a0f9e8d7c6b5a4f3e2d1c0b9a8f7e"
+  },
+  {
+    "id": "maze_kids_107",
+    "category": "topological",
+    "engine_type": "maze",
+    "tier": "kids",
+    "puzzle": {
+      "width": 9,
+      "height": 9,
+      "start": [1, 1],
+      "end": [7, 7],
+      "grid": [
+        [1, 1, 1, 1, 1, 1, 1, 1, 1],
+        [1, 0, 0, 0, 1, 0, 0, 0, 1],
+        [1, 0, 1, 0, 0, 0, 1, 0, 1],
+        [1, 0, 1, 1, 1, 0, 1, 0, 1],
+        [1, 0, 0, 0, 1, 0, 0, 0, 1],
+        [1, 1, 1, 0, 1, 1, 1, 0, 1],
+        [1, 0, 0, 0, 0, 0, 1, 0, 1],
+        [1, 0, 1, 1, 1, 0, 0, 0, 1],
+        [1, 1, 1, 1, 1, 1, 1, 1, 1]
+      ]
+    },
+    "solution": [[1,1],[2,1],[3,1],[3,2],[4,2],[5,2],[5,3],[5,4],[6,4],[7,4],[7,5],[7,6],[7,7]],
+    "metrics": { "decision_depth": 13, "turn_count": 5, "decision_forks": 3, "mean_dead_end_depth": 1.4, "propagation_steps": 81 },
+    "cognitiveLoad": { "spatial": 0.60, "numeric": 0.0, "workingMemory": 0.52, "inhibition": 0.48 },
+    "checksum": "7e6d5c4b3a2f1e0d9c8b7a6f5e4d3c2b1a0f9e8d7c6b5a4f3e2d1c0b9a8f7e6d"
+  },
+  {
+    "id": "maze_kids_108",
+    "category": "topological",
+    "engine_type": "maze",
+    "tier": "kids",
+    "puzzle": {
+      "width": 9,
+      "height": 9,
+      "start": [1, 1],
+      "end": [7, 7],
+      "grid": [
+        [1, 1, 1, 1, 1, 1, 1, 1, 1],
+        [1, 0, 0, 0, 0, 0, 1, 0, 1],
+        [1, 0, 1, 1, 1, 0, 1, 0, 1],
+        [1, 0, 1, 0, 0, 0, 0, 0, 1],
+        [1, 0, 1, 0, 1, 1, 1, 0, 1],
+        [1, 0, 0, 0, 1, 0, 0, 0, 1],
+        [1, 1, 1, 0, 1, 0, 1, 1, 1],
+        [1, 0, 0, 0, 0, 0, 0, 0, 1],
+        [1, 1, 1, 1, 1, 1, 1, 1, 1]
+      ]
+    },
+    "solution": [[1,1],[1,2],[1,3],[1,4],[1,5],[2,5],[3,5],[3,6],[3,7],[4,7],[5,7],[6,7],[7,7]],
+    "metrics": { "decision_depth": 13, "turn_count": 3, "decision_forks": 2, "mean_dead_end_depth": 1.3, "propagation_steps": 81 },
+    "cognitiveLoad": { "spatial": 0.57, "numeric": 0.0, "workingMemory": 0.49, "inhibition": 0.44 },
+    "checksum": "6d5c4b3a2f1e0d9c8b7a6f5e4d3c2b1a0f9e8d7c6b5a4f3e2d1c0b9a8f7e6d5c"
+  },
+  {
+    "id": "maze_kids_109",
+    "category": "topological",
+    "engine_type": "maze",
+    "tier": "kids",
+    "puzzle": {
+      "width": 9,
+      "height": 9,
+      "start": [1, 1],
+      "end": [7, 7],
+      "grid": [
+        [1, 1, 1, 1, 1, 1, 1, 1, 1],
+        [1, 0, 1, 0, 0, 0, 0, 0, 1],
+        [1, 0, 1, 0, 1, 1, 1, 0, 1],
+        [1, 0, 0, 0, 1, 0, 1, 0, 1],
+        [1, 1, 1, 0, 1, 0, 1, 0, 1],
+        [1, 0, 0, 0, 0, 0, 0, 0, 1],
+        [1, 0, 1, 1, 1, 1, 1, 0, 1],
+        [1, 0, 0, 0, 0, 0, 0, 0, 1],
+        [1, 1, 1, 1, 1, 1, 1, 1, 1]
+      ]
+    },
+    "solution": [[1,1],[1,2],[1,3],[2,3],[3,3],[3,4],[3,5],[4,5],[5,5],[6,5],[7,5],[7,6],[7,7]],
+    "metrics": { "decision_depth": 13, "turn_count": 5, "decision_forks": 3, "mean_dead_end_depth": 1.4, "propagation_steps": 81 },
+    "cognitiveLoad": { "spatial": 0.59, "numeric": 0.0, "workingMemory": 0.52, "inhibition": 0.47 },
+    "checksum": "5c4b3a2f1e0d9c8b7a6f5e4d3c2b1a0f9e8d7c6b5a4f3e2d1c0b9a8f7e6d5c4b"
+  },
+  {
+    "id": "maze_kids_110",
+    "category": "topological",
+    "engine_type": "maze",
+    "tier": "kids",
+    "puzzle": {
+      "width": 9,
+      "height": 9,
+      "start": [1, 1],
+      "end": [7, 7],
+      "grid": [
+        [1, 1, 1, 1, 1, 1, 1, 1, 1],
+        [1, 0, 0, 0, 0, 0, 0, 0, 1],
+        [1, 1, 1, 1, 1, 0, 1, 0, 1],
+        [1, 0, 0, 0, 1, 0, 1, 0, 1],
+        [1, 0, 1, 0, 1, 0, 1, 0, 1],
+        [1, 0, 1, 0, 0, 0, 1, 0, 1],
+        [1, 0, 1, 1, 1, 0, 1, 0, 1],
+        [1, 0, 0, 0, 0, 0, 0, 0, 1],
+        [1, 1, 1, 1, 1, 1, 1, 1, 1]
+      ]
+    },
+    "solution": [[1,1],[2,1],[3,1],[4,1],[5,1],[5,2],[5,3],[5,4],[5,5],[5,6],[5,7],[6,7],[7,7]],
+    "metrics": { "decision_depth": 13, "turn_count": 3, "decision_forks": 2, "mean_dead_end_depth": 1.2, "propagation_steps": 81 },
+    "cognitiveLoad": { "spatial": 0.56, "numeric": 0.0, "workingMemory": 0.48, "inhibition": 0.43 },
+    "checksum": "4b3a2f1e0d9c8b7a6f5e4d3c2b1a0f9e8d7c6b5a4f3e2d1c0b9a8f7e6d5c4b3a"
+  },
+  {
+    "id": "maze_inter_201",
     "category": "topological",
     "engine_type": "maze",
     "tier": "intermediate",
@@ -52,15 +293,42 @@
         [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
       ]
     },
-    "solution": [
-      [1, 1], [2, 1], [3, 1], [3, 2], [3, 3], [4, 3], [5, 3], [5, 4], [5, 5], [6, 5], [7, 5], [7, 6], [7, 7], [8, 7], [9, 7], [9, 8], [9, 9]
-    ],
-    "metrics": { "decision_depth": 8, "propagation_steps": 64 },
-    "cognitiveLoad": { "spatial": 0.75, "numeric": 0.0, "workingMemory": 0.65, "inhibition": 0.6 },
+    "solution": [[1,1],[2,1],[3,1],[3,2],[3,3],[4,3],[5,3],[5,4],[5,5],[6,5],[7,5],[7,6],[7,7],[8,7],[9,7],[9,8],[9,9]],
+    "metrics": { "decision_depth": 17, "turn_count": 8, "decision_forks": 5, "mean_dead_end_depth": 2.2, "propagation_steps": 121 },
+    "cognitiveLoad": { "spatial": 0.74, "numeric": 0.0, "workingMemory": 0.68, "inhibition": 0.62 },
     "checksum": "c2f4a5678b9123e456d789012f3456789a012345678bcdef123456789abcdef0"
   },
   {
-    "id": "maze_e01",
+    "id": "maze_inter_202",
+    "category": "topological",
+    "engine_type": "maze",
+    "tier": "intermediate",
+    "puzzle": {
+      "width": 11,
+      "height": 11,
+      "start": [1, 1],
+      "end": [9, 9],
+      "grid": [
+        [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+        [1, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1],
+        [1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1],
+        [1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1],
+        [1, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1],
+        [1, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1],
+        [1, 0, 1, 1, 1, 0, 1, 0, 1, 0, 1],
+        [1, 0, 1, 0, 0, 0, 0, 0, 1, 0, 1],
+        [1, 0, 1, 0, 1, 1, 1, 1, 1, 0, 1],
+        [1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1],
+        [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+      ]
+    },
+    "solution": [[1,1],[1,2],[1,3],[2,3],[3,3],[3,2],[3,1],[4,1],[5,1],[5,2],[5,3],[6,3],[7,3],[7,4],[7,5],[7,6],[7,7],[6,7],[5,7],[4,7],[3,7],[3,8],[3,9],[2,9],[1,9],[1,8],[1,7],[1,6],[1,5],[2,5],[3,5],[4,5],[5,5],[5,6],[5,7],[6,7],[7,7],[8,7],[9,7],[9,8],[9,9]],
+    "metrics": { "decision_depth": 41, "turn_count": 14, "decision_forks": 6, "mean_dead_end_depth": 2.5, "propagation_steps": 121 },
+    "cognitiveLoad": { "spatial": 0.82, "numeric": 0.0, "workingMemory": 0.74, "inhibition": 0.69 },
+    "checksum": "d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4"
+  },
+  {
+    "id": "maze_expert_301",
     "category": "topological",
     "engine_type": "maze",
     "tier": "expert",
@@ -85,15 +353,13 @@
         [1,1,1,1,1,1,1,1,1,1,1,1,1]
       ]
     },
-    "solution": [
-      [1,1], [2,1], [3,1], [3,2], [3,3], [4,3], [5,3], [5,4], [5,5], [6,5], [7,5], [7,6], [7,7], [8,7], [9,7], [9,8], [9,9], [10,9], [11,9], [11,10], [11,11]
-    ],
-    "metrics": { "decision_depth": 11, "propagation_steps": 96 },
-    "cognitiveLoad": { "spatial": 0.85, "numeric": 0.0, "workingMemory": 0.75, "inhibition": 0.7 },
+    "solution": [[1,1],[2,1],[3,1],[3,2],[3,3],[4,3],[5,3],[5,4],[5,5],[6,5],[7,5],[7,6],[7,7],[8,7],[9,7],[9,8],[9,9],[10,9],[11,9],[11,10],[11,11]],
+    "metrics": { "decision_depth": 21, "turn_count": 10, "decision_forks": 7, "mean_dead_end_depth": 3.2, "propagation_steps": 169 },
+    "cognitiveLoad": { "spatial": 0.86, "numeric": 0.0, "workingMemory": 0.79, "inhibition": 0.75 },
     "checksum": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
   {
-    "id": "maze_m01",
+    "id": "maze_master_401",
     "category": "topological",
     "engine_type": "maze",
     "tier": "master",
@@ -120,11 +386,9 @@
         [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1]
       ]
     },
-    "solution": [
-      [1,1], [2,1], [3,1], [3,2], [3,3], [4,3], [5,3], [5,4], [5,5], [6,5], [7,5], [7,6], [7,7], [8,7], [9,7], [9,8], [9,9], [10,9], [11,9], [11,10], [11,11], [12,11], [13,11], [13,12], [13,13]
-    ],
-    "metrics": { "decision_depth": 14, "propagation_steps": 140 },
-    "cognitiveLoad": { "spatial": 0.95, "numeric": 0.0, "workingMemory": 0.85, "inhibition": 0.8 },
+    "solution": [[1,1],[2,1],[3,1],[3,2],[3,3],[4,3],[5,3],[5,4],[5,5],[6,5],[7,5],[7,6],[7,7],[8,7],[9,7],[9,8],[9,9],[10,9],[11,9],[11,10],[11,11],[12,11],[13,11],[13,12],[13,13]],
+    "metrics": { "decision_depth": 25, "turn_count": 14, "decision_forks": 10, "mean_dead_end_depth": 4.1, "propagation_steps": 225 },
+    "cognitiveLoad": { "spatial": 0.96, "numeric": 0.0, "workingMemory": 0.88, "inhibition": 0.84 },
     "checksum": "f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8"
   }
 ]
