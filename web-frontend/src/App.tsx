@@ -1,19 +1,36 @@
 // web-frontend/src/App.tsx
-import React, { useState, useMemo, useRef, useEffect } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import { ErrorBoundary } from 'react-error-boundary';
 import { LanguageProvider, useLanguage } from './contexts/LanguageContext';
 import { PuzzleRenderer } from './registry/RendererRegistry';
-import { PUZZLE_CATALOG, PuzzleEntity } from './generated';
+import { PUZZLE_CATALOG, PuzzleEntity, CognitiveLoadVector } from './generated';
 import { LangSwitcher } from './components/LangSwitcher';
 import { useLearnerProfile, TierKey } from './hooks/useLearnerProfile';
 import { useLongTermScheduler } from './hooks/useLongTermScheduler';
 
-const PUZZLE_TYPES = [
-  { id: 'sudoku', nameZh: '經典數獨', nameEn: 'Sudoku', icon: '🔢' },
-  { id: 'skyscraper', nameZh: '摩天大樓', nameEn: 'Skyscraper', icon: '🏢' },
-  { id: 'hashi', nameZh: '數橋', nameEn: 'Hashi', icon: '🌉' },
-  { id: 'kropki', nameZh: '黑白點', nameEn: 'Kropki', icon: '⚪' },
-  { id: 'maze', nameZh: '大迷宮', nameEn: 'Maze', icon: '🌀' },
+interface PuzzleMeta {
+  id: string;
+  nameZh: string;
+  nameEn: string;
+  icon: string;
+  categoryName: string;
+  defaultLoad: CognitiveLoadVector;
+}
+
+// 12 大多元神經認知題型元數據
+const PUZZLE_METAS: PuzzleMeta[] = [
+  { id: 'sudoku', nameZh: '經典數獨', nameEn: 'Sudoku', icon: '🔢', categoryName: '網格約束', defaultLoad: { spatial: 0.3, numeric: 0.4, workingMemory: 0.8, inhibition: 0.6 } },
+  { id: 'skyscraper', nameZh: '摩天大樓', nameEn: 'Skyscraper', icon: '🏢', categoryName: '空間透視', defaultLoad: { spatial: 0.9, numeric: 0.3, workingMemory: 0.7, inhibition: 0.5 } },
+  { id: 'hashi', nameZh: '數橋', nameEn: 'Hashi', icon: '🌉', categoryName: '圖論拓撲', defaultLoad: { spatial: 0.8, numeric: 0.5, workingMemory: 0.6, inhibition: 0.4 } },
+  { id: 'kropki', nameZh: '黑白點', nameEn: 'Kropki', icon: '⚪', categoryName: '關係運算', defaultLoad: { spatial: 0.4, numeric: 0.8, workingMemory: 0.8, inhibition: 0.7 } },
+  { id: 'slitherlink', nameZh: '數迴', nameEn: 'Slitherlink', icon: '➰', categoryName: '邊界封閉', defaultLoad: { spatial: 0.9, numeric: 0.2, workingMemory: 0.8, inhibition: 0.7 } },
+  { id: 'kakuro', nameZh: '數和', nameEn: 'Kakuro', icon: '➕', categoryName: '算術分解', defaultLoad: { spatial: 0.3, numeric: 1.0, workingMemory: 0.9, inhibition: 0.5 } },
+  { id: 'nurikabe', nameZh: '數牆', nameEn: 'Nurikabe', icon: '🧱', categoryName: '集合分割', defaultLoad: { spatial: 0.8, numeric: 0.3, workingMemory: 0.7, inhibition: 0.8 } },
+  { id: 'hitori', nameZh: '數壹', nameEn: 'Hitori', icon: '⬛', categoryName: '逆向排除', defaultLoad: { spatial: 0.5, numeric: 0.3, workingMemory: 0.6, inhibition: 0.9 } },
+  { id: 'futoshiki', nameZh: '不等式', nameEn: 'Futoshiki', icon: '⚖️', categoryName: '偏序傳遞', defaultLoad: { spatial: 0.4, numeric: 0.6, workingMemory: 0.7, inhibition: 0.6 } },
+  { id: 'jigsaw', nameZh: '拼圖數獨', nameEn: 'Jigsaw', icon: '🧩', categoryName: '異形幾何', defaultLoad: { spatial: 0.9, numeric: 0.4, workingMemory: 0.8, inhibition: 0.5 } },
+  { id: 'dominoes', nameZh: '骨牌密拼', nameEn: 'Dominoes', icon: '🀄', categoryName: '組合配對', defaultLoad: { spatial: 0.7, numeric: 0.5, workingMemory: 0.6, inhibition: 0.7 } },
+  { id: 'maze', nameZh: '大迷宮', nameEn: 'Maze', icon: '🌀', categoryName: '空間探索', defaultLoad: { spatial: 1.0, numeric: 0.0, workingMemory: 0.5, inhibition: 0.4 } },
 ];
 
 const LEVEL_KEYS: TierKey[] = ['kids', 'intermediate', 'expert', 'master'];
@@ -21,11 +38,11 @@ const LEVEL_KEYS: TierKey[] = ['kids', 'intermediate', 'expert', 'master'];
 const EngineFallbackUI: React.FC<{ resetErrorBoundary: () => void }> = ({ resetErrorBoundary }) => {
   const { t } = useLanguage();
   return (
-    <div className="flex flex-col items-center justify-center p-8 bg-red-950/40 border border-red-800/80 rounded-xl max-w-md text-center my-6">
+    <div className="flex flex-col items-center justify-center p-8 bg-red-950/40 border border-red-800/80 rounded-2xl max-w-md text-center my-6">
       <p className="text-red-300 font-semibold text-sm">{t.errors.engineCrash}</p>
       <button
         onClick={resetErrorBoundary}
-        className="mt-4 px-4 py-2 bg-red-900/60 hover:bg-red-800 text-red-100 rounded-lg text-xs font-medium border border-red-700"
+        className="mt-4 px-4 py-2 bg-red-900/60 hover:bg-red-800 text-red-100 rounded-xl text-xs font-medium border border-red-700"
       >
         {t.ui.retry}
       </button>
@@ -75,13 +92,14 @@ const MainDashboard: React.FC = () => {
   const activeList = filteredPuzzles[activeLevel] || [];
   const activePuzzle = activeList.length > 0 ? activeList[puzzleIndex % activeList.length] : null;
 
+  const currentMeta = PUZZLE_METAS.find((m) => m.id === selectedType) || PUZZLE_METAS[0];
+  const currentLoad = activePuzzle?.cognitiveLoad || currentMeta.defaultLoad;
   const currentState = profile.typeStates[selectedType] || { theta: 0.0, strength: 5.0, avgTimeSec: 0 };
-  const currentPeak = profile.peakRecords[selectedType];
   const topSchedule = getRecommendedSchedulePuzzle();
 
-  // 🎨 動態背景：根據士氣與記憶強度改變氛圍
+  // 背景色溫動態流動
   const bgIntensity = Math.min(1, Math.max(0.2, profile.morale * 0.6 + (currentState.strength / 15)));
-  const bgGradient = `radial-gradient(circle at 50% 0%, rgba(99, 102, 241, ${bgIntensity * 0.15}) 0%, rgba(15, 23, 42, 1) 80%)`;
+  const bgGradient = `radial-gradient(circle at 50% 0%, rgba(99, 102, 241, ${bgIntensity * 0.18}) 0%, rgba(15, 23, 42, 1) 85%)`;
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -90,7 +108,7 @@ const MainDashboard: React.FC = () => {
       reader.onload = (event) => {
         const text = event.target?.result as string;
         if (importProfileJSON(text)) {
-          alert('🧠 神經大腦檔案 V5.2 載入成功！');
+          alert('🧠 神經大腦檔案載入成功！');
         } else {
           alert('檔案格式錯誤。');
         }
@@ -102,9 +120,9 @@ const MainDashboard: React.FC = () => {
   const handleScheduleClick = () => {
     if (!topSchedule) return;
     if (topSchedule.item.isConsolidated) {
-      setNeuroToast('🧠 突觸可塑性巔峰！24h 睡眠固化窗口開啟，現在挑戰高階難度，記憶增益 +25%');
+      setNeuroToast('🧠 突觸可塑性巔峰！24h 睡眠固化窗口開啟，現在挑戰高階難度，記憶增益 +25%！');
     } else {
-      setNeuroToast(`⚡ 神經衰退預警 (S=${topSchedule.item.currentStrength})，已切換至暖身基礎題。`);
+      setNeuroToast(`⚡ 神經衰退預警 (S=${topSchedule.item.currentStrength})，已切換至暖身題目以重啟神經通路。`);
     }
     setSelectedType(topSchedule.targetType);
     setCurrentLevel(topSchedule.puzzle.tier as TierKey);
@@ -113,13 +131,13 @@ const MainDashboard: React.FC = () => {
   };
 
   return (
-    <main 
+    <main
       className="min-h-screen text-slate-100 flex flex-col items-center py-4 px-3 font-sans selection:bg-indigo-500 transition-all duration-1000"
       style={{ background: bgGradient, backgroundColor: '#0f172a' }}
     >
-      {/* ========== 極簡神經頭部 ========== */}
-      <header className="w-full max-w-lg flex items-center justify-between mb-2 pb-2 border-b border-slate-800/60">
-        <div className="flex items-center gap-3">
+      {/* 頂部極簡導航 */}
+      <header className="w-full max-w-xl flex items-center justify-between mb-2 pb-2 border-b border-slate-800/60">
+        <div className="flex items-center gap-2.5">
           <div className="w-8 h-8 rounded-full bg-gradient-to-br from-indigo-500 to-cyan-400 flex items-center justify-center text-sm font-black shadow-lg shadow-indigo-500/30">
             🧠
           </div>
@@ -128,13 +146,14 @@ const MainDashboard: React.FC = () => {
               LogiCore
             </h1>
             <p className="text-[9px] text-slate-500 font-mono tracking-widest uppercase">
-              {isZPDMode ? '🔬 雙相神經引導' : '🎛️ 手動探索'}
+              {isZPDMode ? '🔬 12維神經自適應' : '🎛️ 手動探索'}
             </p>
           </div>
         </div>
+
         <div className="flex items-center gap-1.5">
-          {/* 懸浮數據膠囊（點擊展開詳情） */}
-          <div 
+          {/* 懸浮能力膠囊 */}
+          <div
             onMouseEnter={() => setShowDetail(true)}
             onMouseLeave={() => setShowDetail(false)}
             className="relative cursor-help"
@@ -145,13 +164,14 @@ const MainDashboard: React.FC = () => {
               <span className="text-amber-300">{profile.morale.toFixed(2)}x</span>
             </div>
             {showDetail && (
-              <div className="absolute right-0 top-full mt-1 z-50 px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg shadow-2xl text-[10px] font-mono whitespace-nowrap backdrop-blur-md">
+              <div className="absolute right-0 top-full mt-1 z-50 px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl text-[10px] font-mono whitespace-nowrap backdrop-blur-md">
                 <div>EWMA 均時: <span className="text-indigo-300">{currentState.avgTimeSec}s</span></div>
-                <div>巔峰段位: <span className="text-amber-300">{t.difficulty[overallPeakTier]}</span></div>
-                <div>累積通關: <span className="text-emerald-300">{profile.history.filter(h => h.isSuccess).length}</span></div>
+                <div>全域巔峰: <span className="text-amber-300">{t.difficulty[overallPeakTier]}</span></div>
+                <div>累積通關: <span className="text-emerald-300">{profile.history.filter((h) => h.isSuccess).length} 題</span></div>
               </div>
             )}
           </div>
+
           <button onClick={exportProfileJSON} className="p-1.5 bg-slate-900/80 border border-slate-700/60 hover:border-slate-500 rounded-lg text-[10px] text-slate-400 hover:text-white transition" title="備份大腦">💾</button>
           <button onClick={() => fileInputRef.current?.click()} className="p-1.5 bg-slate-900/80 border border-slate-700/60 hover:border-slate-500 rounded-lg text-[10px] text-slate-400 hover:text-white transition" title="載入大腦">📂</button>
           <input type="file" ref={fileInputRef} onChange={handleFileUpload} accept=".json" className="hidden" />
@@ -159,20 +179,20 @@ const MainDashboard: React.FC = () => {
         </div>
       </header>
 
-      {/* ========== 神經動態 Toast（全幅沉浸） ========== */}
+      {/* 神經動態 Toast 提示 */}
       {neuroToast && (
-        <div className="w-full max-w-lg mb-3 px-4 py-3 bg-gradient-to-r from-indigo-950/95 to-slate-900/95 border border-indigo-500/70 rounded-2xl shadow-2xl shadow-indigo-600/20 text-[11px] text-indigo-100 text-center font-medium backdrop-blur-xl animate-pulse">
+        <div className="w-full max-w-xl mb-2 px-4 py-2.5 bg-gradient-to-r from-indigo-950/95 to-slate-900/95 border border-indigo-500/70 rounded-2xl shadow-xl text-[11px] text-indigo-100 text-center font-medium backdrop-blur-xl animate-pulse">
           {neuroToast}
         </div>
       )}
 
-      {/* ========== 🧠 生物機會橫幅（主視覺調度） ========== */}
+      {/* 生物機會固化橫幅 */}
       {topSchedule && (
-        <div 
+        <div
           onClick={handleScheduleClick}
-          className={`w-full max-w-lg mb-3 p-3 rounded-2xl border cursor-pointer transition-all duration-500 hover:scale-[1.01] active:scale-[0.98] shadow-2xl ${
-            topSchedule.item.isConsolidated 
-              ? 'bg-gradient-to-r from-emerald-950/80 to-indigo-950/80 border-emerald-400/50 shadow-emerald-500/20 animate-[pulse_3s_ease-in-out_infinite]' 
+          className={`w-full max-w-xl mb-3 p-3 rounded-2xl border cursor-pointer transition-all duration-500 hover:scale-[1.01] active:scale-[0.98] shadow-2xl ${
+            topSchedule.item.isConsolidated
+              ? 'bg-gradient-to-r from-emerald-950/80 to-indigo-950/80 border-emerald-400/50 shadow-emerald-500/20'
               : 'bg-gradient-to-r from-cyan-950/80 to-slate-900/80 border-cyan-700/60 shadow-cyan-500/10'
           }`}
         >
@@ -196,9 +216,9 @@ const MainDashboard: React.FC = () => {
         </div>
       )}
 
-      {/* ========== 題型選擇（精簡膠囊） ========== */}
-      <div className="w-full max-w-lg flex gap-1.5 overflow-x-auto pb-2 mb-2 scrollbar-none">
-        {PUZZLE_TYPES.map((pt) => {
+      {/* 12 大題型橫向膠囊（支持滑動） */}
+      <div className="w-full max-w-xl flex gap-1.5 overflow-x-auto pb-2 mb-2 scrollbar-none">
+        {PUZZLE_METAS.map((pt) => {
           const isActive = selectedType === pt.id;
           const count = PUZZLE_CATALOG[pt.id]?.length || 0;
           return (
@@ -206,11 +226,11 @@ const MainDashboard: React.FC = () => {
               key={pt.id}
               onClick={() => { setSelectedType(pt.id); setPuzzleIndex(0); }}
               disabled={count === 0}
-              className={`px-3.5 py-1.5 rounded-full text-[10px] font-bold whitespace-nowrap transition-all flex items-center gap-1.5 border ${
+              className={`px-3 py-1.5 rounded-full text-[11px] font-bold whitespace-nowrap transition-all flex items-center gap-1.5 border ${
                 isActive
                   ? 'bg-indigo-600/90 border-indigo-400 text-white shadow-lg shadow-indigo-500/30 ring-1 ring-indigo-400/50'
                   : count === 0
-                  ? 'bg-slate-900/50 border-slate-800/50 text-slate-600 cursor-not-allowed'
+                  ? 'bg-slate-900/40 border-slate-800/40 text-slate-600 cursor-not-allowed'
                   : 'bg-slate-900/60 border-slate-700/60 text-slate-400 hover:bg-slate-800/80 hover:text-slate-200'
               }`}
             >
@@ -222,7 +242,35 @@ const MainDashboard: React.FC = () => {
         })}
       </div>
 
-      {/* ========== 難度網格（手動模式） ========== */}
+      {/* 認知負荷向量指示條 (4-Factor Cognitive Load) */}
+      <div className="w-full max-w-xl mb-3 px-3 py-2 bg-slate-900/60 rounded-xl border border-slate-800/80 grid grid-cols-4 gap-2 text-center text-[9px] font-mono">
+        <div>
+          <span className="text-slate-400 block">空間幾何</span>
+          <div className="w-full bg-slate-800 h-1.5 rounded-full mt-1 overflow-hidden">
+            <div className="bg-cyan-400 h-full" style={{ width: `${currentLoad.spatial * 100}%` }} />
+          </div>
+        </div>
+        <div>
+          <span className="text-slate-400 block">數感運算</span>
+          <div className="w-full bg-slate-800 h-1.5 rounded-full mt-1 overflow-hidden">
+            <div className="bg-emerald-400 h-full" style={{ width: `${currentLoad.numeric * 100}%` }} />
+          </div>
+        </div>
+        <div>
+          <span className="text-slate-400 block">工作記憶</span>
+          <div className="w-full bg-slate-800 h-1.5 rounded-full mt-1 overflow-hidden">
+            <div className="bg-indigo-400 h-full" style={{ width: `${currentLoad.workingMemory * 100}%` }} />
+          </div>
+        </div>
+        <div>
+          <span className="text-slate-400 block">抑制控制</span>
+          <div className="w-full bg-slate-800 h-1.5 rounded-full mt-1 overflow-hidden">
+            <div className="bg-amber-400 h-full" style={{ width: `${currentLoad.inhibition * 100}%` }} />
+          </div>
+        </div>
+      </div>
+
+      {/* 難度選擇 */}
       {!isZPDMode && (
         <div className="flex flex-wrap justify-center gap-1.5 mb-3">
           {LEVEL_KEYS.map((lvl) => {
@@ -247,10 +295,10 @@ const MainDashboard: React.FC = () => {
         </div>
       )}
 
-      {/* ========== 🧩 盤面核心（玻璃質感） ========== */}
+      {/* 盤面主體（自適應容器） */}
       {activePuzzle ? (
-        <section className="flex flex-col items-center w-full max-w-sm sm:max-w-md">
-          <div className="w-full p-1.5 bg-white/5 backdrop-blur-sm rounded-3xl border border-white/5 shadow-2xl shadow-indigo-500/5">
+        <section className="flex flex-col items-center w-full max-w-md sm:max-w-lg">
+          <div className="w-full p-2 bg-white/5 backdrop-blur-md rounded-3xl border border-white/5 shadow-2xl shadow-indigo-500/10">
             <ErrorBoundary
               FallbackComponent={EngineFallbackUI}
               resetKeys={[selectedType, activeLevel, puzzleIndex]}
@@ -263,31 +311,29 @@ const MainDashboard: React.FC = () => {
             </ErrorBoundary>
           </div>
 
-          {/* 底部控制區（神經適應按鈕） */}
+          {/* 控制按鈕 */}
           <div className="mt-4 flex gap-3 w-full">
             <button
               onClick={() => {
-                // 微交互動饋：震動感（若支援）
-                if (navigator.vibrate) navigator.vibrate(10);
+                if (navigator.vibrate) navigator.vibrate(12);
                 setPuzzleIndex((prev) => (prev + 1) % activeList.length);
               }}
-              className="w-full py-3.5 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 active:scale-[0.97] text-white rounded-2xl text-sm font-bold shadow-xl shadow-indigo-600/30 transition-all border border-indigo-400/30 flex items-center justify-center gap-2"
+              className="w-full py-3.5 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 active:scale-[0.98] text-white rounded-2xl text-sm font-bold shadow-xl shadow-indigo-600/30 transition-all border border-indigo-400/30 flex items-center justify-center gap-2"
             >
-              <span>⚡ 神經適應</span>
+              <span>⚡ 神經適應下一題</span>
               <span className="text-[10px] opacity-70 font-mono">({puzzleIndex + 1}/{activeList.length})</span>
             </button>
           </div>
-          
-          {/* 小字顯示當前難度與 ZPD 狀態 */}
+
           <div className="mt-2 text-[9px] text-slate-500 font-mono tracking-wider">
             {isZPDMode ? `🧠 ZPD 推薦 · ${t.difficulty[activeLevel]}` : `🎛️ 手動 · ${t.difficulty[activeLevel]}`}
           </div>
         </section>
       ) : (
         <div className="mt-12 p-10 border border-dashed border-slate-800/60 rounded-3xl text-center max-w-sm backdrop-blur-sm bg-slate-900/30">
-          <p className="text-indigo-400 text-3xl mb-2">🧩</p>
-          <p className="text-slate-300 text-sm font-semibold">{t.ui.noPuzzles}</p>
-          <p className="text-slate-500 text-[10px] mt-1">此題型正在神經焊接中，請切換其他類型</p>
+          <p className="text-indigo-400 text-3xl mb-2">{currentMeta.icon}</p>
+          <p className="text-slate-300 text-sm font-semibold">{currentMeta.nameZh} 題庫準備中</p>
+          <p className="text-slate-500 text-[10px] mt-1">此題型正在 SMT 焊接中，請切換其他題型</p>
         </div>
       )}
     </main>
