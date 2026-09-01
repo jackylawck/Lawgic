@@ -73,23 +73,24 @@ export const SudokuBoard: React.FC<Props> = ({ puzzleData }) => {
   }, [puzzleData, t]);
 
   const checkVictory = useCallback((currentGrid: number[]) => {
-    const flatSol = puzzleData.solution.flat();
-    if (flatSol.length === 81 && currentGrid.every((v, i) => v === flatSol[i])) {
-      setIsCompleted(true);
-      if (!hasRecordedRef.current) {
-        hasRecordedRef.current = true;
-        const timeSpent = Math.max(1, Math.round((Date.now() - startTimeRef.current) / 1000));
-        recordAttempt({
-          puzzleId: puzzleData.id,
-          engineType: puzzleData.engine_type || 'sudoku',
-          tier: (puzzleData.tier as TierKey) || 'kids',
-          isSuccess: true,
-          timeSpentSec: timeSpent,
-          conflictsCount: conflictCountRef.current,
-        });
-      }
+  const flatSol = puzzleData.solution.flat();
+  if (flatSol.length === 81 && currentGrid.every((v, i) => v === flatSol[i])) {
+    setIsCompleted(true);
+    if (!hasRecordedRef.current) {
+      hasRecordedRef.current = true;
+      const timeSpent = Math.max(1, Math.round((Date.now() - startTimeRef.current) / 1000));
+      recordAttempt({
+        puzzleId: puzzleData.id,
+        engineType: puzzleData.engine_type || 'sudoku',
+        tier: (puzzleData.tier as TierKey) || 'kids',
+        cognitiveLoad: (puzzleData as any).cognitiveLoad || { spatial: 0.3, numeric: 0.4, workingMemory: 0.8, inhibition: 0.6 },
+        isSuccess: true,
+        timeSpentSec: timeSpent,
+        conflictsCount: conflictCountRef.current,
+      });
     }
-  }, [puzzleData, recordAttempt]);
+  }
+}, [puzzleData, recordAttempt]);
 
   const handleInput = useCallback((idx: number, val: number) => {
     if (!engine || isCompleted || puzzleData.puzzle.flat()[idx] !== 0) return;
