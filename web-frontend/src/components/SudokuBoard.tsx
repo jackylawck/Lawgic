@@ -92,14 +92,15 @@ export const SudokuBoard: React.FC<Props> = ({ puzzleData }) => {
   const initialFlat = puzzleData.puzzle.flat();
 
   return (
-    <div className="flex flex-col items-center select-none">
+    <div className="flex flex-col items-center select-none w-full max-w-sm sm:max-w-md mx-auto">
       {errorMessage && (
-        <div className="mb-3 px-4 py-2 bg-amber-900/60 text-amber-200 text-sm rounded border border-amber-600">
+        <div className="mb-3 w-full px-3 py-2 bg-red-950/80 text-red-200 text-xs sm:text-sm rounded-lg border border-red-700 text-center animate-pulse">
           {errorMessage}
         </div>
       )}
 
-      <div className="grid grid-cols-9 border-2 border-slate-700 bg-slate-900 shadow-2xl rounded-lg overflow-hidden">
+      {/* 9x9 棋盤 (自適應手機寬度) */}
+      <div className="w-full aspect-square grid grid-cols-9 border-2 border-slate-700 bg-slate-900 shadow-2xl rounded-xl overflow-hidden p-1 gap-0.5">
         {Array.from({ length: 81 }).map((_, idx) => {
           const r = Math.floor(idx / 9);
           const c = idx % 9;
@@ -108,23 +109,23 @@ export const SudokuBoard: React.FC<Props> = ({ puzzleData }) => {
           const cellVal = gridValues[idx];
           const mask = candidates[idx] || 0;
 
-          const borderBottom = r % 3 === 2 && r !== 8 ? 'border-b-2 border-slate-600' : 'border-b border-slate-800';
-          const borderRight = c % 3 === 2 && c !== 8 ? 'border-r-2 border-slate-600' : 'border-r border-slate-800';
+          const borderBottom = r % 3 === 2 && r !== 8 ? 'border-b-2 border-slate-600' : 'border-b border-slate-800/80';
+          const borderRight = c % 3 === 2 && c !== 8 ? 'border-r-2 border-slate-600' : 'border-r border-slate-800/80';
 
           return (
             <div
               key={idx}
               onClick={() => setSelectedIdx(idx)}
-              className={`w-10 h-10 sm:w-12 sm:h-12 flex items-center justify-center cursor-pointer transition-colors relative
+              className={`flex items-center justify-center cursor-pointer transition-colors relative rounded-sm
                 ${borderBottom} ${borderRight}
-                ${isSelected ? 'bg-indigo-950/80 ring-2 ring-indigo-500 z-10' : 'hover:bg-slate-800/60'}
-                ${isInitial ? 'font-bold text-slate-100 bg-slate-800/40' : 'text-indigo-300 font-medium'}
+                ${isSelected ? 'bg-indigo-950 ring-2 ring-indigo-400 z-10' : 'hover:bg-slate-800/70'}
+                ${isInitial ? 'font-bold text-slate-100 bg-slate-800/60' : 'text-indigo-400 font-semibold'}
               `}
             >
               {cellVal !== 0 ? (
-                <span className="text-xl">{cellVal}</span>
+                <span className="text-base sm:text-xl">{cellVal}</span>
               ) : (
-                <div className="grid grid-cols-3 gap-0 w-full h-full p-0.5 text-[8px] sm:text-[9px] text-slate-500 font-mono leading-none">
+                <div className="grid grid-cols-3 gap-0 w-full h-full p-0.5 text-[7px] sm:text-[9px] text-slate-500 font-mono leading-none">
                   {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => (
                     <span key={n} className="flex items-center justify-center">
                       {(mask & (1 << n)) !== 0 ? n : ''}
@@ -137,9 +138,28 @@ export const SudokuBoard: React.FC<Props> = ({ puzzleData }) => {
         })}
       </div>
 
-      <div className="mt-4 flex items-center gap-4 text-xs font-mono text-slate-400">
-        <span className="text-emerald-400">✓ {t.ui.verified}</span>
-        <span className="w-px h-3 bg-slate-700" />
+      {/* 手機專用數字鍵盤 (Mobile Pad) */}
+      <div className="grid grid-cols-5 gap-1.5 w-full mt-4">
+        {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((num) => (
+          <button
+            key={num}
+            onClick={() => selectedIdx !== null && handleInput(selectedIdx, num)}
+            className="py-2.5 bg-slate-800 hover:bg-slate-700 active:bg-indigo-600 text-slate-200 hover:text-white rounded-lg font-mono text-sm font-bold border border-slate-700 shadow-sm transition-all"
+          >
+            {num}
+          </button>
+        ))}
+        <button
+          onClick={() => selectedIdx !== null && handleInput(selectedIdx, 0)}
+          className="py-2.5 bg-red-950/40 hover:bg-red-900 active:bg-red-800 text-red-300 rounded-lg font-mono text-xs font-bold border border-red-800 shadow-sm transition-all"
+        >
+          DEL
+        </button>
+      </div>
+
+      {/* 底部狀態列 */}
+      <div className="mt-4 flex items-center justify-between w-full px-2 text-xs font-mono text-slate-400">
+        <span className="text-emerald-400 font-medium">✓ {t.ui.verified}</span>
         <span>Conflicts: {puzzleData.metrics.decision_depth}</span>
       </div>
     </div>
