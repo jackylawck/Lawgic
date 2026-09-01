@@ -35,9 +35,9 @@ export function useLongTermScheduler(
       if (isConsolidated) {
         list.push({
           type: engineType,
-          urgency: -1, // 負數代表黃金增強期（非急迫衰退）
+          urgency: 0,
           currentStrength,
-          daysInactive: Math.round(daysInactive),
+          daysInactive: Math.round(daysInactive * 10) / 10,
           isConsolidated: true,
         });
       }
@@ -54,7 +54,12 @@ export function useLongTermScheduler(
       }
     });
 
-    return list.sort((a, b) => b.urgency - a.urgency);
+    // 🔥【機會窗口優先策略】：消除優先級反轉，黃金固化期永遠置頂
+    return list.sort((a, b) => {
+      if (a.isConsolidated && !b.isConsolidated) return -1;
+      if (!a.isConsolidated && b.isConsolidated) return 1;
+      return b.urgency - a.urgency;
+    });
   }, [profile.typeStates, profile.lastPlayedAt]);
 
   const overallPeakTier = useMemo((): TierKey => {
