@@ -1,11 +1,12 @@
 // web-frontend/src/hooks/useLearnerProfile.ts
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { CognitiveLoadVector } from '../generated';
 
 export type TierKey = 'kids' | 'intermediate' | 'expert' | 'master';
 export type CognitiveDimension = 'spatial' | 'numeric' | 'workingMemory' | 'inhibition';
+export type LearnerPersona = 'explorer' | 'deliberate' | 'struggler' | 'neutral';
 
-export interface SolveRecord {
+export interface AttemptLog {
   puzzleId: string;
   engineType: string;
   tier: TierKey;
@@ -16,368 +17,196 @@ export interface SolveRecord {
   timestamp: number;
 }
 
-export interface TypeCognitiveState {
+export interface LearnerProfileState {
+  version: number;
   theta: Record<CognitiveDimension, number>;
-  strength: number;     // 記憶強度 S (0.0 ~ 10.0)
-  stability: number;    // 記憶穩固度 F (1.0 ~ 10.0)
-  solved: number;
-  totalAttempts: number;
-  avgTimeSec: number;
-  consecutivePlateau: number;
+  history: AttemptLog[];
+  streak: number;
+  morale: number;
+  lastActiveDate: string;
 }
 
-export interface LearnerProfile {
-  userId: string;
-  morale: number;       // 動機/士氣指數 (0.6 ~ 1.4)
-  streak: number;       // 🔥 當前連續通關次數
-  maxStreak: number;    // 歷史最高連續通關次數
-  history: SolveRecord[];
-  typeStates: Record<string, TypeCognitiveState>;
-  peakRecords: Record<string, { tier: TierKey; timeSpentSec: number; timestamp: number }>;
-  lastPlayedAt: Record<string, number>;
-  lastGlobalActiveAt: number;
-}
+const STORAGE_KEY = 'LOGICORE_LEARNER_PROFILE_V8';
 
-interface SecuredStoragePayload {
-  data: LearnerProfile;
-  seal: string;
-}
-
-const STORAGE_KEY = 'LOGICORE_LEARNER_PROFILE_SEC_V7';
-
-function generateDataSeal(data: LearnerProfile): string {
-  const serialized = `${data.userId}:${data.history.length}:${data.morale.toFixed(2)}:${data.streak}:${Object.keys(data.peakRecords).length}`;
-  let hash = 0;
-  for (let i = 0; i < serialized.length; i++) {
-    hash = (hash << 5) - hash + serialized.charCodeAt(i);
-    hash |= 0;
-  }
-  return `SEAL_V7_${Math.abs(hash).toString(16)}`;
-}
-
-const BASE_TIER_DELTA: Record<TierKey, number> = {
-  kids: -1.5,
-  intermediate: -0.2,
-  expert: 1.0,
-  master: 2.2,
-};
-
-const BASE_TIME_ESTIMATE: Record<TierKey, number> = {
-  kids: 60,
-  intermediate: 120,
-  expert: 240,
-  master: 400,
-};
-
-const INITIAL_THETA: Record<CognitiveDimension, number> = {
-  spatial: 0.0,
-  numeric: 0.0,
-  workingMemory: 0.0,
-  inhibition: 0.0,
-};
-
-const INITIAL_PROFILE: LearnerProfile = {
-  userId: 'player_v7_mastery',
-  morale: 1.0,
-  streak: 0,
-  maxStreak: 0,
+const INITIAL_PROFILE: LearnerProfileState = {
+  version: 8,
+  theta: {
+    spatial: 0.5,
+    numeric: 0.5,
+    workingMemory: 0.5,
+    inhibition: 0.5,
+  },
   history: [],
-  typeStates: {},
-  peakRecords: {},
-  lastPlayedAt: {},
-  lastGlobalActiveAt: Date.now(),
+  streak: 0,
+  morale: 1.0,
+  lastActiveDate: new Date().toISOString().split('T')[0],
 };
 
-export function calculateDynamicStrength(rawStrength: number, stability: number, elapsedDays: number): {
-  strength: number;
-  isConsolidated: boolean;
-} {
-  if (elapsedDays >= 0.6 && elapsedDays <= 2.0) {
-    const consolidationBoost = 0.20 * Math.exp(-Math.pow(elapsedDays - 1.0, 2) / 0.35);
-    const boosted = Math.min(10.0, rawStrength * (1 + consolidationBoost));
-    return { strength: Number(boosted.toFixed(2)), isConsolidated: true };
-  }
-
-  if (elapsedDays > 2.0) {
-    const daysBeyondWindow = elapsedDays - 2.0;
-    const lambda = 0.15 / Math.max(1.0, stability);
-    const decayed = Math.max(0.5, rawStrength * Math.exp(-lambda * daysBeyondWindow));
-    return { strength: Number(decayed.toFixed(2)), isConsolidated: false };
-  }
-
-  return { strength: rawStrength, isConsolidated: false };
-}
+const TIER_ORDER: TierKey[] = ['kids', 'intermediate', 'expert', 'master'];
 
 export function useLearnerProfile() {
-  const [profile, setProfile] = useState<LearnerProfile>(() => {
+  const [profile, setProfile] = useState<LearnerProfileState>(() => {
     try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) {
-        const parsed: SecuredStoragePayload = JSON.parse(raw);
-        if (parsed.seal && parsed.seal === generateDataSeal(parsed.data)) {
-          return {
-            ...INITIAL_PROFILE,
-            ...parsed.data,
-            streak: parsed.data.streak || 0,
-            maxStreak: parsed.data.maxStreak || 0,
-            typeStates: parsed.data.typeStates || {},
-            peakRecords: parsed.data.peakRecords || {},
-            lastPlayedAt: parsed.data.lastPlayedAt || {},
-            lastGlobalActiveAt: parsed.data.lastGlobalActiveAt || Date.now(),
-          };
-        }
-      }
-      return INITIAL_PROFILE;
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (saved) return JSON.parse(saved);
     } catch {
-      return INITIAL_PROFILE;
+      // 降級使用預設狀態
     }
+    return INITIAL_PROFILE;
   });
 
   useEffect(() => {
     try {
-      const payload: SecuredStoragePayload = {
-        data: profile,
-        seal: generateDataSeal(profile),
-      };
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(profile));
     } catch (e) {
-      console.error('[Security Warning] Failed to persist V7 profile:', e);
+      console.error('Failed to persist learner profile:', e);
     }
   }, [profile]);
 
-  const recordAttempt = useCallback((
-    record: Omit<SolveRecord, 'timestamp'>,
-    options?: { isChildMode?: boolean }
-  ) => {
+  // 1. 🧠 隱含人格推導 (Persona Inference)
+  const persona: LearnerPersona = useMemo(() => {
+    const recent = profile.history.slice(-20);
+    if (recent.length < 5) return 'neutral';
+
+    const totalConflicts = recent.reduce((acc, h) => acc + h.conflictsCount, 0);
+    const totalTime = recent.reduce((acc, h) => acc + h.timeSpentSec, 0);
+    const successes = recent.filter((h) => h.isSuccess);
+
+    const avgConflicts = totalConflicts / recent.length;
+    const avgTime = totalTime / recent.length;
+    const successRate = successes.length / recent.length;
+
+    if (successRate < 0.55) return 'struggler';
+    if (avgConflicts < 0.8 && avgTime < 50 && successRate >= 0.85) return 'explorer';
+    if (avgConflicts <= 1.8 && avgTime > 80 && successRate >= 0.75) return 'deliberate';
+
+    return 'neutral';
+  }, [profile.history]);
+
+  // 2. 🎯 動態 ZPD 調度策略 (結合人格加權)
+  const getZPDRecommendedTier = useCallback(
+    (engineType: string, defaultLoad: CognitiveLoadVector): TierKey => {
+      const engineHistory = profile.history.filter((h) => h.engineType === engineType);
+      if (engineHistory.length === 0) return 'kids';
+
+      const recentEngine = engineHistory.slice(-10);
+      const currentTier = recentEngine[recentEngine.length - 1].tier;
+      const currentTierIdx = TIER_ORDER.indexOf(currentTier);
+
+      const successRate =
+        recentEngine.filter((h) => h.isSuccess).length / recentEngine.length;
+
+      // 計算認知效率指數 CEI (Cognitive Efficiency Index)
+      const avgTime =
+        recentEngine.reduce((acc, h) => acc + h.timeSpentSec, 0) / recentEngine.length;
+      const avgConflicts =
+        recentEngine.reduce((acc, h) => acc + h.conflictsCount, 0) / recentEngine.length;
+
+      // 根據 Persona 動態設定升降階閾值
+      let promoteThreshold = 0.8;
+      let demoteThreshold = 0.45;
+
+      if (persona === 'explorer') {
+        promoteThreshold = 0.7; // 冒險型：放寬升階門檻
+      } else if (persona === 'deliberate') {
+        promoteThreshold = 0.85; // 審慎型：嚴格升階，強調穩定度
+      } else if (persona === 'struggler') {
+        demoteThreshold = 0.6; // 掙扎型：及早觸發降階防禦
+      }
+
+      // 升階判斷
+      if (
+        successRate >= promoteThreshold &&
+        avgConflicts < 2.0 &&
+        avgTime < 90 &&
+        currentTierIdx < TIER_ORDER.length - 1
+      ) {
+        return TIER_ORDER[currentTierIdx + 1];
+      }
+
+      // 降階判斷
+      if (successRate <= demoteThreshold && currentTierIdx > 0) {
+        return TIER_ORDER[currentTierIdx - 1];
+      }
+
+      return currentTier;
+    },
+    [profile.history, persona]
+  );
+
+  // 3. 採樣記錄與 Elo/IRT 能力值更新
+  const recordAttempt = useCallback((log: Omit<AttemptLog, 'timestamp'>) => {
+    const timestamp = Date.now();
+    const fullLog: AttemptLog = { ...log, timestamp };
+
     setProfile((prev) => {
-      const now = Date.now();
-      const fullRecord: SolveRecord = { ...record, timestamp: now };
-      const updatedHistory = [...prev.history, fullRecord];
+      const today = new Date().toISOString().split('T')[0];
+      const isNewDay = prev.lastActiveDate !== today;
+      const newStreak = log.isSuccess ? (isNewDay ? prev.streak + 1 : prev.streak) : 0;
 
-      const rawState = prev.typeStates[record.engineType] || {
-        theta: { ...INITIAL_THETA },
-        strength: 5.0,
-        stability: 1.5,
-        solved: 0,
-        totalAttempts: 0,
-        avgTimeSec: record.timeSpentSec,
-        consecutivePlateau: 0,
-      };
+      // IRT 更新步長 (K-factor)
+      const kFactor = 0.04;
+      const deltaTheta = log.isSuccess ? kFactor : -kFactor * 0.8;
 
-      // 1. 神經動力學校準
-      const lastTime = prev.lastPlayedAt[record.engineType] || now;
-      const elapsedDays = Math.max(0, (now - lastTime) / (1000 * 60 * 60 * 24));
-      const { strength: baseStrength } = calculateDynamicStrength(rawState.strength, rawState.stability, elapsedDays);
+      const newTheta = { ...prev.theta };
+      (Object.keys(newTheta) as CognitiveDimension[]).forEach((dim) => {
+        const load = log.cognitiveLoad[dim] || 0.5;
+        newTheta[dim] = Math.max(0.1, Math.min(1.0, newTheta[dim] + deltaTheta * load));
+      });
 
-      // 2. 題目級難度標定 \delta
-      const baseDelta = BASE_TIER_DELTA[record.tier] || 0.0;
-      const baseTime = BASE_TIME_ESTIMATE[record.tier] || 120;
-      const itemDifficultyOffset = Math.log(Math.max(0.2, Math.min(3.0, record.timeSpentSec / baseTime)));
-      const fineGrainedDelta = baseDelta + itemDifficultyOffset * 0.3;
-
-      // 3. MIRT 4維能力投影計算
-      const load = record.cognitiveLoad || { spatial: 0.25, numeric: 0.25, workingMemory: 0.25, inhibition: 0.25 };
-      const effectiveAbility =
-        (rawState.theta.spatial || 0) * load.spatial +
-        (rawState.theta.numeric || 0) * load.numeric +
-        (rawState.theta.workingMemory || 0) * load.workingMemory +
-        (rawState.theta.inhibition || 0) * load.inhibition;
-
-      const expectedProb = 1 / (1 + Math.exp(-(effectiveAbility - fineGrainedDelta)));
-      const actualScore = record.isSuccess ? 1.0 : 0.0;
-      const residual = actualScore - expectedProb;
-
-      // 4. 動態學習率衰減
-      const adaptiveLR = 0.35 / Math.sqrt(rawState.totalAttempts + 1);
-
-      // 5. 斯皮爾曼 g 因子共變異數更新 (COV = 0.35)
-      const COV = 0.35;
-      const calcDimUpdate = (directWeight: number, otherWeightsSum: number, currentDimTheta: number) => {
-        // 兒童模式下，若答錯不扣能力值，保護自信
-        if (options?.isChildMode && !record.isSuccess) return currentDimTheta;
-        const effectiveGradient = directWeight + COV * otherWeightsSum;
-        const deltaTheta = adaptiveLR * effectiveGradient * residual;
-        return Math.max(-3.0, Math.min(3.0, currentDimTheta + deltaTheta));
-      };
-
-      const updatedTheta: Record<CognitiveDimension, number> = {
-        spatial: calcDimUpdate(load.spatial, load.numeric + load.workingMemory + load.inhibition, rawState.theta.spatial || 0),
-        numeric: calcDimUpdate(load.numeric, load.spatial + load.workingMemory + load.inhibition, rawState.theta.numeric || 0),
-        workingMemory: calcDimUpdate(load.workingMemory, load.spatial + load.numeric + load.inhibition, rawState.theta.workingMemory || 0),
-        inhibition: calcDimUpdate(load.inhibition, load.spatial + load.numeric + load.workingMemory, rawState.theta.inhibition || 0),
-      };
-
-      // 6. 記憶強度更新
-      let newStrength = baseStrength;
-      let newStability = rawState.stability;
-      if (record.isSuccess) {
-        newStrength = Math.min(10.0, baseStrength + 1.2 * Math.exp(-baseStrength / 10));
-        newStability = Math.min(10.0, rawState.stability + 0.25);
-      } else if (!options?.isChildMode) {
-        newStrength = Math.max(0.5, baseStrength * 0.7);
-      }
-
-      // 7. EWMA 平滑解題時長
-      const smoothedTime = rawState.avgTimeSec > 0
-        ? Math.round(rawState.avgTimeSec * 0.65 + record.timeSpentSec * 0.35)
-        : record.timeSpentSec;
-
-      // 8. 🔥【士氣與連續通關 Streak 計算】
-      let currentMorale = prev.morale;
-      let nextStreak = prev.streak;
-
-      if (options?.isChildMode) {
-        // 👶 兒童模式：永不跌落，答對加星星
-        if (record.isSuccess) {
-          currentMorale = Math.min(1.4, prev.morale + 0.08);
-          nextStreak += 1;
-        }
-      } else {
-        // 👤 成人競技模式
-        const inactiveDaysGlobal = Math.max(0, (now - (prev.lastGlobalActiveAt || now)) / (1000 * 60 * 60 * 24));
-        if (inactiveDaysGlobal > 3) {
-          currentMorale = 1.0 + (prev.morale - 1.0) * Math.exp(-0.2 * (inactiveDaysGlobal - 3));
-        }
-
-        if (record.isSuccess) {
-          currentMorale = Math.min(1.4, currentMorale + 0.05);
-          nextStreak += 1;
-        } else {
-          nextStreak = 0; // 失敗中斷 Streak，引發正向損失厭惡
-          const recentThree = updatedHistory.filter((h) => h.engineType === record.engineType).slice(-3);
-          if (recentThree.length === 3 && recentThree.every((h) => !h.isSuccess)) {
-            currentMorale = Math.max(0.6, currentMorale - 0.15);
-          }
-        }
-      }
-
-      const nextMaxStreak = Math.max(prev.maxStreak, nextStreak);
-
-      // 9. 巔峰段位更新
-      const updatedPeaks = { ...prev.peakRecords };
-      if (record.isSuccess) {
-        const currentPeak = updatedPeaks[record.engineType];
-        const tierRanks: Record<TierKey, number> = { kids: 0, intermediate: 1, expert: 2, master: 3 };
-        const isHigherTier = !currentPeak || tierRanks[record.tier] > tierRanks[currentPeak.tier];
-        const isFasterSameTier =
-          currentPeak &&
-          tierRanks[record.tier] === tierRanks[currentPeak.tier] &&
-          record.timeSpentSec < currentPeak.timeSpentSec;
-
-        if (isHigherTier || isFasterSameTier) {
-          updatedPeaks[record.engineType] = {
-            tier: record.tier,
-            timeSpentSec: record.timeSpentSec,
-            timestamp: now,
-          };
-        }
-      }
+      // 士氣值更新
+      const newMorale = log.isSuccess
+        ? Math.min(2.0, prev.morale + 0.05)
+        : Math.max(0.5, prev.morale - 0.1);
 
       return {
         ...prev,
-        morale: Number(currentMorale.toFixed(2)),
-        streak: nextStreak,
-        maxStreak: nextMaxStreak,
-        lastGlobalActiveAt: now,
-        history: updatedHistory,
-        typeStates: {
-          ...prev.typeStates,
-          [record.engineType]: {
-            theta: {
-              spatial: Number(updatedTheta.spatial.toFixed(3)),
-              numeric: Number(updatedTheta.numeric.toFixed(3)),
-              workingMemory: Number(updatedTheta.workingMemory.toFixed(3)),
-              inhibition: Number(updatedTheta.inhibition.toFixed(3)),
-            },
-            strength: Number(newStrength.toFixed(2)),
-            stability: Number(newStability.toFixed(2)),
-            solved: rawState.solved + (record.isSuccess ? 1 : 0),
-            totalAttempts: rawState.totalAttempts + 1,
-            avgTimeSec: smoothedTime,
-            consecutivePlateau: rawState.consecutivePlateau,
-          },
-        },
-        peakRecords: updatedPeaks,
-        lastPlayedAt: {
-          ...prev.lastPlayedAt,
-          [record.engineType]: now,
-        },
+        history: [...prev.history, fullLog],
+        theta: newTheta,
+        streak: newStreak,
+        morale: Number(newMorale.toFixed(2)),
+        lastActiveDate: today,
       };
     });
   }, []);
 
-  const getZPDRecommendedTier = useCallback(
-    (engineType: string, load?: CognitiveLoadVector): TierKey => {
-      const state = profile.typeStates[engineType];
-      if (!state || state.totalAttempts < 2) return 'kids';
-
-      const weights = load || { spatial: 0.25, numeric: 0.25, workingMemory: 0.25, inhibition: 0.25 };
-      const compositeTheta =
-        (state.theta.spatial || 0) * weights.spatial +
-        (state.theta.numeric || 0) * weights.numeric +
-        (state.theta.workingMemory || 0) * weights.workingMemory +
-        (state.theta.inhibition || 0) * weights.inhibition;
-
-      const effectiveTheta = compositeTheta * profile.morale;
-      let recommended: TierKey = 'kids';
-      if (effectiveTheta >= 1.5) recommended = 'master';
-      else if (effectiveTheta >= 0.4) recommended = 'expert';
-      else if (effectiveTheta >= -0.8) recommended = 'intermediate';
-      else recommended = 'kids';
-
-      return recommended;
-    },
-    [profile.typeStates, profile.morale]
-  );
-
-  const globalCognitiveProfile = useCallback((): Record<CognitiveDimension, number> => {
-    const types = Object.values(profile.typeStates);
-    if (types.length === 0) return { ...INITIAL_THETA };
-
-    const totals: Record<CognitiveDimension, number> = { spatial: 0, numeric: 0, workingMemory: 0, inhibition: 0 };
-    types.forEach((t) => {
-      totals.spatial += t.theta.spatial || 0;
-      totals.numeric += t.theta.numeric || 0;
-      totals.workingMemory += t.theta.workingMemory || 0;
-      totals.inhibition += t.theta.inhibition || 0;
-    });
-
-    const count = types.length;
+  const globalCognitiveProfile = useCallback(() => {
     return {
-      spatial: Number((totals.spatial / count).toFixed(2)),
-      numeric: Number((totals.numeric / count).toFixed(2)),
-      workingMemory: Number((totals.workingMemory / count).toFixed(2)),
-      inhibition: Number((totals.inhibition / count).toFixed(2)),
+      spatial: Number(profile.theta.spatial.toFixed(2)),
+      numeric: Number(profile.theta.numeric.toFixed(2)),
+      workingMemory: Number(profile.theta.workingMemory.toFixed(2)),
+      inhibition: Number(profile.theta.inhibition.toFixed(2)),
     };
-  }, [profile.typeStates]);
+  }, [profile.theta]);
 
   const exportProfileJSON = useCallback(() => {
-    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(profile, null, 2));
+    const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(profile, null, 2));
     const downloadAnchor = document.createElement('a');
-    downloadAnchor.setAttribute("href", dataStr);
-    downloadAnchor.setAttribute("download", `logicore_v7_profile_${Date.now()}.json`);
+    downloadAnchor.setAttribute('href', dataStr);
+    downloadAnchor.setAttribute('download', `logicore_profile_${Date.now()}.json`);
     document.body.appendChild(downloadAnchor);
     downloadAnchor.click();
     downloadAnchor.remove();
   }, [profile]);
 
-  const importProfileJSON = useCallback((jsonString: string): boolean => {
+  const importProfileJSON = useCallback((jsonStr: string): boolean => {
     try {
-      const imported: LearnerProfile = JSON.parse(jsonString);
-      if (imported.userId && Array.isArray(imported.history)) {
-        setProfile(imported);
+      const parsed = JSON.parse(jsonStr);
+      if (parsed && parsed.theta && Array.isArray(parsed.history)) {
+        setProfile(parsed);
         return true;
       }
-      return false;
-    } catch {
-      return false;
+    } catch (e) {
+      console.error('Import failed:', e);
     }
+    return false;
   }, []);
 
   return {
     profile,
-    recordAttempt,
+    persona,
     getZPDRecommendedTier,
+    recordAttempt,
     globalCognitiveProfile,
     exportProfileJSON,
     importProfileJSON,
