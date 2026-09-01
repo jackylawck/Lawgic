@@ -1,19 +1,21 @@
 // web-frontend/src/components/SudokuBoard.tsx
-import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { PuzzleEntity, TierKey } from '../generated';
-import { useLearnerProfile } from '../hooks/useLearnerProfile';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { PuzzleEntity } from '../generated';
+import { useLearnerProfile, TierKey } from '../hooks/useLearnerProfile';
 
 interface Props {
-  puzzle: PuzzleEntity;
+  puzzleData?: PuzzleEntity;
+  puzzle?: PuzzleEntity;
 }
 
-export const SudokuBoard: React.FC<Props> = ({ puzzle }) => {
+export const SudokuBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
+  const actualPuzzle = puzzleData || puzzle;
   const { recordAttempt } = useLearnerProfile();
 
   const initialGrid = useMemo(() => {
-    if (!puzzle?.puzzle || !Array.isArray(puzzle.puzzle)) return Array(81).fill(0);
-    return puzzle.puzzle.flat();
-  }, [puzzle]);
+    if (!actualPuzzle?.puzzle || !Array.isArray(actualPuzzle.puzzle)) return Array(81).fill(0);
+    return actualPuzzle.puzzle.flat();
+  }, [actualPuzzle]);
 
   const [grid, setGrid] = useState<number[]>(initialGrid);
   const [selectedCell, setSelectedCell] = useState<number | null>(null);
@@ -32,22 +34,22 @@ export const SudokuBoard: React.FC<Props> = ({ puzzle }) => {
     startTimeRef.current = Date.now();
     conflictCountRef.current = 0;
     hasRecordedRef.current = false;
-  }, [initialGrid, puzzle.id]);
+  }, [initialGrid, actualPuzzle?.id]);
 
   const checkVictory = useCallback(
     (currentGrid: number[]) => {
-      if (!puzzle?.solution || !Array.isArray(puzzle.solution)) return;
-      const flatSol = puzzle.solution.flat();
+      if (!actualPuzzle?.solution || !Array.isArray(actualPuzzle.solution)) return;
+      const flatSol = actualPuzzle.solution.flat();
       if (flatSol.length === 81 && currentGrid.every((v, i) => v === flatSol[i])) {
         setIsCompleted(true);
         if (!hasRecordedRef.current) {
           hasRecordedRef.current = true;
           const timeSpent = Math.max(1, Math.round((Date.now() - startTimeRef.current) / 1000));
           recordAttempt({
-            puzzleId: puzzle.id,
-            engineType: puzzle.engine_type || 'sudoku',
-            tier: (puzzle.tier as TierKey) || 'kids',
-            cognitiveLoad: puzzle.cognitiveLoad || {
+            puzzleId: actualPuzzle.id,
+            engineType: actualPuzzle.engine_type || 'sudoku',
+            tier: (actualPuzzle.tier as TierKey) || 'kids',
+            cognitiveLoad: actualPuzzle.cognitiveLoad || {
               spatial: 0.3,
               numeric: 0.4,
               workingMemory: 0.8,
@@ -60,7 +62,7 @@ export const SudokuBoard: React.FC<Props> = ({ puzzle }) => {
         }
       }
     },
-    [puzzle, recordAttempt]
+    [actualPuzzle, recordAttempt]
   );
 
   const handleCellClick = (index: number) => {
@@ -71,10 +73,9 @@ export const SudokuBoard: React.FC<Props> = ({ puzzle }) => {
   const handleNumberInput = (num: number) => {
     if (selectedCell === null || initialGrid[selectedCell] !== 0 || isCompleted) return;
 
-    const flatSol = puzzle.solution ? puzzle.solution.flat() : [];
+    const flatSol = actualPuzzle?.solution ? actualPuzzle.solution.flat() : [];
     const expectedValue = flatSol[selectedCell];
 
-    // 即時驗證
     if (num !== 0 && expectedValue !== undefined && num !== expectedValue) {
       if (navigator.vibrate) navigator.vibrate([30, 50, 30]);
       conflictCountRef.current += 1;
@@ -89,7 +90,6 @@ export const SudokuBoard: React.FC<Props> = ({ puzzle }) => {
     checkVictory(nextGrid);
   };
 
-  // 鍵盤輸入監聽
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (isCompleted || selectedCell === null) return;
@@ -107,14 +107,12 @@ export const SudokuBoard: React.FC<Props> = ({ puzzle }) => {
 
   return (
     <div className="flex flex-col items-center w-full select-none">
-      {/* 9x9 盤面 */}
       <div className="grid grid-cols-9 gap-[1px] bg-slate-800 border-2 border-slate-700 p-[1px] rounded-lg shadow-inner">
         {grid.map((val, idx) => {
           const isGiven = initialGrid[idx] !== 0;
           const isSelected = selectedCell === idx;
           const isConflict = conflictCell === idx;
 
-          // 計算 3x3 粗邊框
           const row = Math.floor(idx / 9);
           const col = idx % 9;
           const borderRight = (col + 1) % 3 === 0 && col !== 8 ? 'border-r-2 border-r-slate-600' : '';
@@ -142,7 +140,6 @@ export const SudokuBoard: React.FC<Props> = ({ puzzle }) => {
         })}
       </div>
 
-      {/* 數字輸入鍵盤 */}
       <div className="grid grid-cols-5 sm:grid-cols-10 gap-1.5 mt-4 w-full max-w-sm">
         {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((num) => (
           <button
