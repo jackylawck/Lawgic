@@ -1,0 +1,66 @@
+[
+  {
+    "id": "maze_k01",
+    "category": "topological",
+    "engine_type": "maze",
+    "tier": "kids",
+    "puzzle": {
+      "width": 7,
+      "height": 7,
+      "start": [1, 1],
+      "end": [5, 5],
+      "grid": [
+        [1, 1, 1, 1, 1, 1, 1],
+        [1, 0, 0, 0, 1, 0, 1],
+        [1, 1, 1, 0, 1, 0, 1],
+        [1, 0, 0, 0, 0, 0, 1],
+        [1, 0, 1, 1, 1, 0, 1],
+        [1, 0, 0, 0, 1, 0, 1],
+        [1, 1, 1, 1, 1, 1, 1]
+      ]
+    },
+    "solution": [
+      [1, 1], [2, 1], [3, 1], [3, 2], [3, 3], [3, 4], [3, 5], [4, 5], [5, 5]
+    ],
+    "metrics": { "decision_depth": 3, "propagation_steps": 24 },
+    "cognitiveLoad": {
+      "spatial": 1.0,
+      "numeric": 0.0,
+      "workingMemory": 0.5,
+      "inhibition": 0.4
+    },
+    "checksum": "maze_k01_checksum_7x7"
+  },
+  {
+    "id": "maze_i01",
+    "category": "topological",
+    "engine_type": "maze",
+    "tier": "intermediate",
+    "puzzle": {
+      "width": 9,
+      "height": 9,
+      "start": [1, 1],
+      "end": [7, 7],
+      "grid": [
+        [1, 1, 1, 1, 1, 1, 1, 1, 1],
+        [1, 0, 0, 0, 1, 0, 0, 0, 1],
+        [1, 0, 1, 0, 1, 0, 1, 0, 1],
+        [1, 0, 1, 0, 0, 0, 1, 0, 1],
+        [1, 0, 1, 1, 1, 1, 1, 0, 1],
+        [1, 0, 0, 0, 0, 0, 0, 0, 1],
+        [1, 1, 1, 0, 1, 1, 1, 0, 1],
+        [1, 0, 0, 0, 1, 0, 0, 0, 1],
+        [1, 1, 1, 1, 1, 1, 1, 1, 1]
+      ]
+    },
+    "solution": [],
+    "metrics": { "decision_depth": 5, "propagation_steps": 48 },
+    "cognitiveLoad": {
+      "spatial": 1.0,
+      "numeric": 0.0,
+      "workingMemory": 0.6,
+      "inhibition": 0.5
+    },
+    "checksum": "maze_i01_checksum_9x9"
+  }
+]
