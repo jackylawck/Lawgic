@@ -2,11 +2,12 @@
 import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { ErrorBoundary } from 'react-error-boundary';
 import { LanguageProvider, useLanguage } from './contexts/LanguageContext';
+import { AccessibilityProvider, useAccessibility } from './contexts/AccessibilityContext';
 import { PuzzleRenderer } from './registry/RendererRegistry';
 import { PUZZLE_CATALOG, PuzzleEntity, CognitiveLoadVector } from './generated';
 import { LangSwitcher } from './components/LangSwitcher';
 import { VirtualGamepad } from './components/VirtualGamepad';
-import { useLearnerProfile, TierKey, CognitiveDimension } from './hooks/useLearnerProfile';
+import { useLearnerProfile, TierKey, CognitiveDimension, LearnerPersona } from './hooks/useLearnerProfile';
 import { useLongTermScheduler } from './hooks/useLongTermScheduler';
 import { WebMazeGenerator } from './engines/mazeGenerator';
 
@@ -64,6 +65,13 @@ const TIER_NAMES_CHILD_EN: Record<TierKey, string> = {
   master: '👑 Grandmaster',
 };
 
+const PERSONA_BADGE: Record<LearnerPersona, { icon: string; zh: string; en: string; color: string }> = {
+  explorer: { icon: '🧭', zh: '直覺冒險型', en: 'Explorer', color: 'text-amber-400 border-amber-500/50 bg-amber-950/60' },
+  deliberate: { icon: '🧠', zh: '審慎推演型', en: 'Deliberate', color: 'text-cyan-400 border-cyan-500/50 bg-cyan-950/60' },
+  struggler: { icon: '🌱', zh: '突破成長型', en: 'Growth', color: 'text-emerald-400 border-emerald-500/50 bg-emerald-950/60' },
+  neutral: { icon: '⚖️', zh: '標準自適應', en: 'Adaptive', color: 'text-slate-400 border-slate-700 bg-slate-900/60' },
+};
+
 const CHILD_SAFE_IDS = new Set(['maze', 'hashi', 'sudoku', 'jigsaw']);
 
 const EngineFallbackUI: React.FC<{ resetErrorBoundary: () => void }> = ({ resetErrorBoundary }) => (
@@ -81,9 +89,11 @@ const EngineFallbackUI: React.FC<{ resetErrorBoundary: () => void }> = ({ resetE
 const MainDashboard: React.FC = () => {
   const { lang } = useLanguage();
   const isEn = lang === 'en';
+  const { settings, toggleFocusMode } = useAccessibility();
 
   const {
     profile,
+    persona,
     getZPDRecommendedTier,
     globalCognitiveProfile,
     exportProfileJSON,
@@ -326,6 +336,8 @@ const MainDashboard: React.FC = () => {
     ? (isEn ? TIER_NAMES_CHILD_EN : TIER_NAMES_CHILD_ZH)
     : (isEn ? TIER_NAMES_PRO_EN : TIER_NAMES_PRO_ZH);
 
+  const activePersonaBadge = PERSONA_BADGE[persona] || PERSONA_BADGE.neutral;
+
   // ==========================
   // ⚙️ 視圖 1：純粹賽道工作臺 (Pro Zen Track Mode)
   // ==========================
@@ -343,6 +355,28 @@ const MainDashboard: React.FC = () => {
           </div>
 
           <div className="flex items-center gap-1.5 text-[10px]">
+            {/* 🧠 認知特質徽章 */}
+            <div
+              className={`px-1.5 py-0.5 rounded border text-[9px] font-bold flex items-center gap-1 ${activePersonaBadge.color}`}
+              title={isEn ? `Cognitive Persona: ${activePersonaBadge.en}` : `認知特質：${activePersonaBadge.zh}`}
+            >
+              <span>{activePersonaBadge.icon}</span>
+              <span className="hidden sm:inline">{isEn ? activePersonaBadge.en : activePersonaBadge.zh}</span>
+            </div>
+
+            {/* 🎯 專注模式開關 */}
+            <button
+              onClick={toggleFocusMode}
+              className={`px-1.5 py-0.5 border rounded text-[9px] transition ${
+                settings.focusMode
+                  ? 'bg-indigo-950 border-indigo-400 text-indigo-200 font-bold'
+                  : 'border-slate-800 text-slate-500 hover:text-slate-300'
+              }`}
+              title={isEn ? 'Toggle Neurodivergent Focus Mode' : '切換神經多樣性專注模式'}
+            >
+              {settings.focusMode ? '🎯 專注' : '👁️ 常規'}
+            </button>
+
             {profile.streak > 0 && (
               <span className="text-amber-400 font-bold mr-1">
                 🔥{profile.streak}
@@ -562,6 +596,27 @@ const MainDashboard: React.FC = () => {
         </div>
 
         <div className="flex items-center gap-1.5">
+          {/* 🧠 認知特質徽章 */}
+          <div
+            className={`px-2.5 py-1 rounded-full border text-[10px] font-mono font-bold flex items-center gap-1 ${activePersonaBadge.color}`}
+            title={isEn ? `Cognitive Persona: ${activePersonaBadge.en}` : `認知特質：${activePersonaBadge.zh}`}
+          >
+            <span>{activePersonaBadge.icon}</span>
+            <span>{isEn ? activePersonaBadge.en : activePersonaBadge.zh}</span>
+          </div>
+
+          {/* 🎯 專注模式開關 */}
+          <button
+            onClick={toggleFocusMode}
+            className={`px-2.5 py-1 rounded-full text-[11px] font-bold transition-all border ${
+              settings.focusMode
+                ? 'bg-indigo-600/90 border-indigo-400 text-white shadow-md shadow-indigo-500/30'
+                : 'bg-slate-900 border-slate-700 text-slate-300 hover:border-slate-500'
+            }`}
+          >
+            {settings.focusMode ? '🎯 專注' : '👁️ 常規'}
+          </button>
+
           <button
             onClick={() => setIsProZen(true)}
             className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-slate-900 border border-slate-700 text-slate-300 hover:border-slate-500 transition"
@@ -730,7 +785,9 @@ const MainDashboard: React.FC = () => {
 export default function App() {
   return (
     <LanguageProvider>
-      <MainDashboard />
+      <AccessibilityProvider>
+        <MainDashboard />
+      </AccessibilityProvider>
     </LanguageProvider>
   );
 }
