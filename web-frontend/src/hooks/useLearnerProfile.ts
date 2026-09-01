@@ -17,19 +17,20 @@ export interface SolveRecord {
 }
 
 export interface TypeCognitiveState {
-  // MIRT 4維能力特質向量 \vec{\theta} (-3.0 ~ +3.0)
   theta: Record<CognitiveDimension, number>;
   strength: number;     // 記憶強度 S (0.0 ~ 10.0)
   stability: number;    // 記憶穩固度 F (1.0 ~ 10.0)
   solved: number;
   totalAttempts: number;
-  avgTimeSec: number;   // EWMA 平滑解題時長
+  avgTimeSec: number;
   consecutivePlateau: number;
 }
 
 export interface LearnerProfile {
   userId: string;
   morale: number;       // 動機/士氣指數 (0.6 ~ 1.4)
+  streak: number;       // 🔥 當前連續通關次數
+  maxStreak: number;    // 歷史最高連續通關次數
   history: SolveRecord[];
   typeStates: Record<string, TypeCognitiveState>;
   peakRecords: Record<string, { tier: TierKey; timeSpentSec: number; timestamp: number }>;
@@ -42,16 +43,16 @@ interface SecuredStoragePayload {
   seal: string;
 }
 
-const STORAGE_KEY = 'LOGICORE_LEARNER_PROFILE_SEC_V6_1';
+const STORAGE_KEY = 'LOGICORE_LEARNER_PROFILE_SEC_V7';
 
 function generateDataSeal(data: LearnerProfile): string {
-  const serialized = `${data.userId}:${data.history.length}:${data.morale.toFixed(2)}:${Object.keys(data.peakRecords).length}`;
+  const serialized = `${data.userId}:${data.history.length}:${data.morale.toFixed(2)}:${data.streak}:${Object.keys(data.peakRecords).length}`;
   let hash = 0;
   for (let i = 0; i < serialized.length; i++) {
     hash = (hash << 5) - hash + serialized.charCodeAt(i);
     hash |= 0;
   }
-  return `SEAL_V6_1_${Math.abs(hash).toString(16)}`;
+  return `SEAL_V7_${Math.abs(hash).toString(16)}`;
 }
 
 const BASE_TIER_DELTA: Record<TierKey, number> = {
@@ -76,8 +77,10 @@ const INITIAL_THETA: Record<CognitiveDimension, number> = {
 };
 
 const INITIAL_PROFILE: LearnerProfile = {
-  userId: 'player_mirt_v6_1',
+  userId: 'player_v7_mastery',
   morale: 1.0,
+  streak: 0,
+  maxStreak: 0,
   history: [],
   typeStates: {},
   peakRecords: {},
@@ -115,6 +118,8 @@ export function useLearnerProfile() {
           return {
             ...INITIAL_PROFILE,
             ...parsed.data,
+            streak: parsed.data.streak || 0,
+            maxStreak: parsed.data.maxStreak || 0,
             typeStates: parsed.data.typeStates || {},
             peakRecords: parsed.data.peakRecords || {},
             lastPlayedAt: parsed.data.lastPlayedAt || {},
@@ -136,11 +141,14 @@ export function useLearnerProfile() {
       };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
     } catch (e) {
-      console.error('[Security Warning] Failed to persist V6.1 profile:', e);
+      console.error('[Security Warning] Failed to persist V7 profile:', e);
     }
   }, [profile]);
 
-  const recordAttempt = useCallback((record: Omit<SolveRecord, 'timestamp'>) => {
+  const recordAttempt = useCallback((
+    record: Omit<SolveRecord, 'timestamp'>,
+    options?: { isChildMode?: boolean }
+  ) => {
     setProfile((prev) => {
       const now = Date.now();
       const fullRecord: SolveRecord = { ...record, timestamp: now };
@@ -156,7 +164,7 @@ export function useLearnerProfile() {
         consecutivePlateau: 0,
       };
 
-      // 1. 神經動力學前置時間校準
+      // 1. 神經動力學校準
       const lastTime = prev.lastPlayedAt[record.engineType] || now;
       const elapsedDays = Math.max(0, (now - lastTime) / (1000 * 60 * 60 * 24));
       const { strength: baseStrength } = calculateDynamicStrength(rawState.strength, rawState.stability, elapsedDays);
@@ -167,7 +175,7 @@ export function useLearnerProfile() {
       const itemDifficultyOffset = Math.log(Math.max(0.2, Math.min(3.0, record.timeSpentSec / baseTime)));
       const fineGrainedDelta = baseDelta + itemDifficultyOffset * 0.3;
 
-      // 3. 🔥【MIRT 4維能力投影計算】
+      // 3. MIRT 4維能力投影計算
       const load = record.cognitiveLoad || { spatial: 0.25, numeric: 0.25, workingMemory: 0.25, inhibition: 0.25 };
       const effectiveAbility =
         (rawState.theta.spatial || 0) * load.spatial +
@@ -179,47 +187,33 @@ export function useLearnerProfile() {
       const actualScore = record.isSuccess ? 1.0 : 0.0;
       const residual = actualScore - expectedProb;
 
-      // 4. 🔥【漸進測量動態學習率衰減（信心加權）】
+      // 4. 動態學習率衰減
       const adaptiveLR = 0.35 / Math.sqrt(rawState.totalAttempts + 1);
 
-      // 5. 🔥【斯皮爾曼 g 因子多變量貝氏收縮更新（Covariance = 0.35）】
+      // 5. 斯皮爾曼 g 因子共變異數更新 (COV = 0.35)
       const COV = 0.35;
       const calcDimUpdate = (directWeight: number, otherWeightsSum: number, currentDimTheta: number) => {
+        // 兒童模式下，若答錯不扣能力值，保護自信
+        if (options?.isChildMode && !record.isSuccess) return currentDimTheta;
         const effectiveGradient = directWeight + COV * otherWeightsSum;
         const deltaTheta = adaptiveLR * effectiveGradient * residual;
         return Math.max(-3.0, Math.min(3.0, currentDimTheta + deltaTheta));
       };
 
       const updatedTheta: Record<CognitiveDimension, number> = {
-        spatial: calcDimUpdate(
-          load.spatial,
-          load.numeric + load.workingMemory + load.inhibition,
-          rawState.theta.spatial || 0
-        ),
-        numeric: calcDimUpdate(
-          load.numeric,
-          load.spatial + load.workingMemory + load.inhibition,
-          rawState.theta.numeric || 0
-        ),
-        workingMemory: calcDimUpdate(
-          load.workingMemory,
-          load.spatial + load.numeric + load.inhibition,
-          rawState.theta.workingMemory || 0
-        ),
-        inhibition: calcDimUpdate(
-          load.inhibition,
-          load.spatial + load.numeric + load.workingMemory,
-          rawState.theta.inhibition || 0
-        ),
+        spatial: calcDimUpdate(load.spatial, load.numeric + load.workingMemory + load.inhibition, rawState.theta.spatial || 0),
+        numeric: calcDimUpdate(load.numeric, load.spatial + load.workingMemory + load.inhibition, rawState.theta.numeric || 0),
+        workingMemory: calcDimUpdate(load.workingMemory, load.spatial + load.numeric + load.inhibition, rawState.theta.workingMemory || 0),
+        inhibition: calcDimUpdate(load.inhibition, load.spatial + load.numeric + load.workingMemory, rawState.theta.inhibition || 0),
       };
 
-      // 6. 雙相記憶更新
+      // 6. 記憶強度更新
       let newStrength = baseStrength;
       let newStability = rawState.stability;
       if (record.isSuccess) {
         newStrength = Math.min(10.0, baseStrength + 1.2 * Math.exp(-baseStrength / 10));
         newStability = Math.min(10.0, rawState.stability + 0.25);
-      } else {
+      } else if (!options?.isChildMode) {
         newStrength = Math.max(0.5, baseStrength * 0.7);
       }
 
@@ -228,19 +222,36 @@ export function useLearnerProfile() {
         ? Math.round(rawState.avgTimeSec * 0.65 + record.timeSpentSec * 0.35)
         : record.timeSpentSec;
 
-      // 8. 士氣均值回歸與挫折保護
-      const inactiveDaysGlobal = Math.max(0, (now - (prev.lastGlobalActiveAt || now)) / (1000 * 60 * 60 * 24));
+      // 8. 🔥【士氣與連續通關 Streak 計算】
       let currentMorale = prev.morale;
-      if (inactiveDaysGlobal > 3) {
-        currentMorale = 1.0 + (prev.morale - 1.0) * Math.exp(-0.2 * (inactiveDaysGlobal - 3));
+      let nextStreak = prev.streak;
+
+      if (options?.isChildMode) {
+        // 👶 兒童模式：永不跌落，答對加星星
+        if (record.isSuccess) {
+          currentMorale = Math.min(1.4, prev.morale + 0.08);
+          nextStreak += 1;
+        }
+      } else {
+        // 👤 成人競技模式
+        const inactiveDaysGlobal = Math.max(0, (now - (prev.lastGlobalActiveAt || now)) / (1000 * 60 * 60 * 24));
+        if (inactiveDaysGlobal > 3) {
+          currentMorale = 1.0 + (prev.morale - 1.0) * Math.exp(-0.2 * (inactiveDaysGlobal - 3));
+        }
+
+        if (record.isSuccess) {
+          currentMorale = Math.min(1.4, currentMorale + 0.05);
+          nextStreak += 1;
+        } else {
+          nextStreak = 0; // 失敗中斷 Streak，引發正向損失厭惡
+          const recentThree = updatedHistory.filter((h) => h.engineType === record.engineType).slice(-3);
+          if (recentThree.length === 3 && recentThree.every((h) => !h.isSuccess)) {
+            currentMorale = Math.max(0.6, currentMorale - 0.15);
+          }
+        }
       }
 
-      const recentThree = updatedHistory.filter((h) => h.engineType === record.engineType).slice(-3);
-      if (recentThree.length === 3 && recentThree.every((h) => !h.isSuccess)) {
-        currentMorale = Math.max(0.6, currentMorale - 0.15);
-      } else if (record.isSuccess) {
-        currentMorale = Math.min(1.4, currentMorale + 0.05);
-      }
+      const nextMaxStreak = Math.max(prev.maxStreak, nextStreak);
 
       // 9. 巔峰段位更新
       const updatedPeaks = { ...prev.peakRecords };
@@ -265,6 +276,8 @@ export function useLearnerProfile() {
       return {
         ...prev,
         morale: Number(currentMorale.toFixed(2)),
+        streak: nextStreak,
+        maxStreak: nextMaxStreak,
         lastGlobalActiveAt: now,
         history: updatedHistory,
         typeStates: {
@@ -342,7 +355,7 @@ export function useLearnerProfile() {
     const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(profile, null, 2));
     const downloadAnchor = document.createElement('a');
     downloadAnchor.setAttribute("href", dataStr);
-    downloadAnchor.setAttribute("download", `logicore_mirt_v6_1_${Date.now()}.json`);
+    downloadAnchor.setAttribute("download", `logicore_v7_profile_${Date.now()}.json`);
     document.body.appendChild(downloadAnchor);
     downloadAnchor.click();
     downloadAnchor.remove();
