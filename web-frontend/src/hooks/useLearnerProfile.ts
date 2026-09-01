@@ -16,17 +16,20 @@ export interface LearnerProfile {
   userId: string;
   history: SolveRecord[];
   typeMastery: Record<string, { solved: number; totalAttempts: number; avgTimeSec: number }>;
+  peakRecords: Record<string, { tier: TierKey; timeSpentSec: number; timestamp: number }>;
+  lastPlayedAt: Record<string, number>;
 }
 
-const STORAGE_KEY = 'LOGICORE_LEARNER_PROFILE_V1';
+const STORAGE_KEY = 'LOGICORE_LEARNER_PROFILE_V2';
 
 const INITIAL_PROFILE: LearnerProfile = {
   userId: 'player_default',
   history: [],
   typeMastery: {},
+  peakRecords: {},
+  lastPlayedAt: {},
 };
 
-// 各階層客觀預期基準時間（秒）
 const BASE_TIME_ESTIMATE: Record<TierKey, number> = {
   kids: 60,
   intermediate: 120,
@@ -34,11 +37,27 @@ const BASE_TIME_ESTIMATE: Record<TierKey, number> = {
   master: 400,
 };
 
+const TIER_RANK: Record<TierKey, number> = {
+  kids: 0,
+  intermediate: 1,
+  expert: 2,
+  master: 3,
+};
+
 export function useLearnerProfile() {
   const [profile, setProfile] = useState<LearnerProfile>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEY);
-      return saved ? JSON.parse(saved) : INITIAL_PROFILE;
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        return {
+          ...INITIAL_PROFILE,
+          ...parsed,
+          peakRecords: parsed.peakRecords || {},
+          lastPlayedAt: parsed.lastPlayedAt || {},
+        };
+      }
+      return INITIAL_PROFILE;
     } catch {
       return INITIAL_PROFILE;
     }
@@ -54,19 +73,45 @@ export function useLearnerProfile() {
 
   const recordAttempt = useCallback((record: Omit<SolveRecord, 'timestamp'>) => {
     setProfile((prev) => {
-      const fullRecord: SolveRecord = { ...record, timestamp: Date.now() };
+      const now = Date.now();
+      const fullRecord: SolveRecord = { ...record, timestamp: now };
       const updatedHistory = [...prev.history, fullRecord];
 
+      // 1. 更新掌握度統計
       const currentType = prev.typeMastery[record.engineType] || {
         solved: 0,
         totalAttempts: 0,
         avgTimeSec: 0,
       };
-
       const newTotal = currentType.totalAttempts + 1;
       const newSolved = currentType.solved + (record.isSuccess ? 1 : 0);
       const newAvgTime =
         (currentType.avgTimeSec * currentType.totalAttempts + record.timeSpentSec) / newTotal;
+
+      // 2. 更新最後遊玩時間
+      const updatedLastPlayed = {
+        ...prev.lastPlayedAt,
+        [record.engineType]: now,
+      };
+
+      // 3. 更新巔峰紀錄（若達成更高階難度，或同難度下刷新速度紀錄）
+      const updatedPeaks = { ...prev.peakRecords };
+      if (record.isSuccess) {
+        const currentPeak = updatedPeaks[record.engineType];
+        const isHigherTier = !currentPeak || TIER_RANK[record.tier] > TIER_RANK[currentPeak.tier];
+        const isFasterSameTier =
+          currentPeak &&
+          TIER_RANK[record.tier] === TIER_RANK[currentPeak.tier] &&
+          record.timeSpentSec < currentPeak.timeSpentSec;
+
+        if (isHigherTier || isFasterSameTier) {
+          updatedPeaks[record.engineType] = {
+            tier: record.tier,
+            timeSpentSec: record.timeSpentSec,
+            timestamp: now,
+          };
+        }
+      }
 
       return {
         ...prev,
@@ -79,18 +124,18 @@ export function useLearnerProfile() {
             avgTimeSec: Math.round(newAvgTime),
           },
         },
+        peakRecords: updatedPeaks,
+        lastPlayedAt: updatedLastPlayed,
       };
     });
   }, []);
 
-  // 🚀 進化版 ZPD 調度器（結合勝率、解題流暢度與遷移學習）
   const getZPDRecommendedTier = useCallback(
     (engineType: string): TierKey => {
       const recentAttempts = profile.history
         .filter((h) => h.engineType === engineType)
         .slice(-8);
 
-      // 1. 遷移學習 (Transfer Learning)：新題型若在其他題型表現極佳，直接從中階起跳
       if (recentAttempts.length < 3) {
         const globalBest = Object.values(profile.typeMastery).reduce(
           (max, t) => Math.max(max, t.solved / (t.totalAttempts || 1)),
@@ -99,36 +144,27 @@ export function useLearnerProfile() {
         return globalBest > 0.8 ? 'intermediate' : 'kids';
       }
 
-      // 2. 核心指標計算
-      const successRate = recentAttempts.filter((h) => h.isSuccess).length / recentAttempts.length;
-      const avgTime = recentAttempts.reduce((s, h) => s + h.timeSpentSec, 0) / recentAttempts.length;
+      const successRate =
+        recentAttempts.filter((h) => h.isSuccess).length / recentAttempts.length;
+      const avgTime =
+        recentAttempts.reduce((s, h) => s + h.timeSpentSec, 0) / recentAttempts.length;
       const currentTier = recentAttempts[recentAttempts.length - 1].tier;
 
-      // 3. 認知流暢度比率 (Time Ratio)
       const baseTime = BASE_TIME_ESTIMATE[currentTier] || 120;
       const timeRatio = avgTime / baseTime;
 
-      // 4. 決策矩陣 (ZPD Decision Matrix)
-      // 高勝率 + 極速完成 -> 流暢度突破，跳 2 級
       if (successRate >= 0.75 && timeRatio < 0.5) {
         if (currentTier === 'kids') return 'expert';
-        if (currentTier === 'intermediate') return 'master';
         return 'master';
       }
-
-      // 高勝率 + 正常節奏 -> 紮實掌握，跳 1 級
       if (successRate >= 0.75 && timeRatio < 1.0) {
         if (currentTier === 'kids') return 'intermediate';
         if (currentTier === 'intermediate') return 'expert';
         return 'master';
       }
-
-      // 中等勝率 + 慢速探索 (掙扎區) -> 留在原難度進行心流鞏固
       if (successRate >= 0.5 && successRate < 0.75 && timeRatio < 1.5) {
         return currentTier;
       }
-
-      // 超越負荷 -> 降 1 級保護自信
       if (successRate < 0.5 || timeRatio > 2.0) {
         if (currentTier === 'master') return 'expert';
         if (currentTier === 'expert') return 'intermediate';
