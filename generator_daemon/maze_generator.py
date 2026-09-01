@@ -78,7 +78,7 @@ export class WebMazeGenerator {
       }
     }
 
-    // 4. 計算轉彎數與死胡同指標
+    // 4. 計算轉彎數
     let turnCount = 0;
     for (let i = 1; i < solution.length - 1; i++) {
       const dx1 = solution[i][0] - solution[i - 1][0];
