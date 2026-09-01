@@ -3,40 +3,40 @@ import { useMemo } from 'react';
 import { LearnerProfile, TierKey } from './useLearnerProfile';
 import { PuzzleEntity } from '../generated';
 
-const TIER_WEIGHT: Record<TierKey, number> = {
-  kids: 1.0,
-  intermediate: 1.8,
-  expert: 2.8,
-  master: 4.0,
-};
-
 export function useLongTermScheduler(
   profile: LearnerProfile,
   catalog: Record<string, PuzzleEntity[]>
 ) {
-  // 1. 計算具有遺忘急迫性 (Urgency) 排序的題型清單
+  // 1. 基於個人化指數衰減之急迫度排行 (S_now = S_old * e^(-lambda * dt))
   const sortedForgottenTypes = useMemo(() => {
     const now = Date.now();
-    const list: { type: string; urgency: number; daysInactive: number }[] = [];
+    const list: { type: string; urgency: number; currentStrength: number; daysInactive: number }[] = [];
 
-    Object.keys(profile.lastPlayedAt || {}).forEach((engineType) => {
-      const lastPlayed = profile.lastPlayedAt[engineType];
-      const daysInactive = Math.floor((now - lastPlayed) / (1000 * 60 * 60 * 24));
-      const peak = profile.peakRecords?.[engineType];
+    Object.keys(profile.typeStates || {}).forEach((engineType) => {
+      const state = profile.typeStates[engineType];
+      const lastPlayed = profile.lastPlayedAt[engineType] || now;
+      const daysInactive = Math.max(0, Math.floor((now - lastPlayed) / (1000 * 60 * 60 * 24)));
 
-      // 超過 14 天未練習且曾解過題目，納入加權排程
-      if (daysInactive >= 14 && peak) {
-        const weight = TIER_WEIGHT[peak.tier] || 1.0;
-        const urgencyScore = daysInactive * weight;
-        list.push({ type: engineType, urgency: urgencyScore, daysInactive });
+      // 個人化衰減速率 lambda (穩固度 F 越高，衰減越慢)
+      const lambda = 0.15 / Math.max(1.0, state.stability);
+      const currentStrength = state.strength * Math.exp(-lambda * daysInactive);
+
+      // 當記憶強度跌破安全閾值 (3.0) 且有閒置天數時觸發急迫排程
+      if (currentStrength < 3.0 && daysInactive >= 3) {
+        const urgencyScore = (10.0 / (currentStrength + 0.1)) * (1 + daysInactive * 0.1);
+        list.push({
+          type: engineType,
+          urgency: Number(urgencyScore.toFixed(2)),
+          currentStrength: Number(currentStrength.toFixed(2)),
+          daysInactive,
+        });
       }
     });
 
-    // 依急迫度由高到低排序
     return list.sort((a, b) => b.urgency - a.urgency);
-  }, [profile]);
+  }, [profile.typeStates, profile.lastPlayedAt]);
 
-  // 2. 全域大腦段位（所有題型的最高突破點）
+  // 2. 全域大腦段位
   const overallPeakTier = useMemo((): TierKey => {
     const tiers = Object.values(profile.peakRecords || {}).map((r) => r.tier);
     if (tiers.length === 0) return 'kids';
@@ -52,8 +52,8 @@ export function useLongTermScheduler(
     return tierMap[maxRank] || 'kids';
   }, [profile.peakRecords]);
 
-  // 3. 取出急迫度最高的複習題目（溫手感難度）
-  const getTopForgottenReview = (): { targetType: string; days: number; puzzle: PuzzleEntity } | null => {
+  // 3. 取出記憶衰退最嚴重題目的溫手感複習題
+  const getTopForgottenReview = (): { targetType: string; days: number; strength: number; puzzle: PuzzleEntity } | null => {
     if (sortedForgottenTypes.length === 0) return null;
 
     const top = sortedForgottenTypes[0];
@@ -64,6 +64,7 @@ export function useLongTermScheduler(
     return {
       targetType: top.type,
       days: top.daysInactive,
+      strength: top.currentStrength,
       puzzle: reviewPool[Math.floor(Math.random() * reviewPool.length)],
     };
   };
