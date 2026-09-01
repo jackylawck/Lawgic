@@ -53,7 +53,7 @@ const MainDashboard: React.FC = () => {
   const [selectedType, setSelectedType] = useState<string>('sudoku');
   const [currentLevel, setCurrentLevel] = useState<TierKey>('kids');
   const [puzzleIndex, setPuzzleIndex] = useState<number>(0);
-  const [isZPDMode, setIsZPDMode] = useState<boolean>(false);
+  const [isZPDMode, setIsZPDMode] = useState<boolean>(true); // 預設開啟智能神經導師
 
   const filteredPuzzles = useMemo(() => {
     const rawList = PUZZLE_CATALOG[selectedType] || [];
@@ -76,7 +76,7 @@ const MainDashboard: React.FC = () => {
   const activeList = filteredPuzzles[activeLevel] || [];
   const activePuzzle = activeList.length > 0 ? activeList[puzzleIndex % activeList.length] : null;
 
-  const typeStats = profile.typeMastery[selectedType] || { solved: 0, totalAttempts: 0, avgTimeSec: 0 };
+  const currentState = profile.typeStates[selectedType] || { theta: 0.0, strength: 5.0, avgTimeSec: 0 };
   const currentPeak = profile.peakRecords[selectedType];
   const topForgotten = getTopForgottenReview();
 
@@ -87,7 +87,7 @@ const MainDashboard: React.FC = () => {
       reader.onload = (event) => {
         const text = event.target?.result as string;
         if (importProfileJSON(text)) {
-          alert('大腦認知檔案匯入成功！');
+          alert('神經認知檔案 (V4) 載入成功！');
         } else {
           alert('檔案格式錯誤，匯入失敗。');
         }
@@ -98,25 +98,25 @@ const MainDashboard: React.FC = () => {
 
   return (
     <main className="min-h-screen bg-slate-950 text-slate-100 flex flex-col items-center py-6 px-4 font-sans selection:bg-indigo-500">
-      {/* Header */}
+      {/* 頂部導航 */}
       <header className="w-full max-w-xl flex items-center justify-between mb-3 pb-3 border-b border-slate-800">
         <div>
           <h1 className="text-2xl font-black bg-gradient-to-r from-indigo-400 via-cyan-300 to-emerald-400 bg-clip-text text-transparent">
             LogiCore
           </h1>
-          <p className="text-[11px] text-slate-500 font-mono">Cognitive Neuroscience Framework · ZPD v3</p>
+          <p className="text-[11px] text-slate-500 font-mono">Bayesian IRT & Memory Strength · Neuro-V4</p>
         </div>
         <div className="flex items-center gap-2">
           <button
             onClick={exportProfileJSON}
-            title="匯出個人大腦檔案"
+            title="匯出大腦數據庫"
             className="p-1.5 bg-slate-900 border border-slate-800 hover:border-slate-700 text-slate-300 rounded-lg text-xs"
           >
             💾 備份
           </button>
           <button
             onClick={() => fileInputRef.current?.click()}
-            title="匯入大腦檔案"
+            title="匯入大腦數據庫"
             className="p-1.5 bg-slate-900 border border-slate-800 hover:border-slate-700 text-slate-300 rounded-lg text-xs"
           >
             📂 載入
@@ -132,11 +132,11 @@ const MainDashboard: React.FC = () => {
         </div>
       </header>
 
-      {/* 終身巔峰與記憶急迫度喚醒條 */}
+      {/* 終身巔峰與記憶衰退預警條 */}
       <div className="w-full max-w-xl mb-3 flex flex-wrap items-center justify-between gap-2 px-3 py-2 bg-gradient-to-r from-indigo-950/40 to-slate-900/60 rounded-xl border border-indigo-900/40 text-xs">
         <div className="flex items-center gap-2">
           <span className="px-2.5 py-0.5 bg-amber-500/20 text-amber-300 border border-amber-500/40 rounded-full font-bold">
-            🏆 巔峰段位: {t.difficulty[overallPeakTier]}
+            🏆 巔峰: {t.difficulty[overallPeakTier]}
           </span>
           {currentPeak && (
             <span className="text-slate-400 font-mono text-[11px]">
@@ -154,17 +154,18 @@ const MainDashboard: React.FC = () => {
             }}
             className="px-2.5 py-1 bg-cyan-950 text-cyan-300 border border-cyan-700 hover:bg-cyan-900/80 rounded-lg text-[11px] font-semibold transition flex items-center gap-1"
           >
-            <span>🕰️ {topForgotten.days}天未練</span>
-            <span className="text-cyan-400 uppercase font-bold">({topForgotten.targetType})</span>
+            <span>⚡ 記憶衰退預警:</span>
+            <span className="text-cyan-400 uppercase font-bold">{topForgotten.targetType} (S:{topForgotten.strength})</span>
           </button>
         )}
       </div>
 
-      {/* 即時認知流暢度與 EWMA 指標 */}
+      {/* IRT 潛在特質值 \theta 與心流狀態列 */}
       <div className="w-full max-w-xl mb-4 px-3 py-2 bg-slate-900/60 rounded-xl border border-slate-800 flex items-center justify-between text-xs font-mono">
-        <div className="flex items-center gap-3">
-          <span className="text-slate-400">通關: <b className="text-emerald-400">{profile.history.filter((h) => h.isSuccess).length}</b></span>
-          <span className="text-slate-400">EWMA均時: <b className="text-indigo-300">{typeStats.avgTimeSec}s</b></span>
+        <div className="flex items-center gap-2 sm:gap-3">
+          <span className="text-slate-400">能力值(θ): <b className="text-emerald-400">{currentState.theta > 0 ? `+${currentState.theta}` : currentState.theta}</b></span>
+          <span className="text-slate-400">士氣: <b className="text-amber-300">{profile.morale}x</b></span>
+          <span className="text-slate-400 hidden sm:inline">均時: <b className="text-indigo-300">{currentState.avgTimeSec}s</b></span>
         </div>
         <button
           onClick={() => setIsZPDMode(!isZPDMode)}
@@ -174,11 +175,11 @@ const MainDashboard: React.FC = () => {
               : 'bg-slate-800 text-slate-400 hover:text-slate-200'
           }`}
         >
-          {isZPDMode ? '🧠 ZPD 鷹架引導' : '手動選階'}
+          {isZPDMode ? '🧠 IRT 自適應中' : '手動選階'}
         </button>
       </div>
 
-      {/* 題型選擇 */}
+      {/* 題型切換 Tab */}
       <div className="w-full max-w-xl flex gap-2 overflow-x-auto pb-2 mb-3 scrollbar-none">
         {PUZZLE_TYPES.map((pt) => {
           const isActive = selectedType === pt.id;
