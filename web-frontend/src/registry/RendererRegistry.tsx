@@ -2,6 +2,7 @@
 import React from 'react';
 import { PuzzleEntity } from '../generated';
 import { SudokuBoard } from '../components/SudokuBoard';
+import { MazeBoard } from '../components/MazeBoard';
 
 interface Props {
   puzzle?: PuzzleEntity;
@@ -15,6 +16,8 @@ export const PuzzleRenderer: React.FC<Props> = ({ puzzle, puzzleData }) => {
   switch (currentPuzzle.engine_type) {
     case 'sudoku':
       return <SudokuBoard puzzleData={currentPuzzle} puzzle={currentPuzzle} />;
+    case 'maze':
+      return <MazeBoard puzzleData={currentPuzzle} puzzle={currentPuzzle} />;
     default:
       return (
         <div className="p-8 border border-dashed border-slate-800 rounded-xl text-center text-xs font-mono text-slate-400">
