@@ -5,6 +5,7 @@ import { LanguageProvider, useLanguage } from './contexts/LanguageContext';
 import { PuzzleRenderer } from './registry/RendererRegistry';
 import { PUZZLE_CATALOG, PuzzleEntity, CognitiveLoadVector } from './generated';
 import { LangSwitcher } from './components/LangSwitcher';
+import { VirtualGamepad } from './components/VirtualGamepad';
 import { useLearnerProfile, TierKey, CognitiveDimension } from './hooks/useLearnerProfile';
 import { useLongTermScheduler } from './hooks/useLongTermScheduler';
 
@@ -96,6 +97,9 @@ const MainDashboard: React.FC = () => {
   // ⚡ 瞬間二進制視覺反饋狀態 (400ms 綠/紅邊框脈衝)
   const [flashFeedback, setFlashFeedback] = useState<'success' | 'failure' | null>(null);
 
+  // 🕹️ 判斷當前是否為空間探索類題型（需要虛擬搖桿支援）
+  const isSpatialExplorationType = selectedType === 'maze' || selectedType === 'skyscraper';
+
   const visibleMetas = useMemo(() => {
     if (!isChildMode) return PUZZLE_METAS;
     return PUZZLE_METAS.filter((m) => CHILD_SAFE_IDS.has(m.id));
@@ -183,6 +187,20 @@ const MainDashboard: React.FC = () => {
     }
     setTimeout(() => setNeuroToast(null), 3500);
   }, [visibleMetas, weakestDimension, selectedType, activeList.length]);
+
+  // 🕹️ 搖桿控制回調處理
+  const handleJoystickMove = useCallback((x: number, y: number) => {
+    // 輸出給迷宮位移或平移視角
+  }, []);
+
+  const handleJoystickRotate = useCallback((x: number, y: number) => {
+    // 輸出給 3D 視角旋轉
+  }, []);
+
+  const handleJoystickAction = useCallback(() => {
+    if (navigator.vibrate) navigator.vibrate(15);
+    // 觸發空間互動/落子/確認動作
+  }, []);
 
   // ⌨️ 全域鍵盤快捷鍵 (N / P / R / Z)
   useEffect(() => {
@@ -342,7 +360,7 @@ const MainDashboard: React.FC = () => {
 
         {activePuzzle ? (
           <section className="flex flex-col items-center w-full max-w-sm sm:max-w-md">
-            {/* 🔥 包含 400ms 瞬間二進制邊框脈衝之容器 */}
+            {/* 包含 400ms 瞬間二進制邊框脈衝之容器 */}
             <div
               className={`w-full p-1 bg-slate-900/60 border-2 transition-all duration-150 ${
                 flashFeedback === 'success'
@@ -363,6 +381,16 @@ const MainDashboard: React.FC = () => {
                 />
               </ErrorBoundary>
             </div>
+
+            {/* 🕹️ 自適應虛擬搖桿（僅空間題型顯示） */}
+            {isSpatialExplorationType && (
+              <VirtualGamepad
+                onMove={handleJoystickMove}
+                onRotate={handleJoystickRotate}
+                onAction={handleJoystickAction}
+                actionLabel="STEP"
+              />
+            )}
 
             <div className="mt-2.5 grid grid-cols-2 gap-1.5 w-full">
               <button
@@ -589,6 +617,16 @@ const MainDashboard: React.FC = () => {
               />
             </ErrorBoundary>
           </div>
+
+          {/* 🕹️ 自適應虛擬搖桿（僅空間題型顯示） */}
+          {isSpatialExplorationType && (
+            <VirtualGamepad
+              onMove={handleJoystickMove}
+              onRotate={handleJoystickRotate}
+              onAction={handleJoystickAction}
+              actionLabel="TRIGGER"
+            />
+          )}
 
           <div className="mt-4 grid grid-cols-2 gap-2.5 w-full">
             <button
