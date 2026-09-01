@@ -1,7 +1,7 @@
 // web-frontend/src/components/MazeBoard.tsx
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { PuzzleEntity } from '../generated';
-import { useLearnerProfile, TierKey } from '../hooks/useLearnerProfile';
+import { PuzzleEntity, TierKey } from '../generated';
+import { useLearnerProfile } from '../hooks/useLearnerProfile';
 
 interface Props {
   puzzleData?: PuzzleEntity;
@@ -25,7 +25,6 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
   const conflictCountRef = useRef<number>(0);
   const hasRecordedRef = useRef<boolean>(false);
 
-  // 換題時重置狀態
   useEffect(() => {
     setPlayerPos(startPos);
     setTrail([startPos]);
@@ -51,7 +50,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
           nextX >= grid[0].length ||
           grid[nextY][nextX] === 1
         ) {
-          if (navigator.vibrate) navigator.vibrate(10);
+          if (navigator.vibrate) navigator.vibrate(12);
           conflictCountRef.current += 1;
           return [currX, currY];
         }
@@ -88,7 +87,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
     [grid, endPos, isCompleted, actualPuzzle, recordAttempt]
   );
 
-  // 支援鍵盤 WASD / 方向鍵控制
+  // 鍵盤導航
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (isCompleted) return;
@@ -124,7 +123,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [movePlayer, isCompleted]);
 
-  // 自定義事件監聽，供 VirtualGamepad 驅動
+  // 雙手把 Custom Event 監聽
   useEffect(() => {
     const handleCustomMove = (e: CustomEvent<{ dx: number; dy: number }>) => {
       movePlayer(e.detail.dx, e.detail.dy);
@@ -136,10 +135,9 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
   if (!grid || grid.length === 0) return null;
 
   return (
-    <div className="flex flex-col items-center justify-center p-3 select-none">
-      {/* 迷宮網格 */}
+    <div className="flex flex-col items-center justify-center p-2 select-none">
       <div
-        className="grid gap-[2px] bg-slate-900 border-2 border-slate-700 p-2 rounded-xl shadow-2xl"
+        className="grid gap-[1px] bg-slate-900 border-2 border-slate-700 p-1.5 rounded-xl shadow-2xl"
         style={{
           gridTemplateColumns: `repeat(${grid[0].length}, minmax(0, 1fr))`,
         }}
@@ -155,9 +153,9 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
             return (
               <div
                 key={`${rIdx}-${cIdx}`}
-                className={`w-7 h-7 sm:w-9 sm:h-9 flex items-center justify-center rounded-sm font-bold text-xs transition-all duration-75 ${
+                className={`w-6 h-6 sm:w-7 sm:h-7 flex items-center justify-center rounded-sm font-bold text-[10px] transition-all duration-75 ${
                   isWall
-                    ? 'bg-slate-800 border border-slate-700/60 shadow-inner'
+                    ? 'bg-slate-800/90 border border-slate-700/50 shadow-inner'
                     : isPlayer
                     ? 'bg-cyan-500 text-white shadow-lg shadow-cyan-500/50 scale-105 z-10'
                     : isEnd
@@ -176,31 +174,31 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
         )}
       </div>
 
-      {/* 底部方向鍵輔助（觸控無手把時的快速備用鍵） */}
-      <div className="grid grid-cols-3 gap-1.5 mt-4 w-36">
+      {/* 觸控方向按鈕備份 */}
+      <div className="grid grid-cols-3 gap-1.5 mt-3 w-32">
         <div />
         <button
           onClick={() => movePlayer(0, -1)}
-          className="p-2.5 bg-slate-900 hover:bg-slate-800 active:scale-95 text-slate-200 border border-slate-700 rounded-lg text-xs font-mono font-bold"
+          className="p-2 bg-slate-900 hover:bg-slate-800 active:scale-95 text-slate-200 border border-slate-700 rounded-lg text-xs font-mono font-bold"
         >
           ▲
         </button>
         <div />
         <button
           onClick={() => movePlayer(-1, 0)}
-          className="p-2.5 bg-slate-900 hover:bg-slate-800 active:scale-95 text-slate-200 border border-slate-700 rounded-lg text-xs font-mono font-bold"
+          className="p-2 bg-slate-900 hover:bg-slate-800 active:scale-95 text-slate-200 border border-slate-700 rounded-lg text-xs font-mono font-bold"
         >
           ◀
         </button>
         <button
           onClick={() => movePlayer(0, 1)}
-          className="p-2.5 bg-slate-900 hover:bg-slate-800 active:scale-95 text-slate-200 border border-slate-700 rounded-lg text-xs font-mono font-bold"
+          className="p-2 bg-slate-900 hover:bg-slate-800 active:scale-95 text-slate-200 border border-slate-700 rounded-lg text-xs font-mono font-bold"
         >
           ▼
         </button>
         <button
           onClick={() => movePlayer(1, 0)}
-          className="p-2.5 bg-slate-900 hover:bg-slate-800 active:scale-95 text-slate-200 border border-slate-700 rounded-lg text-xs font-mono font-bold"
+          className="p-2 bg-slate-900 hover:bg-slate-800 active:scale-95 text-slate-200 border border-slate-700 rounded-lg text-xs font-mono font-bold"
         >
           ▶
         </button>
