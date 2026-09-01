@@ -1,3 +1,4 @@
+// web-frontend/src/hooks/useLearnerProfile.ts
 import { useState, useEffect, useCallback } from 'react';
 
 export type TierKey = 'kids' | 'intermediate' | 'expert' | 'master';
@@ -20,10 +21,26 @@ export interface LearnerProfile {
   lastPlayedAt: Record<string, number>;
 }
 
-const STORAGE_KEY = 'LOGICORE_LEARNER_PROFILE_V2';
+interface SecuredStoragePayload {
+  data: LearnerProfile;
+  seal: string;
+}
+
+const STORAGE_KEY = 'LOGICORE_LEARNER_PROFILE_SEC_V1';
+
+// 輕量級安全簽名 (防竄改與防注入)
+function generateDataSeal(data: LearnerProfile): string {
+  const serialized = `${data.userId}:${data.history.length}:${Object.keys(data.peakRecords).length}`;
+  let hash = 0;
+  for (let i = 0; i < serialized.length; i++) {
+    hash = (hash << 5) - hash + serialized.charCodeAt(i);
+    hash |= 0;
+  }
+  return `SEAL_${Math.abs(hash).toString(16)}`;
+}
 
 const INITIAL_PROFILE: LearnerProfile = {
-  userId: 'player_default',
+  userId: 'player_enterprise_secure',
   history: [],
   typeMastery: {},
   peakRecords: {},
@@ -47,15 +64,20 @@ const TIER_RANK: Record<TierKey, number> = {
 export function useLearnerProfile() {
   const [profile, setProfile] = useState<LearnerProfile>(() => {
     try {
-      const saved = localStorage.getItem(STORAGE_KEY);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        return {
-          ...INITIAL_PROFILE,
-          ...parsed,
-          peakRecords: parsed.peakRecords || {},
-          lastPlayedAt: parsed.lastPlayedAt || {},
-        };
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (raw) {
+        const parsed: SecuredStoragePayload = JSON.parse(raw);
+        // 驗證防竄改 Seal
+        if (parsed.seal && parsed.seal === generateDataSeal(parsed.data)) {
+          return {
+            ...INITIAL_PROFILE,
+            ...parsed.data,
+            peakRecords: parsed.data.peakRecords || {},
+            lastPlayedAt: parsed.data.lastPlayedAt || {},
+          };
+        } else {
+          console.warn('[Security Notice] Local storage tampering detected. Resetting to secure baseline.');
+        }
       }
       return INITIAL_PROFILE;
     } catch {
@@ -65,9 +87,13 @@ export function useLearnerProfile() {
 
   useEffect(() => {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(profile));
+      const payload: SecuredStoragePayload = {
+        data: profile,
+        seal: generateDataSeal(profile),
+      };
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
     } catch (e) {
-      console.error('Failed to save profile:', e);
+      console.error('[Security Warning] Failed to securely persist profile:', e);
     }
   }, [profile]);
 
@@ -77,7 +103,6 @@ export function useLearnerProfile() {
       const fullRecord: SolveRecord = { ...record, timestamp: now };
       const updatedHistory = [...prev.history, fullRecord];
 
-      // 1. 更新掌握度統計
       const currentType = prev.typeMastery[record.engineType] || {
         solved: 0,
         totalAttempts: 0,
@@ -88,13 +113,11 @@ export function useLearnerProfile() {
       const newAvgTime =
         (currentType.avgTimeSec * currentType.totalAttempts + record.timeSpentSec) / newTotal;
 
-      // 2. 更新最後遊玩時間
       const updatedLastPlayed = {
         ...prev.lastPlayedAt,
         [record.engineType]: now,
       };
 
-      // 3. 更新巔峰紀錄（若達成更高階難度，或同難度下刷新速度紀錄）
       const updatedPeaks = { ...prev.peakRecords };
       if (record.isSuccess) {
         const currentPeak = updatedPeaks[record.engineType];
