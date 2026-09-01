@@ -34,7 +34,7 @@ export const PUZZLE_CATALOG: Record<string, PuzzleEntity[]> = {
   futoshiki: [],
   jigsaw: [],
   dominoes: [],
-  maze: (mazePuzzles as unknown) as PuzzleEntity[],
+  maze: (mazePuzzles as unknown) as PuzzleEntity[], // 👈 掛載迷宮題庫
 };
 
 export const getAllPuzzles = (): PuzzleEntity[] => {
