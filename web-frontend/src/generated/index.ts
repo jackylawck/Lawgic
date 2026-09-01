@@ -11,20 +11,20 @@ export interface CognitiveLoadVector {
 
 export interface PuzzleEntity {
   id: string;
-  category: 'grid_csp' | 'grid_logic' | 'topological' | 'arithmetic' | 'elimination';
+  category: string;
   engine_type: string;
-  tier: 'kids' | 'intermediate' | 'expert' | 'master';
+  tier: string;
   puzzle: any;
   solution: any;
   metrics: { decision_depth: number; propagation_steps?: number };
-  cognitiveLoad: CognitiveLoadVector;
+  cognitiveLoad?: CognitiveLoadVector;
   checksum: string;
 }
 
 // 12 大經典認知題型註冊表
 export const PUZZLE_CATALOG: Record<string, PuzzleEntity[]> = {
-  sudoku: sudokuPuzzles as PuzzleEntity[],
-  skyscraper: skyscraperPuzzles as PuzzleEntity[],
+  sudoku: (sudokuPuzzles as unknown) as PuzzleEntity[],
+  skyscraper: (skyscraperPuzzles as unknown) as PuzzleEntity[],
   hashi: [],        // 數橋 (Topological Graph)
   kropki: [],       // 黑白點數獨 (Constraint Arithmetic)
   slitherlink: [],  // 數迴 (Edge Loop Closure)
