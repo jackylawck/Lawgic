@@ -33,34 +33,38 @@ const PUZZLE_METAS: PuzzleMeta[] = [
   { id: 'maze', nameZh: '空間迷宮', nameEn: 'Maze', icon: '🌀', primaryDimension: 'spatial', defaultLoad: { spatial: 1.0, numeric: 0.0, workingMemory: 0.5, inhibition: 0.4 } },
 ];
 
-const LEVEL_KEYS: TierKey[] = ['kids', 'intermediate', 'expert', 'master'];
+export const LEVEL_KEYS: TierKey[] = ['kids', 'learner', 'intermediate', 'expert', 'master'];
 
 const TIER_NAMES_PRO_ZH: Record<TierKey, string> = {
-  kids: '4x4 奠基',
-  intermediate: '6x6 突破',
-  expert: '9x9 精通',
-  master: '變體深淵',
+  kids: '資優啟蒙',
+  learner: '邏輯學徒',
+  intermediate: '進階挑戰',
+  expert: '錦標專家',
+  master: '深淵魔王',
 };
 
 const TIER_NAMES_PRO_EN: Record<TierKey, string> = {
-  kids: '4x4 Basics',
-  intermediate: '6x6 Advance',
-  expert: '9x9 Mastery',
-  master: 'Abyss',
+  kids: 'Gifted Talent',
+  learner: 'Learner',
+  intermediate: 'Intermediate',
+  expert: 'Expert',
+  master: 'Grandmaster',
 };
 
 const TIER_NAMES_CHILD_ZH: Record<TierKey, string> = {
-  kids: '🌱 小小種子',
-  intermediate: '🌿 發芽小樹',
-  expert: '🌳 森林守護者',
-  master: '🏰 邏輯小騎士',
+  kids: '🌱 資優小幼苗',
+  learner: '🌿 邏輯小學徒',
+  intermediate: '🌲 森林探險家',
+  expert: '🏰 迷宮大騎士',
+  master: '👑 奧賽大宗師',
 };
 
 const TIER_NAMES_CHILD_EN: Record<TierKey, string> = {
-  kids: '🌱 Sprout',
-  intermediate: '🌿 Sapling',
-  expert: '🌳 Guardian',
-  master: '🏰 Knight',
+  kids: '🌱 Gifted Junior',
+  learner: '🌿 Logic Apprentice',
+  intermediate: '🌲 Explorer',
+  expert: '🏰 Maze Knight',
+  master: '👑 Grandmaster',
 };
 
 const CHILD_SAFE_IDS = new Set(['maze', 'hashi', 'sudoku', 'jigsaw']);
@@ -101,7 +105,7 @@ const MainDashboard: React.FC = () => {
   const [selectedType, setSelectedType] = useState<string>('sudoku');
   const [currentLevel, setCurrentLevel] = useState<TierKey>('kids');
   const [puzzleIndex, setPuzzleIndex] = useState<number>(0);
-  const [isZPDMode, setIsZPDMode] = useState<boolean>(true);
+  const [isZPDMode, setIsZPDMode] = useState<boolean>(false); // 預設提供手動選階
   const [showDetail, setShowDetail] = useState<boolean>(false);
   const [neuroToast, setNeuroToast] = useState<string | null>(null);
 
@@ -120,6 +124,7 @@ const MainDashboard: React.FC = () => {
     const rawList = PUZZLE_CATALOG[selectedType] || [];
     const grouped: Record<TierKey, PuzzleEntity[]> = {
       kids: [],
+      learner: [],
       intermediate: [],
       expert: [],
       master: [],
@@ -191,7 +196,7 @@ const MainDashboard: React.FC = () => {
       setPuzzleIndex(0);
       setNeuroToast(
         isEn
-          ? `🧭 Loading targeted training for weakest pathway: [${targetMeta.nameEn}]`
+          ? `🧭 Loading targeted training: [${targetMeta.nameEn}]`
           : `🧭 載入最弱迴路訓練【${targetMeta.nameZh}】`
       );
     } else {
@@ -225,7 +230,6 @@ const MainDashboard: React.FC = () => {
   }, []);
 
   const handleJoystickRotate = useCallback((x: number, y: number) => {}, []);
-
   const handleJoystickAction = useCallback(() => {
     if (navigator.vibrate) navigator.vibrate(15);
   }, []);
@@ -237,13 +241,11 @@ const MainDashboard: React.FC = () => {
       switch (e.key) {
         case 'n':
         case 'N':
-        case 'ArrowRight':
           e.preventDefault();
           handleNextPuzzle();
           break;
         case 'p':
         case 'P':
-        case 'ArrowLeft':
           e.preventDefault();
           handlePrevPuzzle();
           break;
@@ -284,27 +286,14 @@ const MainDashboard: React.FC = () => {
       reader.onload = (event) => {
         const text = event.target?.result as string;
         if (importProfileJSON(text)) {
-          setNeuroToast(isEn ? '🧠 Brain Profile Loaded' : '🧠 檔案載入成功');
+          setNeuroToast(isEn ? '🧠 Profile Loaded' : '🧠 檔案載入成功');
         } else {
-          setNeuroToast(isEn ? '⚠️ Invalid JSON File' : '⚠️ 格式錯誤');
+          setNeuroToast(isEn ? '⚠️ Format Error' : '⚠️ 格式錯誤');
         }
         setTimeout(() => setNeuroToast(null), 2500);
       };
       reader.readAsText(file);
     }
-  };
-
-  const handleScheduleClick = () => {
-    if (!topSchedule) return;
-    setSelectedType(topSchedule.targetType);
-    setCurrentLevel(topSchedule.puzzle.tier as TierKey);
-    setPuzzleIndex(0);
-    setNeuroToast(
-      topSchedule.item.isConsolidated
-        ? (isEn ? '🌙 24h Sleep Consolidation Window Active' : '🌙 24h 睡眠固化窗口已啟動')
-        : (isEn ? `⚡ Memory Awakening: ${topSchedule.targetType}` : `⚡ 記憶衰退喚醒：${topSchedule.targetType}`)
-    );
-    setTimeout(() => setNeuroToast(null), 3500);
   };
 
   const tierNames = isChildMode
@@ -336,7 +325,6 @@ const MainDashboard: React.FC = () => {
             <button
               onClick={() => setIsProZen(false)}
               className="text-slate-500 hover:text-slate-300 px-1.5 py-0.5 border border-slate-800 hover:border-slate-600 transition text-[9px]"
-              title={isEn ? "Switch to Immersive Mode" : "切換至沉浸模式"}
             >
               {isEn ? '🎨 Visual' : '🎨 沉浸'}
             </button>
@@ -348,10 +336,10 @@ const MainDashboard: React.FC = () => {
               }}
               className="text-slate-500 hover:text-slate-300 px-1.5 py-0.5 border border-slate-800 hover:border-slate-600 transition text-[9px]"
             >
-              {isChildMode ? (isEn ? 'Child' : '兒童') : (isEn ? 'Adult' : '成人')}
+              {isChildMode ? (isEn ? 'Junior' : '資優') : (isEn ? 'Pro' : '常規')}
             </button>
-            <button onClick={exportProfileJSON} className="text-slate-600 hover:text-slate-300 px-1" title={isEn ? "Backup" : "備份"}>💾</button>
-            <button onClick={() => fileInputRef.current?.click()} className="text-slate-600 hover:text-slate-300 px-1" title={isEn ? "Load" : "載入"}>📂</button>
+            <button onClick={exportProfileJSON} className="text-slate-600 hover:text-slate-300 px-1">💾</button>
+            <button onClick={() => fileInputRef.current?.click()} className="text-slate-600 hover:text-slate-300 px-1">📂</button>
             <input type="file" ref={fileInputRef} onChange={handleFileUpload} accept=".json" className="hidden" />
             <LangSwitcher />
           </div>
@@ -363,7 +351,8 @@ const MainDashboard: React.FC = () => {
           </div>
         )}
 
-        <div className="w-full max-w-lg flex gap-1 overflow-x-auto pb-1.5 mb-2 scrollbar-none border-b border-slate-900">
+        {/* 12 大題型切換橫列 */}
+        <div className="w-full max-w-lg flex gap-1 overflow-x-auto pb-1.5 mb-1.5 scrollbar-none border-b border-slate-900">
           {visibleMetas.map((pt) => {
             const isActive = selectedType === pt.id;
             const count = PUZZLE_CATALOG[pt.id]?.length || 0;
@@ -384,6 +373,46 @@ const MainDashboard: React.FC = () => {
               </button>
             );
           })}
+        </div>
+
+        {/* 🌟 5 階難度手動選擇列 */}
+        <div className="w-full max-w-lg flex items-center justify-between gap-1 mb-2 px-0.5">
+          <div className="flex gap-1 overflow-x-auto scrollbar-none">
+            {LEVEL_KEYS.map((tierKey) => {
+              const isSelected = activeLevel === tierKey;
+              const count = filteredPuzzles[tierKey]?.length || 0;
+              return (
+                <button
+                  key={tierKey}
+                  onClick={() => {
+                    setIsZPDMode(false);
+                    setCurrentLevel(tierKey);
+                    setPuzzleIndex(0);
+                  }}
+                  disabled={count === 0}
+                  className={`px-1.5 py-0.5 text-[9px] font-mono border transition ${
+                    isSelected
+                      ? 'bg-indigo-700 border-indigo-400 text-white font-bold shadow'
+                      : count === 0
+                      ? 'border-slate-900 text-slate-800 cursor-not-allowed'
+                      : 'border-slate-800 text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  {tierNames[tierKey]} ({count})
+                </button>
+              );
+            })}
+          </div>
+          <button
+            onClick={() => setIsZPDMode(!isZPDMode)}
+            className={`px-1.5 py-0.5 text-[8px] font-mono border whitespace-nowrap transition ${
+              isZPDMode
+                ? 'bg-emerald-950 border-emerald-500 text-emerald-300 font-bold'
+                : 'border-slate-800 text-slate-500 hover:text-slate-300'
+            }`}
+          >
+            {isZPDMode ? '🧠 ZPD' : '🎛️ 手動'}
+          </button>
         </div>
 
         {activePuzzle ? (
@@ -450,7 +479,7 @@ const MainDashboard: React.FC = () => {
           </section>
         ) : (
           <div className="mt-12 p-8 border border-slate-800 text-center max-w-sm font-mono">
-            <p className="text-slate-500 text-xs">{isEn ? 'No puzzles available' : '題庫尚未加載'}</p>
+            <p className="text-slate-500 text-xs">{isEn ? 'No puzzles in this tier' : '本階梯暫無題目'}</p>
           </div>
         )}
 
@@ -475,7 +504,7 @@ const MainDashboard: React.FC = () => {
   }
 
   // ==========================
-  // 🎨 視圖 2：沉浸模式 (Immersive Visual Mode)
+  // 🎨 視圖 2：沉浸視覺模式
   // ==========================
   return (
     <main
@@ -492,7 +521,7 @@ const MainDashboard: React.FC = () => {
               LogiCore
             </h1>
             <p className="text-[9px] text-slate-500 font-mono tracking-widest uppercase">
-              {isChildMode ? (isEn ? '🌟 Junior Playground' : '🌟 奇幻邏輯遊樂園') : (isEn ? '🔬 MIRT V7 Arena' : '🔬 MIRT V7 全域競技')}
+              {isChildMode ? (isEn ? '🌟 Gifted Junior' : '🌟 資優邏輯挑戰') : (isEn ? '🔬 MIRT V7 Arena' : '🔬 MIRT V7 全域競技')}
             </p>
           </div>
         </div>
@@ -501,7 +530,6 @@ const MainDashboard: React.FC = () => {
           <button
             onClick={() => setIsProZen(true)}
             className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-slate-900 border border-slate-700 text-slate-300 hover:border-slate-500 transition"
-            title={isEn ? "Switch to Pro Workbench" : "切換至硬核工作臺"}
           >
             {isEn ? '⚙️ Pro Zen' : '⚙️ 純粹'}
           </button>
@@ -517,7 +545,7 @@ const MainDashboard: React.FC = () => {
                 : 'bg-slate-900 border-slate-700 text-slate-300 hover:border-slate-500'
             }`}
           >
-            {isChildMode ? (isEn ? '👶 Junior' : '👶 兒童') : (isEn ? '👤 Pro' : '👤 成人')}
+            {isChildMode ? (isEn ? '👶 Junior' : '👶 資優') : (isEn ? '👤 Pro' : '👤 常規')}
           </button>
 
           <div className="flex items-center gap-1 px-2.5 py-1 rounded-full border text-[10px] font-mono font-bold bg-orange-950/80 border-orange-500 text-orange-300">
@@ -525,49 +553,15 @@ const MainDashboard: React.FC = () => {
             <span>{profile.streak} {isEn ? 'Wins' : '連勝'}</span>
           </div>
 
-          <button onClick={exportProfileJSON} className="p-1.5 bg-slate-900/80 border border-slate-700/60 hover:border-slate-500 rounded-lg text-[10px] text-slate-400 hover:text-white transition" title={isEn ? "Backup" : "備份"}>💾</button>
-          <button onClick={() => fileInputRef.current?.click()} className="p-1.5 bg-slate-900/80 border border-slate-700/60 hover:border-slate-500 rounded-lg text-[10px] text-slate-400 hover:text-white transition" title={isEn ? "Load" : "載入"}>📂</button>
+          <button onClick={exportProfileJSON} className="p-1.5 bg-slate-900/80 border border-slate-700/60 hover:border-slate-500 rounded-lg text-[10px] text-slate-400 hover:text-white transition">💾</button>
+          <button onClick={() => fileInputRef.current?.click()} className="p-1.5 bg-slate-900/80 border border-slate-700/60 hover:border-slate-500 rounded-lg text-[10px] text-slate-400 hover:text-white transition">📂</button>
           <input type="file" ref={fileInputRef} onChange={handleFileUpload} accept=".json" className="hidden" />
           <LangSwitcher />
         </div>
       </header>
 
-      {neuroToast && (
-        <div className="w-full max-w-xl mb-2 px-4 py-2.5 bg-gradient-to-r from-indigo-950/95 to-slate-900/95 border border-indigo-500/70 rounded-2xl shadow-xl text-[11px] text-indigo-100 text-center font-medium backdrop-blur-xl animate-pulse">
-          {neuroToast}
-        </div>
-      )}
-
-      {!isChildMode && topSchedule && (
-        <div
-          onClick={handleScheduleClick}
-          className={`w-full max-w-xl mb-3 p-3 rounded-2xl border cursor-pointer transition-all duration-500 hover:scale-[1.01] active:scale-[0.98] shadow-2xl ${
-            topSchedule.item.isConsolidated
-              ? 'bg-gradient-to-r from-emerald-950/80 to-indigo-950/80 border-emerald-400/50 shadow-emerald-500/20'
-              : 'bg-gradient-to-r from-cyan-950/80 to-slate-900/80 border-cyan-700/60 shadow-cyan-500/10'
-          }`}
-        >
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <span className="text-2xl">{topSchedule.item.isConsolidated ? '🌙' : '⚡'}</span>
-              <div>
-                <div className="text-[10px] font-bold uppercase tracking-wider opacity-70">
-                  {topSchedule.item.isConsolidated ? (isEn ? '🧠 Synaptic Peak (16-48h)' : '🧠 突觸固化黃金期 (16-48h)') : (isEn ? '🔄 Memory Reactivation' : '🔄 記憶衰退喚醒')}
-                </div>
-                <div className="text-sm font-bold">
-                  {topSchedule.targetType} · {isEn ? 'Strength' : '強度'} S={topSchedule.item.currentStrength}
-                  {topSchedule.item.isConsolidated && <span className="ml-2 text-emerald-300 text-[10px]">+25% Boost</span>}
-                </div>
-              </div>
-            </div>
-            <div className="text-[10px] px-3 py-1.5 bg-white/10 rounded-full backdrop-blur border border-white/10 font-bold">
-              {isEn ? 'Harvest ↗' : '立即收割 ↗'}
-            </div>
-          </div>
-        </div>
-      )}
-
-      <div className="w-full max-w-xl flex gap-1.5 overflow-x-auto pb-2 mb-2 scrollbar-none">
+      {/* 題型橫列 */}
+      <div className="w-full max-w-xl flex gap-1.5 overflow-x-auto pb-2 mb-1.5 scrollbar-none">
         {visibleMetas.map((pt) => {
           const isActive = selectedType === pt.id;
           const count = PUZZLE_CATALOG[pt.id]?.length || 0;
@@ -592,34 +586,45 @@ const MainDashboard: React.FC = () => {
         })}
       </div>
 
-      {!isChildMode && (
-        <div className="w-full max-w-xl mb-3 px-3 py-2 bg-slate-900/60 rounded-xl border border-slate-800/80 grid grid-cols-4 gap-2 text-center text-[9px] font-mono">
-          <div>
-            <span className="text-slate-400 block">{isEn ? 'Spatial' : '空間幾何'}</span>
-            <div className="w-full bg-slate-800 h-1.5 rounded-full mt-1 overflow-hidden">
-              <div className="bg-cyan-400 h-full" style={{ width: `${currentLoad.spatial * 100}%` }} />
-            </div>
-          </div>
-          <div>
-            <span className="text-slate-400 block">{isEn ? 'Numeric' : '數感運算'}</span>
-            <div className="w-full bg-slate-800 h-1.5 rounded-full mt-1 overflow-hidden">
-              <div className="bg-emerald-400 h-full" style={{ width: `${currentLoad.numeric * 100}%` }} />
-            </div>
-          </div>
-          <div>
-            <span className="text-slate-400 block">{isEn ? 'Working Mem' : '工作記憶'}</span>
-            <div className="w-full bg-slate-800 h-1.5 rounded-full mt-1 overflow-hidden">
-              <div className="bg-indigo-400 h-full" style={{ width: `${currentLoad.workingMemory * 100}%` }} />
-            </div>
-          </div>
-          <div>
-            <span className="text-slate-400 block">{isEn ? 'Inhibition' : '抑制控制'}</span>
-            <div className="w-full bg-slate-800 h-1.5 rounded-full mt-1 overflow-hidden">
-              <div className="bg-amber-400 h-full" style={{ width: `${currentLoad.inhibition * 100}%` }} />
-            </div>
-          </div>
+      {/* 🌟 沉浸模式下的 5 階難度選擇膠囊 */}
+      <div className="w-full max-w-xl flex items-center justify-between gap-1 mb-3 px-1">
+        <div className="flex gap-1 overflow-x-auto scrollbar-none">
+          {LEVEL_KEYS.map((tierKey) => {
+            const isSelected = activeLevel === tierKey;
+            const count = filteredPuzzles[tierKey]?.length || 0;
+            return (
+              <button
+                key={tierKey}
+                onClick={() => {
+                  setIsZPDMode(false);
+                  setCurrentLevel(tierKey);
+                  setPuzzleIndex(0);
+                }}
+                disabled={count === 0}
+                className={`px-2.5 py-1 rounded-full text-[10px] font-bold transition-all border ${
+                  isSelected
+                    ? 'bg-gradient-to-r from-indigo-600 to-cyan-600 border-cyan-400 text-white shadow-md shadow-indigo-500/20'
+                    : count === 0
+                    ? 'bg-slate-900/40 border-slate-800/40 text-slate-700 cursor-not-allowed'
+                    : 'bg-slate-900/60 border-slate-700/60 text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                {tierNames[tierKey]} ({count})
+              </button>
+            );
+          })}
         </div>
-      )}
+        <button
+          onClick={() => setIsZPDMode(!isZPDMode)}
+          className={`px-2 py-1 rounded-full text-[9px] font-mono border whitespace-nowrap transition ${
+            isZPDMode
+              ? 'bg-emerald-950/80 border-emerald-400 text-emerald-300 font-bold'
+              : 'bg-slate-900/60 border-slate-700 text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          {isZPDMode ? '🧠 ZPD 自適應' : '🎛️ 手動'}
+        </button>
+      </div>
 
       {activePuzzle ? (
         <section className="flex flex-col items-center w-full max-w-md sm:max-w-lg">
@@ -670,17 +675,11 @@ const MainDashboard: React.FC = () => {
               <span className="text-[10px] opacity-75">{isEn ? 'Targeted ↗' : '探索推薦 ↗'}</span>
             </button>
           </div>
-
-          <div className="mt-2 text-[9px] text-slate-500 font-mono tracking-wider">
-            {isZPDMode
-              ? `🧠 ${isEn ? 'Adaptive ZPD' : '智能階梯'} · ${tierNames[activeLevel]}`
-              : `🎛️ ${isEn ? 'Manual Mode' : '手動探索'} · ${tierNames[activeLevel]}`}
-          </div>
         </section>
       ) : (
         <div className="mt-12 p-10 border border-dashed border-slate-800/60 rounded-3xl text-center max-w-sm backdrop-blur-sm bg-slate-900/30">
           <p className="text-indigo-400 text-3xl mb-2">{currentMeta.icon}</p>
-          <p className="text-slate-300 text-sm font-semibold">{isEn ? currentMeta.nameEn : currentMeta.nameZh} {isEn ? 'Ready Soon' : '題庫準備中'}</p>
+          <p className="text-slate-300 text-sm font-semibold">{isEn ? currentMeta.nameEn : currentMeta.nameZh} {isEn ? 'No puzzles in this tier' : '本階梯暫無題目'}</p>
         </div>
       )}
     </main>
