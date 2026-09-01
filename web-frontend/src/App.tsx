@@ -5,7 +5,7 @@ import { LanguageProvider, useLanguage } from './contexts/LanguageContext';
 import { PuzzleRenderer } from './registry/RendererRegistry';
 import { PUZZLE_CATALOG, PuzzleEntity, CognitiveLoadVector } from './generated';
 import { LangSwitcher } from './components/LangSwitcher';
-import { useLearnerProfile, TierKey } from './hooks/useLearnerProfile';
+import { useLearnerProfile, TierKey, CognitiveDimension } from './hooks/useLearnerProfile';
 import { useLongTermScheduler } from './hooks/useLongTermScheduler';
 
 interface PuzzleMeta {
@@ -13,24 +13,23 @@ interface PuzzleMeta {
   nameZh: string;
   nameEn: string;
   icon: string;
-  categoryName: string;
+  primaryDimension: CognitiveDimension;
   defaultLoad: CognitiveLoadVector;
 }
 
-// 12 大多元神經認知題型元數據
 const PUZZLE_METAS: PuzzleMeta[] = [
-  { id: 'sudoku', nameZh: '經典數獨', nameEn: 'Sudoku', icon: '🔢', categoryName: '網格約束', defaultLoad: { spatial: 0.3, numeric: 0.4, workingMemory: 0.8, inhibition: 0.6 } },
-  { id: 'skyscraper', nameZh: '摩天大樓', nameEn: 'Skyscraper', icon: '🏢', categoryName: '空間透視', defaultLoad: { spatial: 0.9, numeric: 0.3, workingMemory: 0.7, inhibition: 0.5 } },
-  { id: 'hashi', nameZh: '數橋', nameEn: 'Hashi', icon: '🌉', categoryName: '圖論拓撲', defaultLoad: { spatial: 0.8, numeric: 0.5, workingMemory: 0.6, inhibition: 0.4 } },
-  { id: 'kropki', nameZh: '黑白點', nameEn: 'Kropki', icon: '⚪', categoryName: '關係運算', defaultLoad: { spatial: 0.4, numeric: 0.8, workingMemory: 0.8, inhibition: 0.7 } },
-  { id: 'slitherlink', nameZh: '數迴', nameEn: 'Slitherlink', icon: '➰', categoryName: '邊界封閉', defaultLoad: { spatial: 0.9, numeric: 0.2, workingMemory: 0.8, inhibition: 0.7 } },
-  { id: 'kakuro', nameZh: '數和', nameEn: 'Kakuro', icon: '➕', categoryName: '算術分解', defaultLoad: { spatial: 0.3, numeric: 1.0, workingMemory: 0.9, inhibition: 0.5 } },
-  { id: 'nurikabe', nameZh: '數牆', nameEn: 'Nurikabe', icon: '🧱', categoryName: '集合分割', defaultLoad: { spatial: 0.8, numeric: 0.3, workingMemory: 0.7, inhibition: 0.8 } },
-  { id: 'hitori', nameZh: '數壹', nameEn: 'Hitori', icon: '⬛', categoryName: '逆向排除', defaultLoad: { spatial: 0.5, numeric: 0.3, workingMemory: 0.6, inhibition: 0.9 } },
-  { id: 'futoshiki', nameZh: '不等式', nameEn: 'Futoshiki', icon: '⚖️', categoryName: '偏序傳遞', defaultLoad: { spatial: 0.4, numeric: 0.6, workingMemory: 0.7, inhibition: 0.6 } },
-  { id: 'jigsaw', nameZh: '拼圖數獨', nameEn: 'Jigsaw', icon: '🧩', categoryName: '異形幾何', defaultLoad: { spatial: 0.9, numeric: 0.4, workingMemory: 0.8, inhibition: 0.5 } },
-  { id: 'dominoes', nameZh: '骨牌密拼', nameEn: 'Dominoes', icon: '🀄', categoryName: '組合配對', defaultLoad: { spatial: 0.7, numeric: 0.5, workingMemory: 0.6, inhibition: 0.7 } },
-  { id: 'maze', nameZh: '大迷宮', nameEn: 'Maze', icon: '🌀', categoryName: '空間探索', defaultLoad: { spatial: 1.0, numeric: 0.0, workingMemory: 0.5, inhibition: 0.4 } },
+  { id: 'sudoku', nameZh: '經典數獨', nameEn: 'Sudoku', icon: '🔢', primaryDimension: 'workingMemory', defaultLoad: { spatial: 0.3, numeric: 0.4, workingMemory: 0.8, inhibition: 0.6 } },
+  { id: 'skyscraper', nameZh: '摩天大樓', nameEn: 'Skyscraper', icon: '🏢', primaryDimension: 'spatial', defaultLoad: { spatial: 0.9, numeric: 0.3, workingMemory: 0.7, inhibition: 0.5 } },
+  { id: 'hashi', nameZh: '數橋', nameEn: 'Hashi', icon: '🌉', primaryDimension: 'spatial', defaultLoad: { spatial: 0.8, numeric: 0.5, workingMemory: 0.6, inhibition: 0.4 } },
+  { id: 'kropki', nameZh: '黑白點', nameEn: 'Kropki', icon: '⚪', primaryDimension: 'numeric', defaultLoad: { spatial: 0.4, numeric: 0.8, workingMemory: 0.8, inhibition: 0.7 } },
+  { id: 'slitherlink', nameZh: '數迴', nameEn: 'Slitherlink', icon: '➰', primaryDimension: 'spatial', defaultLoad: { spatial: 0.9, numeric: 0.2, workingMemory: 0.8, inhibition: 0.7 } },
+  { id: 'kakuro', nameZh: '數和', nameEn: 'Kakuro', icon: '➕', primaryDimension: 'numeric', defaultLoad: { spatial: 0.3, numeric: 1.0, workingMemory: 0.9, inhibition: 0.5 } },
+  { id: 'nurikabe', nameZh: '數牆', nameEn: 'Nurikabe', icon: '🧱', primaryDimension: 'inhibition', defaultLoad: { spatial: 0.8, numeric: 0.3, workingMemory: 0.7, inhibition: 0.8 } },
+  { id: 'hitori', nameZh: '數壹', nameEn: 'Hitori', icon: '⬛', primaryDimension: 'inhibition', defaultLoad: { spatial: 0.5, numeric: 0.3, workingMemory: 0.6, inhibition: 0.9 } },
+  { id: 'futoshiki', nameZh: '不等式', nameEn: 'Futoshiki', icon: '⚖️', primaryDimension: 'numeric', defaultLoad: { spatial: 0.4, numeric: 0.6, workingMemory: 0.7, inhibition: 0.6 } },
+  { id: 'jigsaw', nameZh: '拼圖數獨', nameEn: 'Jigsaw', icon: '🧩', primaryDimension: 'spatial', defaultLoad: { spatial: 0.9, numeric: 0.4, workingMemory: 0.8, inhibition: 0.5 } },
+  { id: 'dominoes', nameZh: '骨牌密拼', nameEn: 'Dominoes', icon: '🀄', primaryDimension: 'inhibition', defaultLoad: { spatial: 0.7, numeric: 0.5, workingMemory: 0.6, inhibition: 0.7 } },
+  { id: 'maze', nameZh: '大迷宮', nameEn: 'Maze', icon: '🌀', primaryDimension: 'spatial', defaultLoad: { spatial: 1.0, numeric: 0.0, workingMemory: 0.5, inhibition: 0.4 } },
 ];
 
 const LEVEL_KEYS: TierKey[] = ['kids', 'intermediate', 'expert', 'master'];
@@ -55,6 +54,7 @@ const MainDashboard: React.FC = () => {
   const {
     profile,
     getZPDRecommendedTier,
+    globalCognitiveProfile,
     exportProfileJSON,
     importProfileJSON,
   } = useLearnerProfile();
@@ -88,18 +88,21 @@ const MainDashboard: React.FC = () => {
     return grouped;
   }, [selectedType]);
 
-  const activeLevel = isZPDMode ? getZPDRecommendedTier(selectedType) : currentLevel;
+  const currentMeta = PUZZLE_METAS.find((m) => m.id === selectedType) || PUZZLE_METAS[0];
+  const activeLevel = isZPDMode ? getZPDRecommendedTier(selectedType, currentMeta.defaultLoad) : currentLevel;
   const activeList = filteredPuzzles[activeLevel] || [];
   const activePuzzle = activeList.length > 0 ? activeList[puzzleIndex % activeList.length] : null;
 
-  const currentMeta = PUZZLE_METAS.find((m) => m.id === selectedType) || PUZZLE_METAS[0];
   const currentLoad = activePuzzle?.cognitiveLoad || currentMeta.defaultLoad;
-  const currentState = profile.typeStates[selectedType] || { theta: 0.0, strength: 5.0, avgTimeSec: 0 };
+  const currentState = profile.typeStates[selectedType];
+  const globalRadar = globalCognitiveProfile();
   const topSchedule = getRecommendedSchedulePuzzle();
 
-  // 背景色溫動態流動
-  const bgIntensity = Math.min(1, Math.max(0.2, profile.morale * 0.6 + (currentState.strength / 15)));
-  const bgGradient = `radial-gradient(circle at 50% 0%, rgba(99, 102, 241, ${bgIntensity * 0.18}) 0%, rgba(15, 23, 42, 1) 85%)`;
+  // 找出全域最弱維度
+  const weakestDimension = useMemo(() => {
+    const dims: CognitiveDimension[] = ['spatial', 'numeric', 'workingMemory', 'inhibition'];
+    return dims.reduce((min, d) => (globalRadar[d] < globalRadar[min] ? d : min), dims[0]);
+  }, [globalRadar]);
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -108,7 +111,7 @@ const MainDashboard: React.FC = () => {
       reader.onload = (event) => {
         const text = event.target?.result as string;
         if (importProfileJSON(text)) {
-          alert('🧠 神經大腦檔案載入成功！');
+          alert('🧠 MIRT V6 大腦檔案載入成功！');
         } else {
           alert('檔案格式錯誤。');
         }
@@ -132,10 +135,10 @@ const MainDashboard: React.FC = () => {
 
   return (
     <main
-      className="min-h-screen text-slate-100 flex flex-col items-center py-4 px-3 font-sans selection:bg-indigo-500 transition-all duration-1000"
-      style={{ background: bgGradient, backgroundColor: '#0f172a' }}
+      className="min-h-screen text-slate-100 flex flex-col items-center py-4 px-3 font-sans selection:bg-indigo-500"
+      style={{ backgroundColor: '#0f172a' }}
     >
-      {/* 頂部極簡導航 */}
+      {/* 頂部 Header */}
       <header className="w-full max-w-xl flex items-center justify-between mb-2 pb-2 border-b border-slate-800/60">
         <div className="flex items-center gap-2.5">
           <div className="w-8 h-8 rounded-full bg-gradient-to-br from-indigo-500 to-cyan-400 flex items-center justify-center text-sm font-black shadow-lg shadow-indigo-500/30">
@@ -146,7 +149,7 @@ const MainDashboard: React.FC = () => {
               LogiCore
             </h1>
             <p className="text-[9px] text-slate-500 font-mono tracking-widest uppercase">
-              {isZPDMode ? '🔬 12維神經自適應' : '🎛️ 手動探索'}
+              {isZPDMode ? '🔬 MIRT 4維多維自適應' : '🎛️ 手動探索'}
             </p>
           </div>
         </div>
@@ -159,15 +162,16 @@ const MainDashboard: React.FC = () => {
             className="relative cursor-help"
           >
             <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-slate-900/80 border border-slate-700/60 backdrop-blur-sm text-[10px] font-mono">
-              <span className="text-emerald-400">θ {currentState.theta > 0 ? `+${currentState.theta.toFixed(2)}` : currentState.theta.toFixed(2)}</span>
+              <span className="text-cyan-400">空間 {globalRadar.spatial > 0 ? `+${globalRadar.spatial}` : globalRadar.spatial}</span>
               <span className="text-slate-600">|</span>
-              <span className="text-amber-300">{profile.morale.toFixed(2)}x</span>
+              <span className="text-emerald-400">數感 {globalRadar.numeric > 0 ? `+${globalRadar.numeric}` : globalRadar.numeric}</span>
             </div>
             {showDetail && (
               <div className="absolute right-0 top-full mt-1 z-50 px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl text-[10px] font-mono whitespace-nowrap backdrop-blur-md">
-                <div>EWMA 均時: <span className="text-indigo-300">{currentState.avgTimeSec}s</span></div>
+                <div>工作記憶: <span className="text-indigo-300">{globalRadar.workingMemory}</span></div>
+                <div>抑制控制: <span className="text-amber-300">{globalRadar.inhibition}</span></div>
+                <div>士氣指數: <span className="text-cyan-300">{profile.morale}x</span></div>
                 <div>全域巔峰: <span className="text-amber-300">{t.difficulty[overallPeakTier]}</span></div>
-                <div>累積通關: <span className="text-emerald-300">{profile.history.filter((h) => h.isSuccess).length} 題</span></div>
               </div>
             )}
           </div>
@@ -216,11 +220,13 @@ const MainDashboard: React.FC = () => {
         </div>
       )}
 
-      {/* 12 大題型橫向膠囊（支持滑動） */}
+      {/* 12 大題型膠囊 */}
       <div className="w-full max-w-xl flex gap-1.5 overflow-x-auto pb-2 mb-2 scrollbar-none">
         {PUZZLE_METAS.map((pt) => {
           const isActive = selectedType === pt.id;
           const count = PUZZLE_CATALOG[pt.id]?.length || 0;
+          const isWeakestTarget = pt.primaryDimension === weakestDimension;
+
           return (
             <button
               key={pt.id}
@@ -231,18 +237,21 @@ const MainDashboard: React.FC = () => {
                   ? 'bg-indigo-600/90 border-indigo-400 text-white shadow-lg shadow-indigo-500/30 ring-1 ring-indigo-400/50'
                   : count === 0
                   ? 'bg-slate-900/40 border-slate-800/40 text-slate-600 cursor-not-allowed'
+                  : isWeakestTarget
+                  ? 'bg-slate-900/90 border-amber-500/50 text-amber-300 hover:bg-slate-800'
                   : 'bg-slate-900/60 border-slate-700/60 text-slate-400 hover:bg-slate-800/80 hover:text-slate-200'
               }`}
             >
               <span>{pt.icon}</span>
               <span>{lang === 'zh' ? pt.nameZh : pt.nameEn}</span>
+              {isWeakestTarget && <span className="text-[8px] bg-amber-500/20 text-amber-300 px-1 rounded">🎯弱項</span>}
               <span className="text-[8px] opacity-50">({count})</span>
             </button>
           );
         })}
       </div>
 
-      {/* 認知負荷向量指示條 (4-Factor Cognitive Load) */}
+      {/* 4 維認知負荷向量 */}
       <div className="w-full max-w-xl mb-3 px-3 py-2 bg-slate-900/60 rounded-xl border border-slate-800/80 grid grid-cols-4 gap-2 text-center text-[9px] font-mono">
         <div>
           <span className="text-slate-400 block">空間幾何</span>
@@ -295,7 +304,7 @@ const MainDashboard: React.FC = () => {
         </div>
       )}
 
-      {/* 盤面主體（自適應容器） */}
+      {/* 盤面主體 */}
       {activePuzzle ? (
         <section className="flex flex-col items-center w-full max-w-md sm:max-w-lg">
           <div className="w-full p-2 bg-white/5 backdrop-blur-md rounded-3xl border border-white/5 shadow-2xl shadow-indigo-500/10">
@@ -311,7 +320,6 @@ const MainDashboard: React.FC = () => {
             </ErrorBoundary>
           </div>
 
-          {/* 控制按鈕 */}
           <div className="mt-4 flex gap-3 w-full">
             <button
               onClick={() => {
@@ -326,7 +334,7 @@ const MainDashboard: React.FC = () => {
           </div>
 
           <div className="mt-2 text-[9px] text-slate-500 font-mono tracking-wider">
-            {isZPDMode ? `🧠 ZPD 推薦 · ${t.difficulty[activeLevel]}` : `🎛️ 手動 · ${t.difficulty[activeLevel]}`}
+            {isZPDMode ? `🧠 MIRT 投影推薦 · ${t.difficulty[activeLevel]}` : `🎛️ 手動 · ${t.difficulty[activeLevel]}`}
           </div>
         </section>
       ) : (
