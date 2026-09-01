@@ -94,7 +94,6 @@ const MainDashboard: React.FC = () => {
   const activePuzzle = activeList.length > 0 ? activeList[puzzleIndex % activeList.length] : null;
 
   const currentLoad = activePuzzle?.cognitiveLoad || currentMeta.defaultLoad;
-  const currentState = profile.typeStates[selectedType];
   const globalRadar = globalCognitiveProfile();
   const topSchedule = getRecommendedSchedulePuzzle();
 
@@ -104,6 +103,30 @@ const MainDashboard: React.FC = () => {
     return dims.reduce((min, d) => (globalRadar[d] < globalRadar[min] ? d : min), dims[0]);
   }, [globalRadar]);
 
+  // 🔥【士氣調製之弱項主動攻擊調度】
+  const handleNextAdaptivePuzzle = () => {
+    if (navigator.vibrate) navigator.vibrate(12);
+
+    // 依士氣指數動態決定探索劑量 (Morale 1.4 -> 45% 機率主動引導至弱項題型；Morale 0.6 -> 10% 機率)
+    const explorationRate = Math.max(0.1, Math.min(0.45, (profile.morale - 0.5) * 0.4));
+    const shouldExploreWeakness = isZPDMode && Math.random() < explorationRate;
+
+    if (shouldExploreWeakness) {
+      const targetMeta = PUZZLE_METAS.find(
+        (m) => m.primaryDimension === weakestDimension && (PUZZLE_CATALOG[m.id]?.length || 0) > 0
+      );
+      if (targetMeta && targetMeta.id !== selectedType) {
+        setSelectedType(targetMeta.id);
+        setPuzzleIndex(0);
+        setNeuroToast(`🎯 認知平衡介入：偵測到【${targetMeta.nameZh}】可精準鍛鍊您的最弱項（${weakestDimension}）`);
+        setTimeout(() => setNeuroToast(null), 4000);
+        return;
+      }
+    }
+
+    setPuzzleIndex((prev) => (prev + 1) % (activeList.length || 1));
+  };
+
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
@@ -111,7 +134,7 @@ const MainDashboard: React.FC = () => {
       reader.onload = (event) => {
         const text = event.target?.result as string;
         if (importProfileJSON(text)) {
-          alert('🧠 MIRT V6 大腦檔案載入成功！');
+          alert('🧠 MIRT V6.1 大腦檔案載入成功！');
         } else {
           alert('檔案格式錯誤。');
         }
@@ -149,13 +172,12 @@ const MainDashboard: React.FC = () => {
               LogiCore
             </h1>
             <p className="text-[9px] text-slate-500 font-mono tracking-widest uppercase">
-              {isZPDMode ? '🔬 MIRT 4維多維自適應' : '🎛️ 手動探索'}
+              {isZPDMode ? '🔬 MIRT V6.1 策略調度' : '🎛️ 手動探索'}
             </p>
           </div>
         </div>
 
         <div className="flex items-center gap-1.5">
-          {/* 懸浮能力膠囊 */}
           <div
             onMouseEnter={() => setShowDetail(true)}
             onMouseLeave={() => setShowDetail(false)}
@@ -322,10 +344,7 @@ const MainDashboard: React.FC = () => {
 
           <div className="mt-4 flex gap-3 w-full">
             <button
-              onClick={() => {
-                if (navigator.vibrate) navigator.vibrate(12);
-                setPuzzleIndex((prev) => (prev + 1) % activeList.length);
-              }}
+              onClick={handleNextAdaptivePuzzle}
               className="w-full py-3.5 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 active:scale-[0.98] text-white rounded-2xl text-sm font-bold shadow-xl shadow-indigo-600/30 transition-all border border-indigo-400/30 flex items-center justify-center gap-2"
             >
               <span>⚡ 神經適應下一題</span>
@@ -334,7 +353,7 @@ const MainDashboard: React.FC = () => {
           </div>
 
           <div className="mt-2 text-[9px] text-slate-500 font-mono tracking-wider">
-            {isZPDMode ? `🧠 MIRT 投影推薦 · ${t.difficulty[activeLevel]}` : `🎛️ 手動 · ${t.difficulty[activeLevel]}`}
+            {isZPDMode ? `🧠 MIRT V6.1 智能投影 · ${t.difficulty[activeLevel]}` : `🎛️ 手動 · ${t.difficulty[activeLevel]}`}
           </div>
         </section>
       ) : (
