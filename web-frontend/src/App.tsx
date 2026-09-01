@@ -1,5 +1,5 @@
 // web-frontend/src/App.tsx
-import React, { useState, useMemo, useRef } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { ErrorBoundary } from 'react-error-boundary';
 import { LanguageProvider, useLanguage } from './contexts/LanguageContext';
 import { PuzzleRenderer } from './registry/RendererRegistry';
@@ -43,7 +43,6 @@ const MainDashboard: React.FC = () => {
   } = useLearnerProfile();
 
   const {
-    scheduledItems,
     overallPeakTier,
     getRecommendedSchedulePuzzle,
   } = useLongTermScheduler(profile, PUZZLE_CATALOG);
@@ -54,6 +53,7 @@ const MainDashboard: React.FC = () => {
   const [currentLevel, setCurrentLevel] = useState<TierKey>('kids');
   const [puzzleIndex, setPuzzleIndex] = useState<number>(0);
   const [isZPDMode, setIsZPDMode] = useState<boolean>(true);
+  const [showDetail, setShowDetail] = useState<boolean>(false);
   const [neuroToast, setNeuroToast] = useState<string | null>(null);
 
   const filteredPuzzles = useMemo(() => {
@@ -64,12 +64,10 @@ const MainDashboard: React.FC = () => {
       expert: [],
       master: [],
     };
-
     rawList.forEach((p) => {
       const tier = (p.tier as TierKey) || 'kids';
       if (grouped[tier]) grouped[tier].push(p);
     });
-
     return grouped;
   }, [selectedType]);
 
@@ -81,6 +79,10 @@ const MainDashboard: React.FC = () => {
   const currentPeak = profile.peakRecords[selectedType];
   const topSchedule = getRecommendedSchedulePuzzle();
 
+  // 🎨 動態背景：根據士氣與記憶強度改變氛圍
+  const bgIntensity = Math.min(1, Math.max(0.2, profile.morale * 0.6 + (currentState.strength / 15)));
+  const bgGradient = `radial-gradient(circle at 50% 0%, rgba(99, 102, 241, ${bgIntensity * 0.15}) 0%, rgba(15, 23, 42, 1) 80%)`;
+
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
@@ -88,9 +90,9 @@ const MainDashboard: React.FC = () => {
       reader.onload = (event) => {
         const text = event.target?.result as string;
         if (importProfileJSON(text)) {
-          alert('LogiCore V5.1 神經動力學大腦檔案載入成功！');
+          alert('🧠 神經大腦檔案 V5.2 載入成功！');
         } else {
-          alert('檔案格式錯誤，匯入失敗。');
+          alert('檔案格式錯誤。');
         }
       };
       reader.readAsText(file);
@@ -99,195 +101,193 @@ const MainDashboard: React.FC = () => {
 
   const handleScheduleClick = () => {
     if (!topSchedule) return;
-
     if (topSchedule.item.isConsolidated) {
-      setNeuroToast('🧠 神經科學發現：您上次練習此題型約 24 小時前，大腦正在高速固化邏輯迴路！現在複習，記憶保留率可提升 25%！');
+      setNeuroToast('🧠 突觸可塑性巔峰！24h 睡眠固化窗口開啟，現在挑戰高階難度，記憶增益 +25%');
     } else {
-      setNeuroToast(`⚡ 記憶衰退預警：該題型已閒置 ${topSchedule.item.daysInactive} 天，已切換至溫手感題目以重新激活神經通路。`);
+      setNeuroToast(`⚡ 神經衰退預警 (S=${topSchedule.item.currentStrength})，已切換至暖身基礎題。`);
     }
-
     setSelectedType(topSchedule.targetType);
     setCurrentLevel(topSchedule.puzzle.tier as TierKey);
     setPuzzleIndex(0);
-
-    setTimeout(() => setNeuroToast(null), 5000);
+    setTimeout(() => setNeuroToast(null), 4500);
   };
 
   return (
-    <main className="min-h-screen bg-slate-950 text-slate-100 flex flex-col items-center py-6 px-4 font-sans selection:bg-indigo-500">
-      {/* 頂部 Header */}
-      <header className="w-full max-w-xl flex items-center justify-between mb-3 pb-3 border-b border-slate-800">
-        <div>
-          <h1 className="text-2xl font-black bg-gradient-to-r from-indigo-400 via-cyan-300 to-emerald-400 bg-clip-text text-transparent">
-            LogiCore
-          </h1>
-          <p className="text-[11px] text-slate-500 font-mono">Biphasic Neuro-Dynamics · V5.1 Masterpiece</p>
+    <main 
+      className="min-h-screen text-slate-100 flex flex-col items-center py-4 px-3 font-sans selection:bg-indigo-500 transition-all duration-1000"
+      style={{ background: bgGradient, backgroundColor: '#0f172a' }}
+    >
+      {/* ========== 極簡神經頭部 ========== */}
+      <header className="w-full max-w-lg flex items-center justify-between mb-2 pb-2 border-b border-slate-800/60">
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 rounded-full bg-gradient-to-br from-indigo-500 to-cyan-400 flex items-center justify-center text-sm font-black shadow-lg shadow-indigo-500/30">
+            🧠
+          </div>
+          <div>
+            <h1 className="text-lg font-black tracking-tight bg-gradient-to-r from-indigo-300 via-cyan-200 to-emerald-300 bg-clip-text text-transparent leading-none">
+              LogiCore
+            </h1>
+            <p className="text-[9px] text-slate-500 font-mono tracking-widest uppercase">
+              {isZPDMode ? '🔬 雙相神經引導' : '🎛️ 手動探索'}
+            </p>
+          </div>
         </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={exportProfileJSON}
-            title="備份大腦數據庫"
-            className="p-1.5 bg-slate-900 border border-slate-800 hover:border-slate-700 text-slate-300 rounded-lg text-xs"
+        <div className="flex items-center gap-1.5">
+          {/* 懸浮數據膠囊（點擊展開詳情） */}
+          <div 
+            onMouseEnter={() => setShowDetail(true)}
+            onMouseLeave={() => setShowDetail(false)}
+            className="relative cursor-help"
           >
-            💾 備份
-          </button>
-          <button
-            onClick={() => fileInputRef.current?.click()}
-            title="載入大腦數據庫"
-            className="p-1.5 bg-slate-900 border border-slate-800 hover:border-slate-700 text-slate-300 rounded-lg text-xs"
-          >
-            📂 載入
-          </button>
-          <input
-            type="file"
-            ref={fileInputRef}
-            onChange={handleFileUpload}
-            accept=".json"
-            className="hidden"
-          />
+            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-slate-900/80 border border-slate-700/60 backdrop-blur-sm text-[10px] font-mono">
+              <span className="text-emerald-400">θ {currentState.theta > 0 ? `+${currentState.theta.toFixed(2)}` : currentState.theta.toFixed(2)}</span>
+              <span className="text-slate-600">|</span>
+              <span className="text-amber-300">{profile.morale.toFixed(2)}x</span>
+            </div>
+            {showDetail && (
+              <div className="absolute right-0 top-full mt-1 z-50 px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg shadow-2xl text-[10px] font-mono whitespace-nowrap backdrop-blur-md">
+                <div>EWMA 均時: <span className="text-indigo-300">{currentState.avgTimeSec}s</span></div>
+                <div>巔峰段位: <span className="text-amber-300">{t.difficulty[overallPeakTier]}</span></div>
+                <div>累積通關: <span className="text-emerald-300">{profile.history.filter(h => h.isSuccess).length}</span></div>
+              </div>
+            )}
+          </div>
+          <button onClick={exportProfileJSON} className="p-1.5 bg-slate-900/80 border border-slate-700/60 hover:border-slate-500 rounded-lg text-[10px] text-slate-400 hover:text-white transition" title="備份大腦">💾</button>
+          <button onClick={() => fileInputRef.current?.click()} className="p-1.5 bg-slate-900/80 border border-slate-700/60 hover:border-slate-500 rounded-lg text-[10px] text-slate-400 hover:text-white transition" title="載入大腦">📂</button>
+          <input type="file" ref={fileInputRef} onChange={handleFileUpload} accept=".json" className="hidden" />
           <LangSwitcher />
         </div>
       </header>
 
-      {/* 神經動態 Toast 提示 */}
+      {/* ========== 神經動態 Toast（全幅沉浸） ========== */}
       {neuroToast && (
-        <div className="w-full max-w-xl mb-3 px-3.5 py-2.5 bg-indigo-950/90 border border-indigo-500/80 rounded-xl text-xs text-indigo-200 text-center animate-fade-in shadow-lg shadow-indigo-950/50 font-medium">
+        <div className="w-full max-w-lg mb-3 px-4 py-3 bg-gradient-to-r from-indigo-950/95 to-slate-900/95 border border-indigo-500/70 rounded-2xl shadow-2xl shadow-indigo-600/20 text-[11px] text-indigo-100 text-center font-medium backdrop-blur-xl animate-pulse">
           {neuroToast}
         </div>
       )}
 
-      {/* 巔峰段位與離線固化/記憶預警條 */}
-      <div className="w-full max-w-xl mb-3 flex flex-wrap items-center justify-between gap-2 px-3 py-2 bg-gradient-to-r from-indigo-950/40 to-slate-900/60 rounded-xl border border-indigo-900/40 text-xs">
-        <div className="flex items-center gap-2">
-          <span className="px-2.5 py-0.5 bg-amber-500/20 text-amber-300 border border-amber-500/40 rounded-full font-bold">
-            🏆 巔峰: {t.difficulty[overallPeakTier]}
-          </span>
-          {currentPeak && (
-            <span className="text-slate-400 font-mono text-[11px]">
-              最佳: {t.difficulty[currentPeak.tier]} ({currentPeak.timeSpentSec}s)
-            </span>
-          )}
-        </div>
-
-        {topSchedule && (
-          <button
-            onClick={handleScheduleClick}
-            className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition flex items-center gap-1 border ${
-              topSchedule.item.isConsolidated
-                ? 'bg-emerald-950/90 text-emerald-200 border-emerald-500 hover:bg-emerald-900 shadow-sm shadow-emerald-900/50 animate-pulse'
-                : 'bg-cyan-950/80 text-cyan-300 border-cyan-700 hover:bg-cyan-900/80'
-            }`}
-          >
-            <span>{topSchedule.item.isConsolidated ? '🧠 睡眠固化黃金期:' : '⚡ 記憶衰退預警:'}</span>
-            <span className="uppercase font-bold">{topSchedule.targetType} (S:{topSchedule.item.currentStrength})</span>
-          </button>
-        )}
-      </div>
-
-      {/* 心理特質 θ 與心流數值指示條 */}
-      <div className="w-full max-w-xl mb-4 px-3 py-2 bg-slate-900/60 rounded-xl border border-slate-800 flex items-center justify-between text-xs font-mono">
-        <div className="flex items-center gap-2 sm:gap-3">
-          <span className="text-slate-400">能力值(θ): <b className="text-emerald-400">{currentState.theta > 0 ? `+${currentState.theta}` : currentState.theta}</b></span>
-          <span className="text-slate-400">士氣: <b className="text-amber-300">{profile.morale}x</b></span>
-          <span className="text-slate-400 hidden sm:inline">EWMA均時: <b className="text-indigo-300">{currentState.avgTimeSec}s</b></span>
-        </div>
-        <button
-          onClick={() => setIsZPDMode(!isZPDMode)}
-          className={`px-2.5 py-1 rounded text-[11px] font-semibold transition-all ${
-            isZPDMode
-              ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-slate-950 font-bold shadow'
-              : 'bg-slate-800 text-slate-400 hover:text-slate-200'
+      {/* ========== 🧠 生物機會橫幅（主視覺調度） ========== */}
+      {topSchedule && (
+        <div 
+          onClick={handleScheduleClick}
+          className={`w-full max-w-lg mb-3 p-3 rounded-2xl border cursor-pointer transition-all duration-500 hover:scale-[1.01] active:scale-[0.98] shadow-2xl ${
+            topSchedule.item.isConsolidated 
+              ? 'bg-gradient-to-r from-emerald-950/80 to-indigo-950/80 border-emerald-400/50 shadow-emerald-500/20 animate-[pulse_3s_ease-in-out_infinite]' 
+              : 'bg-gradient-to-r from-cyan-950/80 to-slate-900/80 border-cyan-700/60 shadow-cyan-500/10'
           }`}
         >
-          {isZPDMode ? '🧠 雙相神經引導' : '手動選階'}
-        </button>
-      </div>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <span className="text-2xl">{topSchedule.item.isConsolidated ? '🌙' : '⚡'}</span>
+              <div>
+                <div className="text-[10px] font-bold uppercase tracking-wider opacity-70">
+                  {topSchedule.item.isConsolidated ? '🧠 突觸固化黃金期 (16-48h)' : '🔄 記憶衰退喚醒'}
+                </div>
+                <div className="text-sm font-bold">
+                  {topSchedule.targetType} · 強度 S={topSchedule.item.currentStrength}
+                  {topSchedule.item.isConsolidated && <span className="ml-2 text-emerald-300 text-[10px]">+25% 增益</span>}
+                </div>
+              </div>
+            </div>
+            <div className="text-[10px] px-3 py-1.5 bg-white/10 rounded-full backdrop-blur border border-white/10 font-bold">
+              立即收割 ↗
+            </div>
+          </div>
+        </div>
+      )}
 
-      {/* 題型選擇 Tab */}
-      <div className="w-full max-w-xl flex gap-2 overflow-x-auto pb-2 mb-3 scrollbar-none">
+      {/* ========== 題型選擇（精簡膠囊） ========== */}
+      <div className="w-full max-w-lg flex gap-1.5 overflow-x-auto pb-2 mb-2 scrollbar-none">
         {PUZZLE_TYPES.map((pt) => {
           const isActive = selectedType === pt.id;
           const count = PUZZLE_CATALOG[pt.id]?.length || 0;
           return (
             <button
               key={pt.id}
-              onClick={() => {
-                setSelectedType(pt.id);
-                setPuzzleIndex(0);
-              }}
+              onClick={() => { setSelectedType(pt.id); setPuzzleIndex(0); }}
               disabled={count === 0}
-              className={`px-4 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all flex items-center gap-1.5 border ${
+              className={`px-3.5 py-1.5 rounded-full text-[10px] font-bold whitespace-nowrap transition-all flex items-center gap-1.5 border ${
                 isActive
-                  ? 'bg-gradient-to-r from-indigo-600 to-violet-600 border-indigo-400 text-white shadow-lg shadow-indigo-500/25 ring-2 ring-indigo-400/40'
+                  ? 'bg-indigo-600/90 border-indigo-400 text-white shadow-lg shadow-indigo-500/30 ring-1 ring-indigo-400/50'
                   : count === 0
                   ? 'bg-slate-900/50 border-slate-800/50 text-slate-600 cursor-not-allowed'
-                  : 'bg-slate-900 border-slate-800 text-slate-400 hover:bg-slate-800 hover:text-slate-200'
+                  : 'bg-slate-900/60 border-slate-700/60 text-slate-400 hover:bg-slate-800/80 hover:text-slate-200'
               }`}
             >
               <span>{pt.icon}</span>
               <span>{lang === 'zh' ? pt.nameZh : pt.nameEn}</span>
-              <span className="text-[10px] opacity-60 ml-0.5">({count})</span>
+              <span className="text-[8px] opacity-50">({count})</span>
             </button>
           );
         })}
       </div>
 
-      {/* 難度選擇按鈕 */}
+      {/* ========== 難度網格（手動模式） ========== */}
       {!isZPDMode && (
-        <div className="flex flex-wrap justify-center gap-1.5 mb-6">
+        <div className="flex flex-wrap justify-center gap-1.5 mb-3">
           {LEVEL_KEYS.map((lvl) => {
             const count = filteredPuzzles[lvl]?.length || 0;
             return (
               <button
                 key={lvl}
-                onClick={() => {
-                  setCurrentLevel(lvl);
-                  setPuzzleIndex(0);
-                }}
+                onClick={() => { setCurrentLevel(lvl); setPuzzleIndex(0); }}
                 disabled={count === 0}
-                className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold border transition-all ${
+                className={`px-3 py-1 rounded-full text-[10px] font-semibold border transition-all ${
                   activeLevel === lvl && count > 0
-                    ? 'bg-indigo-600 border-indigo-400 text-white shadow-md'
+                    ? 'bg-indigo-600/80 border-indigo-400 text-white shadow'
                     : count === 0
                     ? 'bg-slate-900/50 border-slate-800/50 text-slate-600 cursor-not-allowed'
-                    : 'bg-slate-900/90 border-slate-800 text-slate-400 hover:bg-slate-800'
+                    : 'bg-slate-900/60 border-slate-700/60 text-slate-400 hover:bg-slate-800/80'
                 }`}
               >
-                {t.difficulty[lvl]} ({count})
+                {t.difficulty[lvl]} <span className="text-[8px] opacity-50">({count})</span>
               </button>
             );
           })}
         </div>
       )}
 
-      {/* 盤面渲染 */}
+      {/* ========== 🧩 盤面核心（玻璃質感） ========== */}
       {activePuzzle ? (
         <section className="flex flex-col items-center w-full max-w-sm sm:max-w-md">
-          <ErrorBoundary
-            FallbackComponent={EngineFallbackUI}
-            resetKeys={[selectedType, activeLevel, puzzleIndex]}
-            onReset={() => setPuzzleIndex(0)}
-          >
-            <PuzzleRenderer
-              key={`${selectedType}-${activeLevel}-${puzzleIndex}-${activePuzzle.checksum}`}
-              puzzle={activePuzzle}
-            />
-          </ErrorBoundary>
-
-          <div className="mt-6 flex gap-3 w-full">
-            <button
-              onClick={() => setPuzzleIndex((prev) => (prev + 1) % activeList.length)}
-              className="w-full py-3 bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-500 hover:to-indigo-600 active:scale-[0.98] text-white rounded-xl text-sm font-bold shadow-lg shadow-indigo-600/30 transition-all border border-indigo-500/30"
+          <div className="w-full p-1.5 bg-white/5 backdrop-blur-sm rounded-3xl border border-white/5 shadow-2xl shadow-indigo-500/5">
+            <ErrorBoundary
+              FallbackComponent={EngineFallbackUI}
+              resetKeys={[selectedType, activeLevel, puzzleIndex]}
+              onReset={() => setPuzzleIndex(0)}
             >
-              🎲 {t.ui.nextPuzzle} ({puzzleIndex + 1}/{activeList.length})
+              <PuzzleRenderer
+                key={`${selectedType}-${activeLevel}-${puzzleIndex}-${activePuzzle.checksum}`}
+                puzzle={activePuzzle}
+              />
+            </ErrorBoundary>
+          </div>
+
+          {/* 底部控制區（神經適應按鈕） */}
+          <div className="mt-4 flex gap-3 w-full">
+            <button
+              onClick={() => {
+                // 微交互動饋：震動感（若支援）
+                if (navigator.vibrate) navigator.vibrate(10);
+                setPuzzleIndex((prev) => (prev + 1) % activeList.length);
+              }}
+              className="w-full py-3.5 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 active:scale-[0.97] text-white rounded-2xl text-sm font-bold shadow-xl shadow-indigo-600/30 transition-all border border-indigo-400/30 flex items-center justify-center gap-2"
+            >
+              <span>⚡ 神經適應</span>
+              <span className="text-[10px] opacity-70 font-mono">({puzzleIndex + 1}/{activeList.length})</span>
             </button>
+          </div>
+          
+          {/* 小字顯示當前難度與 ZPD 狀態 */}
+          <div className="mt-2 text-[9px] text-slate-500 font-mono tracking-wider">
+            {isZPDMode ? `🧠 ZPD 推薦 · ${t.difficulty[activeLevel]}` : `🎛️ 手動 · ${t.difficulty[activeLevel]}`}
           </div>
         </section>
       ) : (
-        <div className="mt-8 p-8 border border-dashed border-slate-800 rounded-2xl text-center max-w-sm">
-          <p className="text-indigo-400 text-2xl mb-2">🧩</p>
+        <div className="mt-12 p-10 border border-dashed border-slate-800/60 rounded-3xl text-center max-w-sm backdrop-blur-sm bg-slate-900/30">
+          <p className="text-indigo-400 text-3xl mb-2">🧩</p>
           <p className="text-slate-300 text-sm font-semibold">{t.ui.noPuzzles}</p>
-          <p className="text-slate-500 text-xs mt-1">此題型正在 SMT 焊接中，請切換其他難度或題型</p>
+          <p className="text-slate-500 text-[10px] mt-1">此題型正在神經焊接中，請切換其他類型</p>
         </div>
       )}
     </main>
