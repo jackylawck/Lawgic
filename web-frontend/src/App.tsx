@@ -33,27 +33,24 @@ const PUZZLE_METAS: PuzzleMeta[] = [
   { id: 'maze', nameZh: '空間迷宮', nameEn: 'Maze', icon: '🌀', primaryDimension: 'spatial', defaultLoad: { spatial: 1.0, numeric: 0.0, workingMemory: 0.5, inhibition: 0.4 } },
 ];
 
-export const LEVEL_KEYS: TierKey[] = ['kids', 'learner', 'intermediate', 'expert', 'master'];
+export const LEVEL_KEYS: TierKey[] = ['kids', 'intermediate', 'expert', 'master'];
 
 const TIER_NAMES_PRO_ZH: Record<TierKey, string> = {
   kids: '資優啟蒙',
-  learner: '邏輯學徒',
-  intermediate: '進階挑戰',
+  intermediate: '進階突破',
   expert: '錦標專家',
   master: '深淵魔王',
 };
 
 const TIER_NAMES_PRO_EN: Record<TierKey, string> = {
   kids: 'Gifted Talent',
-  learner: 'Learner',
-  intermediate: 'Intermediate',
+  intermediate: 'Advance',
   expert: 'Expert',
   master: 'Grandmaster',
 };
 
 const TIER_NAMES_CHILD_ZH: Record<TierKey, string> = {
   kids: '🌱 資優小幼苗',
-  learner: '🌿 邏輯小學徒',
   intermediate: '🌲 森林探險家',
   expert: '🏰 迷宮大騎士',
   master: '👑 奧賽大宗師',
@@ -61,7 +58,6 @@ const TIER_NAMES_CHILD_ZH: Record<TierKey, string> = {
 
 const TIER_NAMES_CHILD_EN: Record<TierKey, string> = {
   kids: '🌱 Gifted Junior',
-  learner: '🌿 Logic Apprentice',
   intermediate: '🌲 Explorer',
   expert: '🏰 Maze Knight',
   master: '👑 Grandmaster',
@@ -105,7 +101,7 @@ const MainDashboard: React.FC = () => {
   const [selectedType, setSelectedType] = useState<string>('sudoku');
   const [currentLevel, setCurrentLevel] = useState<TierKey>('kids');
   const [puzzleIndex, setPuzzleIndex] = useState<number>(0);
-  const [isZPDMode, setIsZPDMode] = useState<boolean>(false); // 預設提供手動選階
+  const [isZPDMode, setIsZPDMode] = useState<boolean>(false);
   const [showDetail, setShowDetail] = useState<boolean>(false);
   const [neuroToast, setNeuroToast] = useState<string | null>(null);
 
@@ -124,7 +120,6 @@ const MainDashboard: React.FC = () => {
     const rawList = PUZZLE_CATALOG[selectedType] || [];
     const grouped: Record<TierKey, PuzzleEntity[]> = {
       kids: [],
-      learner: [],
       intermediate: [],
       expert: [],
       master: [],
@@ -351,7 +346,7 @@ const MainDashboard: React.FC = () => {
           </div>
         )}
 
-        {/* 12 大題型切換橫列 */}
+        {/* 題型橫列 */}
         <div className="w-full max-w-lg flex gap-1 overflow-x-auto pb-1.5 mb-1.5 scrollbar-none border-b border-slate-900">
           {visibleMetas.map((pt) => {
             const isActive = selectedType === pt.id;
@@ -375,7 +370,7 @@ const MainDashboard: React.FC = () => {
           })}
         </div>
 
-        {/* 🌟 5 階難度手動選擇列 */}
+        {/* 4 階難度選擇列 */}
         <div className="w-full max-w-lg flex items-center justify-between gap-1 mb-2 px-0.5">
           <div className="flex gap-1 overflow-x-auto scrollbar-none">
             {LEVEL_KEYS.map((tierKey) => {
@@ -586,7 +581,7 @@ const MainDashboard: React.FC = () => {
         })}
       </div>
 
-      {/* 🌟 沉浸模式下的 5 階難度選擇膠囊 */}
+      {/* 4 階難度選擇膠囊 */}
       <div className="w-full max-w-xl flex items-center justify-between gap-1 mb-3 px-1">
         <div className="flex gap-1 overflow-x-auto scrollbar-none">
           {LEVEL_KEYS.map((tierKey) => {
