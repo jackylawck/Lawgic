@@ -14,8 +14,10 @@ export class WebMazeGenerator {
     const width = size;
     const height = size;
 
+    // 1. 初始化全牆壁網格 (1: 牆, 0: 通路)
     const grid: number[][] = Array.from({ length: height }, () => Array(width).fill(1));
 
+    // 2. Randomized Prim 生成樹演算法
     const startX = 1;
     const startY = 1;
     grid[startY][startX] = 0;
@@ -50,10 +52,19 @@ export class WebMazeGenerator {
     const start: [number, number] = [1, 1];
     const end: [number, number] = [width - 2, height - 2];
 
+    // 3. 求解主基準路徑 (O(1) 指針優化)
     let solution = this._bfs(grid, width, height, start, end);
+
+    // 4. 注入策略性賭注環路
     this._injectStrategicBets(grid, width, height, solution, tier);
+
+    // 5. 注入物理視覺盲巷 (Visual Noise Distractors)
+    this._injectVisualNoise(grid, width, height, tier);
+
+    // 重新計算注入環路與盲巷後的真實最短路徑
     solution = this._bfs(grid, width, height, start, end);
 
+    // 6. 計算圖論與認知指標
     const turnCount = this._countTurns(solution);
     const deadEndDepth = this._avgDeadEndDepth(grid, width, height);
     const pathEntropy = this._computePathEntropy(grid, width, height, solution);
@@ -101,6 +112,9 @@ export class WebMazeGenerator {
     };
   }
 
+  /**
+   * O(1) 隊列指針優化 BFS，徹底避免 25x25 迷宮時 queue.shift() 的 O(n) 卡頓
+   */
   private static _bfs(
     grid: number[][],
     width: number,
@@ -110,9 +124,10 @@ export class WebMazeGenerator {
   ): [number, number][] {
     const queue: [number, number, [number, number][]][] = [[start[0], start[1], [start]]];
     const visited = new Set<string>([`${start[0]},${start[1]}`]);
+    let head = 0;
 
-    while (queue.length > 0) {
-      const [cx, cy, path] = queue.shift()!;
+    while (head < queue.length) {
+      const [cx, cy, path] = queue[head++];
       if (cx === end[0] && cy === end[1]) return path;
 
       for (const [dx, dy] of [
@@ -159,6 +174,37 @@ export class WebMazeGenerator {
     }
 
     while (injected < count && candidates.length > 0) {
+      const idx = Math.floor(Math.random() * candidates.length);
+      const [cx, cy] = candidates.splice(idx, 1)[0];
+      grid[cy][cx] = 0;
+      injected++;
+    }
+  }
+
+  /**
+   * 物理視覺干擾盲巷注入
+   */
+  private static _injectVisualNoise(
+    grid: number[][],
+    width: number,
+    height: number,
+    tier: TierKey
+  ): void {
+    const noiseLevel = tier === 'kids' ? 0 : tier === 'intermediate' ? 4 : tier === 'expert' ? 10 : 18;
+    let injected = 0;
+    const candidates: [number, number][] = [];
+
+    for (let y = 2; y < height - 2; y++) {
+      for (let x = 2; x < width - 2; x++) {
+        if (grid[y][x] === 1) {
+          const hOpen = grid[y][x - 1] === 0 && grid[y][x + 1] === 0;
+          const vOpen = grid[y - 1][x] === 0 && grid[y + 1][x] === 0;
+          if (hOpen || vOpen) candidates.push([x, y]);
+        }
+      }
+    }
+
+    while (injected < noiseLevel && candidates.length > 0) {
       const idx = Math.floor(Math.random() * candidates.length);
       const [cx, cy] = candidates.splice(idx, 1)[0];
       grid[cy][cx] = 0;
