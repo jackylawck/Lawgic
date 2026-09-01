@@ -5,6 +5,7 @@ import { PuzzleRenderer } from './registry/RendererRegistry';
 import { PUZZLE_CATALOG, PuzzleEntity } from './generated';
 import { LangSwitcher } from './components/LangSwitcher';
 import { useLearnerProfile, TierKey } from './hooks/useLearnerProfile';
+import { useLongTermScheduler } from './hooks/useLongTermScheduler';
 
 const PUZZLE_TYPES = [
   { id: 'sudoku', nameZh: '經典數獨', nameEn: 'Sudoku', icon: '🔢' },
@@ -34,13 +35,16 @@ const EngineFallbackUI: React.FC<{ resetErrorBoundary: () => void }> = ({ resetE
 const MainDashboard: React.FC = () => {
   const { t, lang } = useLanguage();
   const { profile, getZPDRecommendedTier } = useLearnerProfile();
-  
+  const { forgottenTypes, overallPeakTier, getNextForgottenPuzzle } = useLongTermScheduler(
+    profile,
+    PUZZLE_CATALOG
+  );
+
   const [selectedType, setSelectedType] = useState<string>('sudoku');
   const [currentLevel, setCurrentLevel] = useState<TierKey>('kids');
   const [puzzleIndex, setPuzzleIndex] = useState<number>(0);
   const [isZPDMode, setIsZPDMode] = useState<boolean>(false);
 
-  // 雙維度題庫篩選
   const filteredPuzzles = useMemo(() => {
     const rawList = PUZZLE_CATALOG[selectedType] || [];
     const grouped: Record<TierKey, PuzzleEntity[]> = {
@@ -58,53 +62,85 @@ const MainDashboard: React.FC = () => {
     return grouped;
   }, [selectedType]);
 
-  // 若開啟 ZPD 模式，自動計算合適的階梯
   const activeLevel = isZPDMode ? getZPDRecommendedTier(selectedType) : currentLevel;
   const activeList = filteredPuzzles[activeLevel] || [];
   const activePuzzle = activeList.length > 0 ? activeList[puzzleIndex % activeList.length] : null;
 
   const typeStats = profile.typeMastery[selectedType] || { solved: 0, totalAttempts: 0 };
+  const currentPeak = profile.peakRecords[selectedType];
 
   return (
     <main className="min-h-screen bg-slate-950 text-slate-100 flex flex-col items-center py-6 px-4 font-sans selection:bg-indigo-500">
       {/* Header */}
-      <header className="w-full max-w-xl flex items-center justify-between mb-4 pb-3 border-b border-slate-800">
+      <header className="w-full max-w-xl flex items-center justify-between mb-3 pb-3 border-b border-slate-800">
         <div>
           <h1 className="text-2xl font-black bg-gradient-to-r from-indigo-400 via-cyan-300 to-emerald-400 bg-clip-text text-transparent">
             LogiCore
           </h1>
-          <p className="text-[11px] text-slate-500 font-mono">Cognitive Growth Engine · ZPD Adaptive</p>
+          <p className="text-[11px] text-slate-500 font-mono">Lifelong Cognitive Companion · ZPD Adaptive</p>
         </div>
         <LangSwitcher />
       </header>
 
-      {/* 學習歷程數據指示條 */}
+      {/* 終身巔峰與遺忘曲線調度條 */}
+      <div className="w-full max-w-xl mb-3 flex flex-wrap items-center justify-between gap-2 px-3 py-2 bg-gradient-to-r from-indigo-950/40 to-slate-900/60 rounded-xl border border-indigo-900/40 text-xs">
+        <div className="flex items-center gap-2">
+          <span className="px-2.5 py-0.5 bg-amber-500/20 text-amber-300 border border-amber-500/40 rounded-full font-bold">
+            🏆 巔峰段位: {t.difficulty[overallPeakTier]}
+          </span>
+          {currentPeak && (
+            <span className="text-slate-400 font-mono text-[11px]">
+              本項最佳: {t.difficulty[currentPeak.tier]} ({currentPeak.timeSpentSec}s)
+            </span>
+          )}
+        </div>
+
+        {forgottenTypes.length > 0 && (
+          <button
+            onClick={() => {
+              const res = getNextForgottenPuzzle();
+              if (res) {
+                setSelectedType(res.targetType);
+                setCurrentLevel(res.puzzle.tier as TierKey);
+                setPuzzleIndex(0);
+              }
+            }}
+            className="px-2.5 py-1 bg-cyan-950 text-cyan-300 border border-cyan-700 hover:bg-cyan-900/80 rounded-lg text-[11px] font-semibold transition"
+          >
+            🕰️ 遺忘複習 ({forgottenTypes.join(', ')})
+          </button>
+        )}
+      </div>
+
+      {/* 認知歷程指示條 */}
       <div className="w-full max-w-xl mb-4 px-3 py-2 bg-slate-900/60 rounded-xl border border-slate-800 flex items-center justify-between text-xs font-mono">
         <div className="flex items-center gap-2">
-          <span className="text-slate-400">總通關:</span>
-          <span className="text-emerald-400 font-bold">{profile.history.filter((h) => h.isSuccess).length} 題</span>
+          <span className="text-slate-400">通關累計:</span>
+          <span className="text-emerald-400 font-bold">
+            {profile.history.filter((h) => h.isSuccess).length} 題
+          </span>
         </div>
         <div className="flex items-center gap-2">
-          <span className="text-slate-400">當前題型勝率:</span>
+          <span className="text-slate-400">勝率:</span>
           <span className="text-cyan-400 font-bold">
             {typeStats.totalAttempts > 0
               ? `${Math.round((typeStats.solved / typeStats.totalAttempts) * 100)}%`
-              : '尚未測試'}
+              : '0%'}
           </span>
         </div>
         <button
           onClick={() => setIsZPDMode(!isZPDMode)}
           className={`px-2.5 py-1 rounded text-[11px] font-semibold transition-all ${
             isZPDMode
-              ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-slate-950 shadow-md font-bold'
+              ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-slate-950 font-bold shadow'
               : 'bg-slate-800 text-slate-400 hover:text-slate-200'
           }`}
         >
-          {isZPDMode ? '🧠 ZPD 自適應中' : '手動選階'}
+          {isZPDMode ? '🧠 ZPD 自適應' : '手動選階'}
         </button>
       </div>
 
-      {/* 題型 Tab */}
+      {/* 題型選擇 */}
       <div className="w-full max-w-xl flex gap-2 overflow-x-auto pb-2 mb-3 scrollbar-none">
         {PUZZLE_TYPES.map((pt) => {
           const isActive = selectedType === pt.id;
@@ -133,7 +169,7 @@ const MainDashboard: React.FC = () => {
         })}
       </div>
 
-      {/* 難度選擇按鈕 (若開啟 ZPD 模式則鎖定自適應) */}
+      {/* 難度選擇 */}
       {!isZPDMode && (
         <div className="flex flex-wrap justify-center gap-1.5 mb-6">
           {LEVEL_KEYS.map((lvl) => {
