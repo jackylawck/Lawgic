@@ -1,0 +1,11 @@
+[
+  {
+    "id": "sudoku_k01",
+    "engine_type": "sudoku",
+    "difficulty_tier": "kids",
+    "puzzle": [[5,3,0,...]],
+    "solution": [[5,3,4,...]],
+    "metrics": { "decision_depth": 0, "propagation_steps": 142 },
+    "checksum": "3b4f6b64309a4d7fe109c13b29c9bb4b3dbe858f96e1b691b1beebbf03c2bb6f"
+  }
+]
