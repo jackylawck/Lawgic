@@ -31,7 +31,7 @@ export function useLongTermScheduler(
         daysInactive
       );
 
-      // 1. 處於睡眠固化黃金窗口 (16h~48h)
+      // 1. 處於睡眠固化黃金窗口 (16h ~ 48h)
       if (isConsolidated) {
         list.push({
           type: engineType,
@@ -54,7 +54,7 @@ export function useLongTermScheduler(
       }
     });
 
-    // 🔥【機會窗口優先策略】：消除優先級反轉，黃金固化期永遠置頂
+    // 機會窗口優先策略：黃金固化期永遠置頂
     return list.sort((a, b) => {
       if (a.isConsolidated && !b.isConsolidated) return -1;
       if (!a.isConsolidated && b.isConsolidated) return 1;
@@ -77,7 +77,7 @@ export function useLongTermScheduler(
     return tierMap[maxRank] || 'kids';
   }, [profile.peakRecords]);
 
-  // 取出最推薦的調度題目
+  // 取出最推薦的調度題目（突觸特異性難度對齊）
   const getRecommendedSchedulePuzzle = (): {
     targetType: string;
     item: MemoryScheduleItem;
@@ -87,8 +87,24 @@ export function useLongTermScheduler(
 
     const top = scheduledItems[0];
     const pool = catalog[top.type] || [];
-    const targetTier = top.isConsolidated ? 'intermediate' : 'kids';
-    const reviewPool = pool.filter((p) => p.tier === targetTier || p.tier === 'intermediate');
+
+    // 🔥【突觸難度同步核心】：固化期直接對齊該題型個人巔峰，衰退期則降至基礎暖身
+    let targetTier: TierKey;
+    if (top.isConsolidated) {
+      const peak = profile.peakRecords?.[top.type];
+      targetTier = peak ? peak.tier : 'intermediate';
+    } else {
+      targetTier = 'kids';
+    }
+
+    // 優先挑選目標階層題目，若無則依序向下相容
+    let reviewPool = pool.filter((p) => p.tier === targetTier);
+    if (reviewPool.length === 0) {
+      reviewPool = pool.filter((p) => p.tier === 'intermediate' || p.tier === 'kids');
+    }
+    if (reviewPool.length === 0 && pool.length > 0) {
+      reviewPool = pool;
+    }
     if (reviewPool.length === 0) return null;
 
     return {
