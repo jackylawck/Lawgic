@@ -72,13 +72,15 @@ export const SudokuBoard: React.FC<Props> = ({ puzzleData }) => {
     };
   }, [puzzleData, t]);
 
-  const checkVictory = useCallback((currentGrid: number[]) => {
+ const checkVictory = useCallback((currentGrid: number[]) => {
   const flatSol = puzzleData.solution.flat();
   if (flatSol.length === 81 && currentGrid.every((v, i) => v === flatSol[i])) {
     setIsCompleted(true);
     if (!hasRecordedRef.current) {
       hasRecordedRef.current = true;
       const timeSpent = Math.max(1, Math.round((Date.now() - startTimeRef.current) / 1000));
+      
+      // 傳遞包含 cognitiveLoad 的完整記錄
       recordAttempt({
         puzzleId: puzzleData.id,
         engineType: puzzleData.engine_type || 'sudoku',
