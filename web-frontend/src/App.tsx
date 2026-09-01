@@ -5,6 +5,22 @@ import { SudokuBoard } from './components/SudokuBoard';
 import rawLibrary from './generated/puzzle_library.json';
 
 export type LevelKey = 'kids' | 'intermediate' | 'expert' | 'master';
+export type PuzzleType = 'sudoku' | 'kropki' | 'hashi' | 'maze' | 'skyscraper';
+
+interface PuzzleTypeMeta {
+  id: PuzzleType;
+  nameZh: string;
+  nameEn: string;
+  icon: string;
+}
+
+const PUZZLE_TYPES: PuzzleTypeMeta[] = [
+  { id: 'sudoku', nameZh: '經典數獨', nameEn: 'Sudoku', icon: '🔢' },
+  { id: 'kropki', nameZh: '黑白點數獨', nameEn: 'Kropki', icon: '⚪' },
+  { id: 'hashi', nameZh: '數橋', nameEn: 'Hashi', icon: '🌉' },
+  { id: 'skyscraper', nameZh: '摩天大樓', nameEn: 'Skyscraper', icon: '🏢' },
+  { id: 'maze', nameZh: '大迷宮', nameEn: 'Maze', icon: '🌀' },
+];
 
 const mapDepthToLevel = (depth: number): LevelKey => {
   if (depth === 0) return 'kids';
@@ -16,7 +32,7 @@ const mapDepthToLevel = (depth: number): LevelKey => {
 const EngineFallbackUI: React.FC<{ resetErrorBoundary: () => void }> = ({ resetErrorBoundary }) => {
   const { t } = useLanguage();
   return (
-    <div className="flex flex-col items-center justify-center p-8 bg-red-950/40 border border-red-800/80 rounded-xl max-w-md text-center">
+    <div className="flex flex-col items-center justify-center p-8 bg-red-950/40 border border-red-800/80 rounded-xl max-w-md text-center my-6">
       <p className="text-red-300 font-semibold text-sm">{t.errors.engineCrash}</p>
       <button
         onClick={resetErrorBoundary}
@@ -30,15 +46,17 @@ const EngineFallbackUI: React.FC<{ resetErrorBoundary: () => void }> = ({ resetE
 
 const MainDashboard: React.FC = () => {
   const { t, lang, setLang } = useLanguage();
+  const [selectedType, setSelectedType] = useState<PuzzleType>('sudoku');
   const [currentLevel, setCurrentLevel] = useState<LevelKey>('kids');
   const [puzzleIndex, setPuzzleIndex] = useState<number>(0);
 
-  const categorizedPuzzles = useMemo(() => {
+  // 根據「題型」與「難度」雙重過濾
+  const filteredPuzzles = useMemo(() => {
     const map: Record<LevelKey, any[]> = { kids: [], intermediate: [], expert: [], master: [] };
     try {
       const rawList = Object.values(rawLibrary || {}).flat();
       rawList.forEach((p: any) => {
-        if (p && p.puzzle && p.checksum) {
+        if (p && (p.engine_type === selectedType || (!p.engine_type && selectedType === 'sudoku'))) {
           const depth = p.metrics?.decision_depth ?? 0;
           map[mapDepthToLevel(depth)].push(p);
         }
@@ -47,79 +65,106 @@ const MainDashboard: React.FC = () => {
       console.error("Library parse failed:", e);
     }
     return map;
-  }, []);
+  }, [selectedType]);
 
-  const activePuzzleList = categorizedPuzzles[currentLevel];
-  const activePuzzle = activePuzzleList.length > 0 ? activePuzzleList[puzzleIndex % activePuzzleList.length] : null;
+  const activeList = filteredPuzzles[currentLevel];
+  const activePuzzle = activeList.length > 0 ? activeList[puzzleIndex % activeList.length] : null;
 
   return (
-    <main className="min-h-screen bg-slate-950 text-slate-100 flex flex-col items-center py-8 px-4 font-sans">
-      <header className="w-full max-w-xl flex items-center justify-between mb-8 pb-4 border-b border-slate-800">
+    <main className="min-h-screen bg-slate-950 text-slate-100 flex flex-col items-center py-6 px-4 font-sans selection:bg-indigo-500">
+      {/* 頂部 Header */}
+      <header className="w-full max-w-xl flex items-center justify-between mb-6 pb-3 border-b border-slate-800">
         <div>
-          <h1 className="text-xl font-bold bg-gradient-to-r from-indigo-400 to-cyan-400 bg-clip-text text-transparent">
+          <h1 className="text-2xl font-black bg-gradient-to-r from-indigo-400 via-cyan-300 to-emerald-400 bg-clip-text text-transparent">
             LogiCore
           </h1>
-          <p className="text-xs text-slate-500 font-mono mt-0.5">SMT-Welded & WASM AC-3 Verified</p>
+          <p className="text-[11px] text-slate-500 font-mono mt-0.5">SMT-Welded & WASM AC-3 Logic Gym</p>
         </div>
-        <div className="flex gap-1 p-1 bg-slate-800 rounded-lg border border-slate-700">
+        <div className="flex gap-1 p-1 bg-slate-800/80 rounded-lg border border-slate-700">
           <button
             onClick={() => setLang('zh')}
-            className={`px-3 py-1 text-xs rounded transition-all ${lang === 'zh' ? 'bg-indigo-600 text-white' : 'text-slate-400'}`}
+            className={`px-3 py-1 text-xs font-semibold rounded-md transition-all ${lang === 'zh' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400'}`}
           >
             繁中
           </button>
           <button
             onClick={() => setLang('en')}
-            className={`px-3 py-1 text-xs rounded transition-all ${lang === 'en' ? 'bg-indigo-600 text-white' : 'text-slate-400'}`}
+            className={`px-3 py-1 text-xs font-semibold rounded-md transition-all ${lang === 'en' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400'}`}
           >
             EN
           </button>
         </div>
       </header>
 
-      {/* 難度選擇器 */}
-      <div className="flex flex-wrap justify-center gap-2 mb-6">
+      {/* 題型選擇區 (橫向滾動 Tab) */}
+      <div className="w-full max-w-xl flex gap-2 overflow-x-auto pb-2 mb-4 scrollbar-none">
+        {PUZZLE_TYPES.map((pt) => {
+          const isSelected = selectedType === pt.id;
+          return (
+            <button
+              key={pt.id}
+              onClick={() => {
+                setSelectedType(pt.id);
+                setPuzzleIndex(0);
+              }}
+              className={`px-4 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all flex items-center gap-1.5 border ${
+                isSelected
+                  ? 'bg-gradient-to-r from-indigo-600 to-violet-600 border-indigo-400 text-white shadow-lg shadow-indigo-500/25 ring-2 ring-indigo-400/40'
+                  : 'bg-slate-900 border-slate-800 text-slate-400 hover:bg-slate-800 hover:text-slate-200'
+              }`}
+            >
+              <span>{pt.icon}</span>
+              <span>{lang === 'zh' ? pt.nameZh : pt.nameEn}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* 難度選擇區 */}
+      <div className="flex flex-wrap justify-center gap-1.5 mb-6">
         {(['kids', 'intermediate', 'expert', 'master'] as LevelKey[]).map((lvl) => (
           <button
             key={lvl}
             onClick={() => { setCurrentLevel(lvl); setPuzzleIndex(0); }}
-            className={`px-4 py-2 rounded-lg text-sm font-medium border transition-all ${
+            className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold border transition-all ${
               currentLevel === lvl
-                ? 'bg-indigo-600 border-indigo-500 text-white shadow-lg'
-                : 'bg-slate-800/80 border-slate-700 text-slate-300 hover:bg-slate-700'
+                ? 'bg-indigo-600 border-indigo-400 text-white shadow-md'
+                : 'bg-slate-900/90 border-slate-800 text-slate-400 hover:bg-slate-800 hover:text-slate-200'
             }`}
           >
-            {t.difficulty[lvl]} ({categorizedPuzzles[lvl].length})
+            {t.difficulty[lvl]} ({filteredPuzzles[lvl].length})
           </button>
         ))}
       </div>
 
+      {/* 遊戲盤面 */}
       {activePuzzle ? (
-        <section className="flex flex-col items-center">
+        <section className="flex flex-col items-center w-full max-w-sm sm:max-w-md">
           <ErrorBoundary
             FallbackComponent={EngineFallbackUI}
-            resetKeys={[currentLevel, puzzleIndex]}
+            resetKeys={[selectedType, currentLevel, puzzleIndex]}
             onReset={() => setPuzzleIndex(0)}
           >
             <SudokuBoard
-              key={`${currentLevel}-${puzzleIndex}-${activePuzzle.checksum}`}
+              key={`${selectedType}-${currentLevel}-${puzzleIndex}-${activePuzzle.checksum}`}
               puzzleData={activePuzzle}
             />
           </ErrorBoundary>
 
-          <div className="mt-6 flex gap-4">
+          <div className="mt-6 flex gap-3 w-full">
             <button
-              onClick={() => setPuzzleIndex((prev) => (prev + 1) % activePuzzleList.length)}
-              className="px-5 py-2 bg-slate-800 hover:bg-slate-700 text-indigo-300 hover:text-white rounded-lg text-sm font-medium border border-slate-700 transition-colors"
+              onClick={() => setPuzzleIndex((prev) => (prev + 1) % activeList.length)}
+              className="w-full py-3 bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-500 hover:to-indigo-600 active:scale-[0.98] text-white rounded-xl text-sm font-bold shadow-lg shadow-indigo-600/30 transition-all border border-indigo-500/30"
             >
-              {t.ui.nextPuzzle}
+              🎲 {t.ui.nextPuzzle} / Next Puzzle ({puzzleIndex + 1}/{activeList.length})
             </button>
           </div>
         </section>
       ) : (
-        <div className="mt-12 p-8 border border-dashed border-slate-800 rounded-xl text-center">
-          <p className="text-slate-400 text-sm font-medium">{t.ui.noPuzzles}</p>
-          <p className="text-slate-600 text-xs mt-1">{t.ui.noPuzzlesSub}</p>
+        <div className="mt-8 p-8 border border-dashed border-slate-800 rounded-2xl text-center max-w-sm">
+          <p className="text-indigo-400 text-2xl mb-2">🚧</p>
+          <p className="text-slate-300 text-sm font-semibold">{t.ui.noPuzzles}</p>
+          <p className="text-slate-500 text-xs mt-1">此題型正在 SMT 焊接中，請切換其他難度或題型</p>
         </div>
       )}
     </main>
