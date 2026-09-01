@@ -8,7 +8,6 @@ import { LangSwitcher } from './components/LangSwitcher';
 import { VirtualGamepad } from './components/VirtualGamepad';
 import { useLearnerProfile, TierKey, CognitiveDimension } from './hooks/useLearnerProfile';
 import { useLongTermScheduler } from './hooks/useLongTermScheduler';
-import { WebMazeGenerator } from './engines/mazeGenerator';
 
 interface PuzzleMeta {
   id: string;
@@ -106,9 +105,6 @@ const MainDashboard: React.FC = () => {
   const [showDetail, setShowDetail] = useState<boolean>(false);
   const [neuroToast, setNeuroToast] = useState<string | null>(null);
 
-  // ⚡ 動態生成題目暫存庫
-  const [dynamicPuzzles, setDynamicPuzzles] = useState<Record<string, PuzzleEntity[]>>({});
-
   const [elapsed, setElapsed] = useState<number>(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [flashFeedback, setFlashFeedback] = useState<'success' | 'failure' | null>(null);
@@ -120,24 +116,20 @@ const MainDashboard: React.FC = () => {
     return PUZZLE_METAS.filter((m) => CHILD_SAFE_IDS.has(m.id));
   }, [isChildMode]);
 
-  // 合併靜態題庫與即時生成題庫
   const filteredPuzzles = useMemo(() => {
-    const staticList = PUZZLE_CATALOG[selectedType] || [];
-    const liveList = dynamicPuzzles[selectedType] || [];
-    const fullList = [...liveList, ...staticList];
-
+    const rawList = PUZZLE_CATALOG[selectedType] || [];
     const grouped: Record<TierKey, PuzzleEntity[]> = {
       kids: [],
       intermediate: [],
       expert: [],
       master: [],
     };
-    fullList.forEach((p) => {
+    rawList.forEach((p) => {
       const tier = (p.tier as TierKey) || 'kids';
       if (grouped[tier]) grouped[tier].push(p);
     });
     return grouped;
-  }, [selectedType, dynamicPuzzles]);
+  }, [selectedType]);
 
   const currentMeta = PUZZLE_METAS.find((m) => m.id === selectedType) || PUZZLE_METAS[0];
   const activeLevel = isZPDMode ? getZPDRecommendedTier(selectedType, currentMeta.defaultLoad) : currentLevel;
@@ -187,24 +179,6 @@ const MainDashboard: React.FC = () => {
       setPuzzleIndex(Math.floor(Math.random() * activeList.length));
     }
   }, [activeList.length]);
-
-  // ⚡ 核心功能：前端即時生成全新題目
-  const handleLiveGenerate = useCallback(() => {
-    if (navigator.vibrate) navigator.vibrate(20);
-    if (selectedType === 'maze') {
-      const newPuzzle = WebMazeGenerator.generate(activeLevel);
-      setDynamicPuzzles((prev) => {
-        const list = prev['maze'] || [];
-        return { ...prev, maze: [newPuzzle, ...list] };
-      });
-      setPuzzleIndex(0);
-      setNeuroToast(isEn ? '⚡ Brand new procedural maze generated!' : '⚡ 現場即時演算迷宮生成完畢！');
-      setTimeout(() => setNeuroToast(null), 2500);
-    } else {
-      setNeuroToast(isEn ? '⚡ Generator for this type is compiling...' : '⚡ 此題型前端即時生成器編譯中...');
-      setTimeout(() => setNeuroToast(null), 2500);
-    }
-  }, [selectedType, activeLevel, isEn]);
 
   const handleExpedition = useCallback(() => {
     if (navigator.vibrate) navigator.vibrate(15);
@@ -275,11 +249,6 @@ const MainDashboard: React.FC = () => {
           e.preventDefault();
           handleRandomPuzzle();
           break;
-        case 'g':
-        case 'G':
-          e.preventDefault();
-          handleLiveGenerate();
-          break;
         case 'z':
         case 'Z':
           e.preventDefault();
@@ -292,7 +261,7 @@ const MainDashboard: React.FC = () => {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [handleNextPuzzle, handlePrevPuzzle, handleRandomPuzzle, handleLiveGenerate]);
+  }, [handleNextPuzzle, handlePrevPuzzle, handleRandomPuzzle]);
 
   useEffect(() => {
     setElapsed(0);
@@ -381,7 +350,7 @@ const MainDashboard: React.FC = () => {
         <div className="w-full max-w-lg flex gap-1 overflow-x-auto pb-1.5 mb-1.5 scrollbar-none border-b border-slate-900">
           {visibleMetas.map((pt) => {
             const isActive = selectedType === pt.id;
-            const count = (PUZZLE_CATALOG[pt.id]?.length || 0) + (dynamicPuzzles[pt.id]?.length || 0);
+            const count = PUZZLE_CATALOG[pt.id]?.length || 0;
             return (
               <button
                 key={pt.id}
@@ -473,21 +442,12 @@ const MainDashboard: React.FC = () => {
               />
             )}
 
-            {/* 3 欄操作按鈕區（上一題 / ⚡ 現場生成 / 下一題） */}
-            <div className="mt-2.5 grid grid-cols-3 gap-1.5 w-full">
+            <div className="mt-2.5 grid grid-cols-2 gap-1.5 w-full">
               <button
                 onClick={handlePrevPuzzle}
                 className="py-2.5 bg-slate-900 hover:bg-slate-800 active:scale-[0.99] text-slate-400 hover:text-slate-200 text-[10px] font-mono border border-slate-800 transition rounded"
               >
                 {isEn ? '◀ Prev (P)' : '◀ 上一題 (P)'}
-              </button>
-              <button
-                onClick={handleLiveGenerate}
-                className="py-2.5 bg-cyan-950/80 hover:bg-cyan-900/80 active:scale-[0.98] text-cyan-300 hover:text-cyan-100 font-bold text-[10px] font-mono border border-cyan-700/60 shadow transition rounded flex items-center justify-center gap-1"
-                title={isEn ? "Generate new maze dynamically (G)" : "現場即時演算新迷宮 (G)"}
-              >
-                <span>⚡</span>
-                <span>{isEn ? 'Generate' : '現場生成'}</span>
               </button>
               <button
                 onClick={handleNextPuzzle}
@@ -506,9 +466,9 @@ const MainDashboard: React.FC = () => {
                 <span className="text-slate-500">{isEn ? 'Progress' : '進度'}: {puzzleIndex + 1}/{activeList.length}</span>
               </div>
               <div className="flex gap-2 text-[8px] text-slate-500">
-                <kbd className="px-1 border border-slate-800">G</kbd>{isEn ? 'Gen' : '生成'}
                 <kbd className="px-1 border border-slate-800">N</kbd>{isEn ? 'Next' : '下一題'} 
                 <kbd className="px-1 border border-slate-800">P</kbd>{isEn ? 'Prev' : '上一題'} 
+                <kbd className="px-1 border border-slate-800">R</kbd>{isEn ? 'Rand' : '隨機'} 
               </div>
             </div>
           </section>
@@ -599,7 +559,7 @@ const MainDashboard: React.FC = () => {
       <div className="w-full max-w-xl flex gap-1.5 overflow-x-auto pb-2 mb-1.5 scrollbar-none">
         {visibleMetas.map((pt) => {
           const isActive = selectedType === pt.id;
-          const count = (PUZZLE_CATALOG[pt.id]?.length || 0) + (dynamicPuzzles[pt.id]?.length || 0);
+          const count = PUZZLE_CATALOG[pt.id]?.length || 0;
           return (
             <button
               key={pt.id}
@@ -693,27 +653,21 @@ const MainDashboard: React.FC = () => {
             />
           )}
 
-          <div className="mt-4 grid grid-cols-3 gap-2 w-full">
+          <div className="mt-4 grid grid-cols-2 gap-2.5 w-full">
             <button
               onClick={handlePrevPuzzle}
-              className="py-3 bg-slate-900/90 hover:bg-slate-800 active:scale-[0.98] text-slate-300 hover:text-white rounded-2xl text-xs font-bold shadow-md transition-all border border-slate-700/60 flex items-center justify-center"
+              className="py-3.5 bg-slate-900/90 hover:bg-slate-800 active:scale-[0.98] text-slate-300 hover:text-white rounded-2xl text-xs font-bold shadow-md transition-all border border-slate-700/60 flex items-center justify-center gap-1.5"
             >
               <span>{isEn ? '◀ Prev' : '◀ 上一題'}</span>
-            </button>
-
-            <button
-              onClick={handleLiveGenerate}
-              className="py-3 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 active:scale-[0.98] text-white rounded-2xl text-xs font-bold shadow-lg shadow-emerald-600/30 transition-all border border-emerald-400/40 flex items-center justify-center gap-1"
-            >
-              <span>⚡</span>
-              <span>{isEn ? 'Generate' : '現場生成'}</span>
+              <span className="text-[10px] opacity-50 font-mono">({puzzleIndex + 1}/{activeList.length})</span>
             </button>
 
             <button
               onClick={handleNextPuzzle}
-              className="py-3 bg-slate-900/90 hover:bg-slate-800 active:scale-[0.98] text-slate-300 hover:text-white rounded-2xl text-xs font-bold shadow-md transition-all border border-slate-700/60 flex items-center justify-center"
+              className="py-3.5 bg-slate-900/90 hover:bg-slate-800 active:scale-[0.98] text-slate-300 hover:text-white rounded-2xl text-xs font-bold shadow-md transition-all border border-slate-700/60 flex items-center justify-center gap-1.5"
             >
               <span>{isEn ? 'Next ▶' : '下一題 ▶'}</span>
+              <span className="text-[10px] opacity-50 font-mono">({puzzleIndex + 1}/{activeList.length})</span>
             </button>
           </div>
         </section>
