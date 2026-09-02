@@ -60,7 +60,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
     ex = Math.max(1, Math.min(w - 2, ex));
     ey = Math.max(1, Math.min(h - 2, ey));
 
-    // 💡 關鍵修復：強制打通終點格子與至少一條通路，確保物理上絕對不是牆壁
+    // 💡 強制打通終點格子與相鄰通路
     nextGrid[ey][ex] = 0;
     if (ey > 1 && nextGrid[ey - 1][ex] === 1 && nextGrid[ey][ex - 1] === 1) {
       nextGrid[ey - 1][ex] = 0;
@@ -75,7 +75,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
   const [trail, setTrail] = useState<[number, number][]>([startPos]);
   const [visitedSet, setVisitedSet] = useState<Set<string>>(new Set([`${startPos[0]},${startPos[1]}`]));
   const [isCompleted, setIsCompleted] = useState<boolean>(false);
-  const [fogMode, setFogMode] = useState<boolean>(false); // 預設先看全貌以確認終點，有需要再切換戰霧
+  const [fogMode, setFogMode] = useState<boolean>(false); // 預設全景可視
 
   const startTimeRef = useRef<number>(Date.now());
   const [elapsedMs, setElapsedMs] = useState<number>(0);
@@ -168,7 +168,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
 
         const isGoalCell = nextX === endPos[0] && nextY === endPos[1];
 
-        // 碰壁判定：終點格永遠允許進入
+        // 碰壁判定：終點格允許直接走入
         if (
           !isGoalCell &&
           (nextY < 0 ||
@@ -352,6 +352,10 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
       strategy = 'Wall-Follower';
       strategyName = isEn ? 'Wall Follower' : '謹慎壁隨型';
       confidence = 82;
+    } else {
+      strategy = 'Intuitive-Explorer';
+      strategyName = isEn ? 'Intuitive Explorer' : '直覺衝刺型';
+      confidence = 88;
     }
 
     return {
@@ -436,23 +440,24 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
         </button>
       </div>
 
-      {/* 迷宮盤面 */}
+      {/* 迷宮主盤面：嚴格自適應螢幕，去除 overflow 截斷 */}
       <div
         onTouchStart={handleTouchStart}
         onTouchEnd={handleTouchEnd}
-        className="grid gap-[1px] bg-slate-950 border-2 border-slate-700 p-1 rounded-xl shadow-2xl touch-none max-w-[95vw] max-h-[62vh] overflow-hidden"
+        className="grid gap-[1px] bg-slate-950 border-2 border-slate-700 p-1 rounded-xl shadow-2xl touch-none w-[min(92vw,50vh)] h-[min(92vw,50vh)] mx-auto"
         style={{
           gridTemplateColumns: `repeat(${grid[0].length}, minmax(0, 1fr))`,
+          gridTemplateRows: `repeat(${grid.length}, minmax(0, 1fr))`,
         }}
       >
         {grid.map((row, rIdx) =>
           row.map((cell, cIdx) => {
             const isStart = cIdx === startPos[0] && rIdx === startPos[1];
             
-            // 💡 絕對終點判定：排除起點，只要座標吻合 endPos 即為終點
+            // 💡 絕對終點判定
             const isEnd = !isStart && cIdx === endPos[0] && rIdx === endPos[1];
             
-            // 終點絕對不為牆
+            // 終點永遠不是牆
             const isWall = !isEnd && cell === 1;
 
             const isPlayer = isReplaying
@@ -476,7 +481,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
               return (
                 <div
                   key={`${rIdx}-${cIdx}`}
-                  className="w-4 h-4 sm:w-6 sm:h-6 bg-slate-950/95 border border-slate-900/60 rounded-xs"
+                  className="w-full h-full bg-slate-950/95 border border-slate-900/60 rounded-xs"
                 />
               );
             }
@@ -489,7 +494,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
                     ? { backgroundColor: '#10b981', color: '#ffffff', zIndex: 30 }
                     : undefined
                 }
-                className={`w-4 h-4 sm:w-6 sm:h-6 flex items-center justify-center rounded-xs font-bold text-[8px] sm:text-[10px] transition-all duration-75 relative ${
+                className={`w-full h-full flex items-center justify-center rounded-xs font-bold text-[8px] sm:text-[10px] transition-all duration-75 relative ${
                   isPlayer
                     ? 'bg-cyan-500 text-white shadow-lg shadow-cyan-500/80 scale-105 z-20 ring-1 ring-cyan-300'
                     : isEnd
@@ -508,7 +513,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
                 {isPlayer ? (
                   '●'
                 ) : isEnd ? (
-                  <span className="text-[11px] sm:text-xs leading-none select-none z-30">🏁</span>
+                  <span className="text-[10px] sm:text-xs leading-none select-none z-30">🏁</span>
                 ) : isStart ? (
                   'S'
                 ) : isCompleted && isOptimal ? (
