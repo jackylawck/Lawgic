@@ -12,9 +12,18 @@ export const SudokuBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
   const actualPuzzle = puzzleData || puzzle;
   const { recordAttempt } = useLearnerProfile();
 
+  // 支援多種題目資料欄位結構相容
   const initialGrid = useMemo(() => {
-    if (!actualPuzzle?.puzzle || !Array.isArray(actualPuzzle.puzzle)) return Array(81).fill(0);
-    return actualPuzzle.puzzle.flat();
+    const raw =
+      actualPuzzle?.puzzle ||
+      (actualPuzzle as any)?.spec?.grid ||
+      (actualPuzzle as any)?.grid;
+
+    if (!raw) return Array(81).fill(0);
+    if (Array.isArray(raw)) {
+      return Array.isArray(raw[0]) ? raw.flat() : raw;
+    }
+    return Array(81).fill(0);
   }, [actualPuzzle]);
 
   const [grid, setGrid] = useState<number[]>(initialGrid);
@@ -38,8 +47,10 @@ export const SudokuBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
 
   const checkVictory = useCallback(
     (currentGrid: number[]) => {
-      if (!actualPuzzle?.solution || !Array.isArray(actualPuzzle.solution)) return;
-      const flatSol = actualPuzzle.solution.flat();
+      const sol = actualPuzzle?.solution;
+      if (!sol || !Array.isArray(sol)) return;
+      const flatSol = Array.isArray(sol[0]) ? sol.flat() : sol;
+
       if (flatSol.length === 81 && currentGrid.every((v, i) => v === flatSol[i])) {
         setIsCompleted(true);
         if (!hasRecordedRef.current) {
@@ -51,7 +62,7 @@ export const SudokuBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
             tier: (actualPuzzle.tier as TierKey) || 'kids',
             cognitiveLoad: actualPuzzle.cognitiveLoad || {
               spatial: 0.3,
-              numeric: 0.4,
+              numeric: 0.7,
               workingMemory: 0.8,
               inhibition: 0.6,
             },
@@ -73,7 +84,8 @@ export const SudokuBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
   const handleNumberInput = (num: number) => {
     if (selectedCell === null || initialGrid[selectedCell] !== 0 || isCompleted) return;
 
-    const flatSol = actualPuzzle?.solution ? actualPuzzle.solution.flat() : [];
+    const sol = actualPuzzle?.solution;
+    const flatSol = sol ? (Array.isArray(sol[0]) ? sol.flat() : sol) : [];
     const expectedValue = flatSol[selectedCell];
 
     if (num !== 0 && expectedValue !== undefined && num !== expectedValue) {
@@ -106,8 +118,9 @@ export const SudokuBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
   }, [selectedCell, isCompleted, grid]);
 
   return (
-    <div className="flex flex-col items-center w-full select-none">
-      <div className="grid grid-cols-9 gap-[1px] bg-slate-800 border-2 border-slate-700 p-[1px] rounded-lg shadow-inner">
+    <div className="flex flex-col items-center w-full select-none py-1">
+      {/* 自適應正方形棋盤 */}
+      <div className="grid grid-cols-9 gap-[1px] bg-slate-750 border-2 border-slate-700 p-1 rounded-xl shadow-2xl w-[min(90vw,46vh)] h-[min(90vw,46vh)] mx-auto">
         {grid.map((val, idx) => {
           const isGiven = initialGrid[idx] !== 0;
           const isSelected = selectedCell === idx;
@@ -122,11 +135,11 @@ export const SudokuBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
             <button
               key={idx}
               onClick={() => handleCellClick(idx)}
-              className={`w-8 h-8 sm:w-10 sm:h-10 flex items-center justify-center text-sm sm:text-base font-bold transition-colors ${borderRight} ${borderBottom} ${
+              className={`w-full h-full flex items-center justify-center text-xs sm:text-base font-bold transition-colors rounded-xs ${borderRight} ${borderBottom} ${
                 isConflict
                   ? 'bg-rose-600 text-white animate-pulse'
                   : isSelected
-                  ? 'bg-indigo-600 text-white'
+                  ? 'bg-indigo-600 text-white ring-1 ring-indigo-300'
                   : isGiven
                   ? 'bg-slate-900/90 text-slate-300'
                   : val !== 0
@@ -140,13 +153,14 @@ export const SudokuBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
         })}
       </div>
 
-      <div className="grid grid-cols-5 sm:grid-cols-10 gap-1.5 mt-4 w-full max-w-sm">
+      {/* 數字輸入鍵盤 */}
+      <div className="grid grid-cols-10 gap-1 mt-3 w-[min(90vw,46vh)]">
         {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((num) => (
           <button
             key={num}
             onClick={() => handleNumberInput(num)}
             disabled={isCompleted || selectedCell === null}
-            className="py-2.5 bg-slate-900 hover:bg-slate-800 disabled:opacity-40 active:scale-95 text-slate-200 border border-slate-700 rounded-lg text-xs font-mono font-bold transition shadow"
+            className="py-2 bg-slate-900 hover:bg-slate-800 disabled:opacity-30 active:scale-95 text-slate-200 border border-slate-700 rounded-lg text-xs font-mono font-bold transition shadow"
           >
             {num}
           </button>
@@ -154,11 +168,17 @@ export const SudokuBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
         <button
           onClick={() => handleNumberInput(0)}
           disabled={isCompleted || selectedCell === null}
-          className="py-2.5 bg-rose-950/60 hover:bg-rose-900/60 disabled:opacity-40 active:scale-95 text-rose-300 border border-rose-800 rounded-lg text-xs font-mono font-bold transition shadow"
+          className="py-2 bg-rose-950/60 hover:bg-rose-900/60 disabled:opacity-30 active:scale-95 text-rose-300 border border-rose-800 rounded-lg text-xs font-mono font-bold transition shadow"
         >
           ⌫
         </button>
       </div>
+
+      {isCompleted && (
+        <div className="mt-2 text-xs text-emerald-400 font-bold tracking-widest animate-pulse">
+          ✨ SOLVED / 通關成功 ✨
+        </div>
+      )}
     </div>
   );
 };
