@@ -23,6 +23,13 @@ export interface TechniqueStats {
   attempts: number;
   avgTimeSec: number;
   accuracy: number;
+  times: number[]; // 儲存歷史時間計算精確標準誤
+}
+
+export interface BenchmarkMetrics {
+  benchmarkTime: number;
+  sem: number;
+  ci95: [number, number];
 }
 
 export const useLearnerProfile = () => {
@@ -48,10 +55,12 @@ export const useLearnerProfile = () => {
         attempts: 0,
         avgTimeSec: payload.timeSpentSec,
         accuracy: 1.0,
+        times: [],
       };
 
       const newAttempts = prevStat.attempts + 1;
-      const newAvgTime = Math.round((prevStat.avgTimeSec * prevStat.attempts + payload.timeSpentSec) / newAttempts);
+      const newTimes = [...(prevStat.times || []), payload.timeSpentSec].slice(-30);
+      const newAvgTime = Math.round(newTimes.reduce((a, b) => a + b, 0) / newTimes.length);
       const newAccuracy = Number(
         ((prevStat.accuracy * prevStat.attempts + (payload.conflictsCount === 0 ? 1 : 0.8)) / newAttempts).toFixed(2)
       );
@@ -64,6 +73,7 @@ export const useLearnerProfile = () => {
             attempts: newAttempts,
             avgTimeSec: newAvgTime,
             accuracy: newAccuracy,
+            times: newTimes,
           },
         },
         recentRecords: [payload, ...(prev.recentRecords || [])].slice(0, 50),
@@ -78,15 +88,33 @@ export const useLearnerProfile = () => {
     });
   }, []);
 
-  const getBenchmarkTime = useCallback(
-    (technique: string, defaultTime: number) => {
+  // 取得基準時間並計算 95% 信賴區間與標準誤 (SEM)
+  const getBenchmarkMetrics = useCallback(
+    (technique: string, defaultTime: number): BenchmarkMetrics => {
       const stat = profile.techniqueStats[technique];
-      if (!stat || stat.attempts < 2) return defaultTime;
-      // 結合個人歷史平均（70% 權重）與題目理論基準（30% 權重）
-      return Math.round(stat.avgTimeSec * 0.7 + defaultTime * 0.3);
+      if (!stat || stat.attempts < 3 || !stat.times || stat.times.length < 3) {
+        return {
+          benchmarkTime: defaultTime,
+          sem: Math.round(defaultTime * 0.15),
+          ci95: [Math.max(10, defaultTime - Math.round(defaultTime * 0.3)), defaultTime + Math.round(defaultTime * 0.3)],
+        };
+      }
+
+      const n = stat.times.length;
+      const mean = stat.avgTimeSec;
+      const variance = stat.times.reduce((acc, t) => acc + Math.pow(t - mean, 2), 0) / (n - 1);
+      const sd = Math.sqrt(variance);
+      const sem = Math.max(1, Math.round(sd / Math.sqrt(n)));
+      const weightedBench = Math.round(mean * 0.75 + defaultTime * 0.25);
+
+      return {
+        benchmarkTime: weightedBench,
+        sem,
+        ci95: [Math.max(5, weightedBench - Math.round(1.96 * sem)), weightedBench + Math.round(1.96 * sem)],
+      };
     },
     [profile]
   );
 
-  return { profile, recordAttempt, getBenchmarkTime };
+  return { profile, recordAttempt, getBenchmarkMetrics };
 };
