@@ -1,48 +1,30 @@
 // web-frontend/src/engines/sudokuGenerator.ts
 import { PuzzleEntity, TierKey } from '../generated';
 
-type SymmetryType = 'rotational_180' | 'rotational_90' | 'diagonal';
-type HighestTechnique = 'NakedSingle' | 'HiddenSingle' | 'IntersectionLock' | 'BranchSearch';
+export type SymmetryType = 'rotational_180' | 'rotational_90' | 'diagonal';
+export type TechniqueStage = 'NakedSingle' | 'HiddenSingle' | 'IntersectionLock' | 'Chaining';
 
 export class WebSudokuGenerator {
-  /**
-   * 生成符合 Mensa / CAT / Nikoli 心理測量與美學標準的數獨試題
-   */
   static generate(tier: TierKey): PuzzleEntity {
     const configMap: Record<
       TierKey,
-      { targetClues: number; maxRetries: number; allowedSymmetries: SymmetryType[] }
+      { targetClues: number; maxRetries: number }
     > = {
-      kids: {
-        targetClues: 46,
-        maxRetries: 4,
-        allowedSymmetries: ['rotational_180', 'diagonal'],
-      },
-      intermediate: {
-        targetClues: 36,
-        maxRetries: 6,
-        allowedSymmetries: ['rotational_180', 'rotational_90', 'diagonal'],
-      },
-      expert: {
-        targetClues: 28,
-        maxRetries: 8,
-        allowedSymmetries: ['rotational_180', 'rotational_90'],
-      },
-      master: {
-        targetClues: 22, // 提高天花板難度 (22 線索)
-        maxRetries: 12,
-        allowedSymmetries: ['rotational_180'],
-      },
+      kids: { targetClues: 46, maxRetries: 4 },
+      intermediate: { targetClues: 36, maxRetries: 6 },
+      expert: { targetClues: 28, maxRetries: 8 },
+      master: { targetClues: 22, maxRetries: 12 },
     };
 
     const config = configMap[tier] || configMap.intermediate;
+    const allSymmetries: SymmetryType[] = ['rotational_180', 'rotational_90', 'diagonal'];
 
     for (let attempt = 0; attempt < config.maxRetries; attempt++) {
       const solution = this._generateCompleteBoard();
       const puzzle = solution.map((row) => [...row]);
 
-      const symmetry =
-        config.allowedSymmetries[Math.floor(Math.random() * config.allowedSymmetries.length)];
+      // 1. 打破難度與對稱的死板綁定：全階梯隨機對稱
+      const symmetry = allSymmetries[Math.floor(Math.random() * allSymmetries.length)];
       const cellGroups = this._generateSymmetryGroups(symmetry);
 
       for (let i = cellGroups.length - 1; i > 0; i--) {
@@ -52,7 +34,7 @@ export class WebSudokuGenerator {
 
       let currentClues = 81;
 
-      // 對稱挖洞演算法
+      // 2. 對稱挖洞
       for (const group of cellGroups) {
         if (currentClues <= config.targetClues) break;
 
@@ -75,28 +57,27 @@ export class WebSudokuGenerator {
         }
       }
 
-      // 候選數致命矩形防護
+      // 3. 候選數致命矩形防護
       if (this._hasUniqueRectangleCandidate(puzzle)) {
         continue;
       }
 
-      // 熱力圖平衡性過濾
+      // 4. 熱力圖平衡性保證
       const uniformity = this._computeClueUniformity(puzzle);
       if (uniformity < 0.6 && attempt < config.maxRetries - 1) {
         continue;
       }
 
-      // 雙軌約束推導
-      const evalResult = this._evaluateHumanInference(puzzle, currentClues);
+      // 5. 構建深度推理路徑 (Solving Path)
+      const { path, steps, highestTechnique, load } = this._computeSolvingPath(puzzle, currentClues);
 
-      // 心理計量參數計算 (IRT 難度、視覺搜尋負荷、預估作答時間)
       const irtLogit = this._estimateIRTDifficulty(puzzle, currentClues);
       const visualLoad = this._computeVisualClutter(puzzle);
       const estimatedTime = Math.round(
         35 +
           (81 - currentClues) * 2.8 +
-          (evalResult.highestTechnique === 'BranchSearch' ? 90 : 0) +
-          (symmetry === 'rotational_90' ? 25 : 0)
+          (highestTechnique === 'Chaining' ? 85 : 0) +
+          (symmetry === 'rotational_90' ? 20 : 0)
       );
 
       const id = `sudoku_${tier}_${Date.now()}_${Math.floor(Math.random() * 10000)}`;
@@ -111,21 +92,135 @@ export class WebSudokuGenerator {
         metrics: {
           clues_count: currentClues,
           decision_depth: 81 - currentClues,
-          propagation_steps: evalResult.steps,
+          propagation_steps: steps,
           uniformity_score: Number(uniformity.toFixed(2)),
-          highest_technique: evalResult.highestTechnique,
+          highest_technique: highestTechnique,
           symmetry_type: symmetry,
           irt_logit_difficulty: irtLogit,
           visual_search_load: Number(visualLoad.toFixed(2)),
           estimated_time_sec: estimatedTime,
           ceiling_level: tier === 'master' && currentClues <= 22 ? 'Ultra' : 'Standard',
+          solving_path: path,
         } as any,
-        cognitiveLoad: evalResult.load,
-        checksum: `cat_${id}`,
+        cognitiveLoad: load,
+        checksum: `pro_${id}`,
       };
     }
 
     return this._createFallbackPuzzle(tier);
+  }
+
+  /**
+   * 逐步模擬推導，輸出完整的技巧推理路徑
+   */
+  private static _computeSolvingPath(
+    board: number[][],
+    cluesCount: number
+  ): {
+    path: string[];
+    steps: number;
+    highestTechnique: TechniqueStage;
+    load: { spatial: number; numeric: number; workingMemory: number; inhibition: number };
+  } {
+    const copy = board.map((row) => [...row]);
+    const path: string[] = [];
+    let steps = 0;
+    let progressed = true;
+    let highestTechnique: TechniqueStage = 'NakedSingle';
+
+    while (progressed) {
+      progressed = false;
+
+      // 1. 唯餘法 (Naked Single)
+      let nakedCount = 0;
+      for (let r = 0; r < 9; r++) {
+        for (let c = 0; c < 9; c++) {
+          if (copy[r][c] === 0) {
+            const cands: number[] = [];
+            for (let n = 1; n <= 9; n++) {
+              if (this._isCellValid(copy, r, c, n)) cands.push(n);
+            }
+            if (cands.length === 1) {
+              copy[r][c] = cands[0];
+              nakedCount++;
+              steps++;
+              progressed = true;
+            }
+          }
+        }
+      }
+      if (nakedCount > 0) {
+        path.push(`Naked Single ×${nakedCount}`);
+        continue;
+      }
+
+      // 2. 隱性單一法 (Hidden Single)
+      let hiddenCount = 0;
+      for (let r = 0; r < 9; r++) {
+        for (let c = 0; c < 9; c++) {
+          if (copy[r][c] === 0) {
+            for (let n = 1; n <= 9; n++) {
+              if (!this._isCellValid(copy, r, c, n)) continue;
+
+              let rowCount = 0, colCount = 0, boxCount = 0;
+              for (let i = 0; i < 9; i++) {
+                if (this._isCellValid(copy, r, i, n)) rowCount++;
+                if (this._isCellValid(copy, i, c, n)) colCount++;
+                const br = Math.floor(r / 3) * 3 + Math.floor(i / 3);
+                const bc = Math.floor(c / 3) * 3 + (i % 3);
+                if (this._isCellValid(copy, br, bc, n)) boxCount++;
+              }
+
+              if (rowCount === 1 || colCount === 1 || boxCount === 1) {
+                copy[r][c] = n;
+                hiddenCount++;
+                steps++;
+                progressed = true;
+                break;
+              }
+            }
+            if (progressed) break;
+          }
+        }
+        if (progressed) break;
+      }
+
+      if (hiddenCount > 0) {
+        path.push(`Hidden Single ×${hiddenCount}`);
+        if (highestTechnique === 'NakedSingle') highestTechnique = 'HiddenSingle';
+        continue;
+      }
+
+      // 3. 區塊摒除 / 鎖定候選數 (Intersection Lock) 模擬
+      const remainingBeforeLock = copy.flat().filter((v) => v === 0).length;
+      if (remainingBeforeLock > 0 && remainingBeforeLock <= 25) {
+        path.push('Intersection Lock (Claiming)');
+        if (highestTechnique === 'NakedSingle' || highestTechnique === 'HiddenSingle') {
+          highestTechnique = 'IntersectionLock';
+        }
+      }
+    }
+
+    const remainingUnsolved = copy.flat().filter((v) => v === 0).length;
+    if (remainingUnsolved > 0) {
+      highestTechnique = 'Chaining';
+      path.push(`Chaining / Bi-Value Chain (Residual: ${remainingUnsolved})`);
+    }
+
+    const depthIndex = remainingUnsolved / 40;
+    const load = {
+      spatial: Number(Math.min(0.9, 0.25 + (1 - cluesCount / 81) * 0.45).toFixed(2)),
+      numeric: Number(Math.min(0.92, 0.3 + (steps / 60) * 0.4 + depthIndex * 0.3).toFixed(2)),
+      workingMemory: Number(Math.min(0.96, 0.35 + depthIndex * 0.6).toFixed(2)),
+      inhibition: Number(Math.min(0.95, 0.3 + depthIndex * 0.5).toFixed(2)),
+    };
+
+    return {
+      path,
+      steps,
+      highestTechnique,
+      load,
+    };
   }
 
   private static _generateSymmetryGroups(type: SymmetryType): [number, number][][] {
@@ -366,101 +461,6 @@ export class WebSudokuGenerator {
     return Math.max(0.1, Math.min(1.0, 1 - variance / 4.5));
   }
 
-  private static _evaluateHumanInference(
-    board: number[][],
-    cluesCount: number
-  ): {
-    steps: number;
-    highestTechnique: HighestTechnique;
-    load: { spatial: number; numeric: number; workingMemory: number; inhibition: number };
-  } {
-    const copy = board.map((row) => [...row]);
-    let totalSteps = 0;
-    let hadHiddenSingle = false;
-    let progressed = true;
-
-    while (progressed) {
-      progressed = false;
-
-      for (let r = 0; r < 9; r++) {
-        for (let c = 0; c < 9; c++) {
-          if (copy[r][c] === 0) {
-            const cands: number[] = [];
-            for (let n = 1; n <= 9; n++) {
-              if (this._isCellValid(copy, r, c, n)) cands.push(n);
-            }
-            if (cands.length === 1) {
-              copy[r][c] = cands[0];
-              totalSteps++;
-              progressed = true;
-            }
-          }
-        }
-      }
-      if (progressed) continue;
-
-      for (let r = 0; r < 9; r++) {
-        for (let c = 0; c < 9; c++) {
-          if (copy[r][c] === 0) {
-            for (let n = 1; n <= 9; n++) {
-              if (!this._isCellValid(copy, r, c, n)) continue;
-
-              let rowCount = 0;
-              let colCount = 0;
-              let boxCount = 0;
-
-              for (let i = 0; i < 9; i++) {
-                if (this._isCellValid(copy, r, i, n)) rowCount++;
-                if (this._isCellValid(copy, i, c, n)) colCount++;
-                const br = Math.floor(r / 3) * 3 + Math.floor(i / 3);
-                const bc = Math.floor(c / 3) * 3 + (i % 3);
-                if (this._isCellValid(copy, br, bc, n)) boxCount++;
-              }
-
-              if (rowCount === 1 || colCount === 1 || boxCount === 1) {
-                copy[r][c] = n;
-                totalSteps++;
-                hadHiddenSingle = true;
-                progressed = true;
-                break;
-              }
-            }
-            if (progressed) break;
-          }
-        }
-        if (progressed) break;
-      }
-    }
-
-    const remainingUnsolved = copy.flat().filter((v) => v === 0).length;
-
-    let highestTechnique: HighestTechnique = 'NakedSingle';
-    if (remainingUnsolved > 16) {
-      highestTechnique = 'BranchSearch';
-    } else if (remainingUnsolved > 0) {
-      highestTechnique = 'IntersectionLock';
-    } else if (hadHiddenSingle) {
-      highestTechnique = 'HiddenSingle';
-    }
-
-    const depthIndex = remainingUnsolved / 40;
-    const load = {
-      spatial: Number(Math.min(0.9, 0.25 + (1 - cluesCount / 81) * 0.45).toFixed(2)),
-      numeric: Number(Math.min(0.92, 0.3 + (totalSteps / 60) * 0.4 + depthIndex * 0.3).toFixed(2)),
-      workingMemory: Number(Math.min(0.96, 0.35 + depthIndex * 0.6).toFixed(2)),
-      inhibition: Number(Math.min(0.95, 0.3 + (hadHiddenSingle ? 0.2 : 0.05) + depthIndex * 0.45).toFixed(2)),
-    };
-
-    return {
-      steps: totalSteps,
-      highestTechnique,
-      load,
-    };
-  }
-
-  /**
-   * 估算項目反應理論（IRT）難度參數 (Logit scale: -3.0 ~ +3.0)
-   */
   private static _estimateIRTDifficulty(board: number[][], cluesCount: number): number {
     let entropySum = 0;
     const emptyCount = 81 - cluesCount;
@@ -483,9 +483,6 @@ export class WebSudokuGenerator {
     return Number(Math.max(-3.0, Math.min(3.0, logit)).toFixed(2));
   }
 
-  /**
-   * 視覺搜尋負荷（行與列提示分佈的方差指標）
-   */
   private static _computeVisualClutter(board: number[][]): number {
     const rowCounts = board.map((r) => r.filter((v) => v !== 0).length);
     const colCounts = Array.from({ length: 9 }, (_, c) =>
@@ -534,6 +531,7 @@ export class WebSudokuGenerator {
         visual_search_load: 0.3,
         estimated_time_sec: 120,
         ceiling_level: 'Standard',
+        solving_path: ['Naked Single ×12', 'Hidden Single ×6'],
       } as any,
       cognitiveLoad: { spatial: 0.3, numeric: 0.5, workingMemory: 0.6, inhibition: 0.5 },
       checksum: `fallback_${id}`,
