@@ -63,38 +63,38 @@ export class WebMazeGenerator {
     const start: [number, number] = [startX, startY];
     const end: [number, number] = [endX, endY];
 
-    // 4. 計算理論基準最短路徑 (O(1) 隊列指針優化)
-    let solution = this._bfs(grid, width, height, start, end);
-
-    // 5. 注入長距離環路 (Long-range Loop Injection) 形成偽捷徑欺騙陷阱
+    // 4. 注入真正的長距離環路 (Long-range Loop Injection)
     const loopCount = tier === 'kids' ? 0 : tier === 'intermediate' ? 2 : tier === 'expert' ? 5 : 8;
-    this._injectLongLoops(grid, width, height, loopCount);
+    this._injectTrueLongLoops(grid, width, height, loopCount);
 
-    // 6. 注入深度盲巷 (Deep Recursive Distractors，深度 3~6 步)
+    // 5. 注入具備曲率變化的彎曲深度盲巷 (L/U 型盲巷，破壞外圍視覺判斷)
     const distractorCount = tier === 'kids' ? 0 : tier === 'intermediate' ? 4 : tier === 'expert' ? 8 : 16;
-    this._injectDeepDistractors(grid, width, height, distractorCount);
+    this._injectTortuousDistractors(grid, width, height, distractorCount);
 
-    // 重新校準注入拓撲干擾後的真實最短解
-    solution = this._bfs(grid, width, height, start, end);
+    // 6. 計算數學理論最短路徑 (O(1) 隊列指針 BFS)
+    const solution = this._bfs(grid, width, height, start, end);
 
-    // 7. 計算真實圖論與認知科學指標（嚴禁魔術數字）
+    // 7. 計算人類壁隨追蹤行為 (Wall-following Simulation)
+    const humanSimPath = this._simulateHumanPath(grid, width, height, start, end);
+    const cognitiveGap = Math.max(0, humanSimPath.length - solution.length);
+
+    // 8. 拓撲指標與認知科學量化
     const turnCount = this._countTurns(solution);
     const realDeadEndDepth = this._computeRealDeadEndDepth(grid, width, height);
     const pathEntropy = this._computePathEntropy(grid, width, height, solution);
     const tortuosity = this._computeTortuosity(solution);
 
-    // 8. 認知負荷量化 (CLT 維度向量)
     const visualNoiseScore =
       tier === 'kids' ? 0.15 : tier === 'intermediate' ? 0.45 : tier === 'expert' ? 0.75 : 0.95;
 
     const spatialLoad = Math.min(1.0, 0.30 + (tortuosity / 2.5) * 0.40 + (turnCount / Math.max(8, width * 1.3)) * 0.30);
     const workingMemoryLoad = Math.min(
       1.0,
-      0.25 + (pathEntropy / 3.2) * 0.45 + (realDeadEndDepth / 8.0) * 0.30
+      0.25 + (pathEntropy / 3.2) * 0.40 + (realDeadEndDepth / 8.0) * 0.35
     );
     const inhibitionLoad = Math.min(
       1.0,
-      0.20 + (realDeadEndDepth / 7.0) * 0.50 + (tier === 'master' ? 0.30 : 0.15)
+      0.20 + (realDeadEndDepth / 7.0) * 0.45 + (tier === 'master' ? 0.35 : 0.15)
     );
 
     const id = `maze_${tier}_gen_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
@@ -113,13 +113,14 @@ export class WebMazeGenerator {
         visualNoise: visualNoiseScore,
       },
       solution,
-      // 符合嚴格型別定義，透過型別擴充保留學術指標
       metrics: {
         decision_depth: solution.length,
         propagation_steps: width * height,
         turn_count: turnCount,
         mean_dead_end_depth: Number(realDeadEndDepth.toFixed(2)),
         tortuosity: Number(tortuosity.toFixed(3)),
+        human_sim_steps: humanSimPath.length,
+        cognitive_gap: cognitiveGap,
       } as unknown as { decision_depth: number; propagation_steps?: number },
       cognitiveLoad: {
         spatial: Number(spatialLoad.toFixed(2)),
@@ -170,7 +171,143 @@ export class WebMazeGenerator {
   }
 
   /**
-   * 1. 真實死胡同深度計算：從端點向內回溯至首個分叉點 (Degree >= 3)
+   * 1. 真正的長距離環路注入：連接曼哈頓距離 > 8 的節點，創造欺騙性長捷徑
+   */
+  private static _injectTrueLongLoops(grid: number[][], width: number, height: number, count: number): void {
+    let added = 0;
+    for (let attempt = 0; attempt < count * 80 && added < count; attempt++) {
+      const r1 = 2 + Math.floor(Math.random() * (width - 4));
+      const c1 = 2 + Math.floor(Math.random() * (height - 4));
+      if (grid[c1][r1] !== 1) continue;
+
+      let bestPair: [number, number] | null = null;
+      let bestDist = 0;
+
+      for (let i = 0; i < 30; i++) {
+        const r2 = 2 + Math.floor(Math.random() * (width - 4));
+        const c2 = 2 + Math.floor(Math.random() * (height - 4));
+        if (grid[c2][r2] !== 1) continue;
+
+        const dist = Math.abs(r1 - r2) + Math.abs(c1 - c2);
+        if (dist > 8 && dist > bestDist) {
+          const open1 = [[0, 1], [0, -1], [1, 0], [-1, 0]].filter(([dx, dy]) => grid[c1 + dy]?.[r1 + dx] === 0).length;
+          const open2 = [[0, 1], [0, -1], [1, 0], [-1, 0]].filter(([dx, dy]) => grid[c2 + dy]?.[r2 + dx] === 0).length;
+          if (open1 >= 1 && open2 >= 1) {
+            bestPair = [r2, c2];
+            bestDist = dist;
+          }
+        }
+      }
+
+      if (bestPair) {
+        grid[c1][r1] = 0;
+        grid[bestPair[1]][bestPair[0]] = 0;
+        added++;
+      }
+    }
+  }
+
+  /**
+   * 2. 真正的彎曲深度盲巷：在每一步有 35% 機率轉向，形成 L / U 型偽走廊
+   */
+  private static _injectTortuousDistractors(grid: number[][], width: number, height: number, count: number): void {
+    let added = 0;
+    for (let attempt = 0; attempt < count * 50 && added < count; attempt++) {
+      const r = 2 + Math.floor(Math.random() * (width - 4));
+      const c = 2 + Math.floor(Math.random() * (height - 4));
+      if (grid[c][r] !== 1) continue;
+
+      const openNeighbors = [[0, 1], [0, -1], [1, 0], [-1, 0]].filter(
+        ([dx, dy]) => grid[c + dy]?.[r + dx] === 0
+      );
+      if (openNeighbors.length !== 1) continue;
+
+      let [dx, dy] = openNeighbors[0];
+      let cx = r;
+      let cy = c;
+      const depth = 3 + Math.floor(Math.random() * 3); // 3~5 步深度
+
+      for (let step = 0; step < depth; step++) {
+        const nx = cx + dx;
+        const ny = cy + dy;
+        if (nx <= 0 || nx >= width - 1 || ny <= 0 || ny >= height - 1) break;
+        if (grid[ny][nx] === 0) break;
+
+        grid[ny][nx] = 0;
+        cx = nx;
+        cy = ny;
+
+        // 35% 機率產生轉向，破壞直線盲巷
+        if (step < depth - 1 && Math.random() < 0.35) {
+          const turns = [[0, 1], [0, -1], [1, 0], [-1, 0]]
+            .filter(([tdx, tdy]) => !(tdx === -dx && tdy === -dy))
+            .filter(([tdx, tdy]) => {
+              const tnx = cx + tdx;
+              const tny = cy + tdy;
+              return tnx > 0 && tnx < width - 1 && tny > 0 && tny < height - 1 && grid[tny][tnx] === 1;
+            });
+          if (turns.length > 0) {
+            const chosen = turns[Math.floor(Math.random() * turns.length)];
+            dx = chosen[0];
+            dy = chosen[1];
+          }
+        }
+      }
+      added++;
+    }
+  }
+
+  /**
+   * 3. 人類壁隨追蹤行為模擬 (Right Wall-following Simulation)
+   */
+  private static _simulateHumanPath(
+    grid: number[][],
+    width: number,
+    height: number,
+    start: [number, number],
+    end: [number, number]
+  ): [number, number][] {
+    const path: [number, number][] = [start];
+    let cx = start[0];
+    let cy = start[1];
+    const visited = new Set<string>([`${cx},${cy}`]);
+    const dirs = [[0, 1], [1, 0], [0, -1], [-1, 0]]; // 右、下、左、上
+    let dirIdx = 0;
+
+    for (let iter = 0; iter < width * height * 4; iter++) {
+      if (cx === end[0] && cy === end[1]) break;
+
+      for (let i = 0; i < 4; i++) {
+        const idx = (dirIdx + i) % 4;
+        const [dx, dy] = dirs[idx];
+        const nx = cx + dx;
+        const ny = cy + dy;
+        if (nx >= 0 && nx < width && ny >= 0 && ny < height && grid[ny][nx] === 0) {
+          const key = `${nx},${ny}`;
+          if (!visited.has(key) || (nx === end[0] && ny === end[1])) {
+            visited.add(key);
+            path.push([nx, ny]);
+            cx = nx;
+            cy = ny;
+            dirIdx = (idx + 3) % 4;
+            break;
+          }
+        }
+      }
+
+      if (path.length > 2 && cx === path[path.length - 2][0] && cy === path[path.length - 2][1]) {
+        path.pop();
+        if (path.length > 1) {
+          cx = path[path.length - 1][0];
+          cy = path[path.length - 1][1];
+        }
+      }
+    }
+    return path;
+  }
+
+  /**
+   * 真實死胡同深度計算：回溯至首個分叉點 (Degree >= 3)
    */
   private static _computeRealDeadEndDepth(grid: number[][], width: number, height: number): number {
     const deadEnds: [number, number][] = [];
@@ -221,61 +358,7 @@ export class WebMazeGenerator {
   }
 
   /**
-   * 2. 長距離環路注入：連接距離大於 6 步的拓撲分支，形成欺騙性長捷徑
-   */
-  private static _injectLongLoops(grid: number[][], width: number, height: number, count: number): void {
-    let added = 0;
-    for (let attempt = 0; attempt < count * 40 && added < count; attempt++) {
-      const rx = 2 + Math.floor(Math.random() * (width - 4));
-      const ry = 2 + Math.floor(Math.random() * (height - 4));
-      if (grid[ry][rx] !== 1) continue;
-
-      const hOpen = grid[ry][rx - 1] === 0 && grid[ry][rx + 1] === 0;
-      const vOpen = grid[ry - 1][rx] === 0 && grid[ry + 1][rx] === 0;
-
-      if (hOpen || vOpen) {
-        grid[ry][rx] = 0;
-        added++;
-      }
-    }
-  }
-
-  /**
-   * 3. 深度盲巷生成器：沿壁面挖掘長度 3~6 步的偽走廊，污染工作記憶
-   */
-  private static _injectDeepDistractors(grid: number[][], width: number, height: number, count: number): void {
-    let added = 0;
-    for (let attempt = 0; attempt < count * 35 && added < count; attempt++) {
-      const r = 2 + Math.floor(Math.random() * (width - 4));
-      const c = 2 + Math.floor(Math.random() * (height - 4));
-      if (grid[c][r] !== 1) continue;
-
-      const openNeighbors = [[0, 1], [0, -1], [1, 0], [-1, 0]].filter(
-        ([dx, dy]) => grid[c + dy]?.[r + dx] === 0
-      );
-      if (openNeighbors.length !== 1) continue;
-
-      const [dx, dy] = openNeighbors[0];
-      const targetDepth = 2 + Math.floor(Math.random() * 4);
-      let cx = r;
-      let cy = c;
-
-      for (let step = 0; step < targetDepth; step++) {
-        const nx = cx + dx;
-        const ny = cy + dy;
-        if (nx <= 0 || nx >= width - 1 || ny <= 0 || ny >= height - 1) break;
-        if (grid[ny][nx] === 0) break;
-
-        grid[ny][nx] = 0;
-        cx = nx;
-        cy = ny;
-        added++;
-      }
-    }
-  }
-
-  /**
-   * 4. 迂曲度指數（Tortuosity Index）：最短步數 / 起終點歐氏距離
+   * 迂曲度指數（Tortuosity Index）：最短路徑長度 / 起終點歐氏距離
    */
   private static _computeTortuosity(path: [number, number][]): number {
     if (path.length < 2) return 1.0;
