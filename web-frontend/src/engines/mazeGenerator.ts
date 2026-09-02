@@ -16,7 +16,7 @@ export class WebMazeGenerator {
     const width = size;
     const height = size;
 
-    // 1. 初始化實心牆面
+    // 1. 初始化全實心牆面 (1: 牆, 0: 通路)
     const grid: number[][] = Array.from({ length: height }, () => Array(width).fill(1));
 
     const startX = 1;
@@ -32,7 +32,12 @@ export class WebMazeGenerator {
       const [cx, cy] = stack[stack.length - 1];
       const neighbors: [number, number, number, number][] = [];
 
-      for (const [dx, dy] of [[0, -2], [0, 2], [-2, 0], [2, 0]]) {
+      for (const [dx, dy] of [
+        [0, -2],
+        [0, 2],
+        [-2, 0],
+        [2, 0],
+      ]) {
         const nx = cx + dx;
         const ny = cy + dy;
         if (nx > 0 && nx < width - 1 && ny > 0 && ny < height - 1 && grid[ny][nx] === 1) {
@@ -50,11 +55,12 @@ export class WebMazeGenerator {
       }
     }
 
-    // 3. 確保起終點連通
+    // 3. 確保起點與終點實體格子必定為 0 (通路)
+    grid[startY][startX] = 0;
     grid[endY][endX] = 0;
-    if (grid[endY - 1][endX] === 1 && grid[endY][endX - 1] === 1) {
-      grid[endY - 1][endX] = 0;
-    }
+
+    // 強制挖掘確保終點 100% 連接至拓撲迷宮主體
+    this._connectGoalSafely(grid, width, height, endX, endY);
 
     const start: [number, number] = [startX, startY];
     const end: [number, number] = [endX, endY];
@@ -64,13 +70,10 @@ export class WebMazeGenerator {
     let distractorCount = tier === 'kids' ? 0 : tier === 'intermediate' ? 4 : tier === 'expert' ? 8 : 16;
 
     if (personaBias === 'Intuitive-Explorer') {
-      // 直覺衝刺者：增加 50% 深度盲巷，強化抑制控制 (Inhibition Training)
       distractorCount = Math.round(distractorCount * 1.5);
     } else if (personaBias === 'Wall-Follower') {
-      // 謹慎壁隨者：增加長距離環路，打破邊緣策略，逼迫工作記憶推演 (Working Memory Training)
       loopCount = Math.round(loopCount * 1.6);
     } else if (personaBias === 'Macro-Planner') {
-      // 宏觀規劃者：提升視覺干擾度與曲率
       distractorCount += 2;
       loopCount += 2;
     }
@@ -78,7 +81,17 @@ export class WebMazeGenerator {
     this._injectDeceptiveLongLoops(grid, width, height, start, end, loopCount);
     this._injectAdvancedDistractors(grid, width, height, distractorCount);
 
-    const solution = this._bfs(grid, width, height, start, end);
+    // 計算數學理論最優解
+    let solution = this._bfs(grid, width, height, start, end);
+
+    // 雙重防護：若極端情況下仍未連通，強行拉直連通終點相鄰路徑並重新求解
+    if (solution.length <= 2) {
+      grid[endY][endX - 1] = 0;
+      grid[endY - 1][endX] = 0;
+      grid[endY - 1][endX - 1] = 0;
+      solution = this._bfs(grid, width, height, start, end);
+    }
+
     const limitedHumanPath = this._simulateHumanPathLimited(grid, width, height, start, end, 3, 0.7);
     const baselineWallFollow = this._simulateHumanPath(grid, width, height, start, end);
     const cognitiveGap = Math.max(0, limitedHumanPath.length - solution.length);
@@ -91,9 +104,18 @@ export class WebMazeGenerator {
     const visualNoiseScore =
       tier === 'kids' ? 0.15 : tier === 'intermediate' ? 0.45 : tier === 'expert' ? 0.75 : 0.95;
 
-    const spatialLoad = Math.min(1.0, 0.25 + (tortuosity / 2.5) * 0.45 + (turnCount / Math.max(8, width * 1.3)) * 0.30);
-    const workingMemoryLoad = Math.min(1.0, 0.20 + (pathEntropy / 3.2) * 0.40 + (realDeadEndDepth / 8.0) * 0.40);
-    const inhibitionLoad = Math.min(1.0, 0.20 + (realDeadEndDepth / 7.0) * 0.45 + (tier === 'master' ? 0.35 : 0.15));
+    const spatialLoad = Math.min(
+      1.0,
+      0.25 + (tortuosity / 2.5) * 0.45 + (turnCount / Math.max(8, width * 1.3)) * 0.30
+    );
+    const workingMemoryLoad = Math.min(
+      1.0,
+      0.20 + (pathEntropy / 3.2) * 0.40 + (realDeadEndDepth / 8.0) * 0.40
+    );
+    const inhibitionLoad = Math.min(
+      1.0,
+      0.20 + (realDeadEndDepth / 7.0) * 0.45 + (tier === 'master' ? 0.35 : 0.15)
+    );
 
     const id = `maze_${tier}_gen_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
 
@@ -132,6 +154,44 @@ export class WebMazeGenerator {
     };
   }
 
+  /**
+   * 確保終點與迷宮主通路絕對連通
+   */
+  private static _connectGoalSafely(
+    grid: number[][],
+    width: number,
+    height: number,
+    endX: number,
+    endY: number
+  ): void {
+    grid[endY][endX] = 0;
+
+    // 檢查四周是否有通路
+    const dirs = [
+      [0, -1],
+      [-1, 0],
+      [0, 1],
+      [1, 0],
+    ];
+    const hasOpenNeighbor = dirs.some(([dx, dy]) => {
+      const nx = endX + dx;
+      const ny = endY + dy;
+      return nx >= 0 && nx < width && ny >= 0 && ny < height && grid[ny][nx] === 0;
+    });
+
+    if (!hasOpenNeighbor) {
+      // 終點為孤島時，向左與向上打通兩格直到遇見通路
+      if (endX > 1) {
+        grid[endY][endX - 1] = 0;
+        grid[endY][endX - 2] = 0;
+      }
+      if (endY > 1) {
+        grid[endY - 1][endX] = 0;
+        grid[endY - 2][endX] = 0;
+      }
+    }
+  }
+
   private static _bfs(
     grid: number[][],
     width: number,
@@ -147,7 +207,12 @@ export class WebMazeGenerator {
       const [cx, cy, path] = queue[head++];
       if (cx === end[0] && cy === end[1]) return path;
 
-      for (const [dx, dy] of [[0, 1], [0, -1], [1, 0], [-1, 0]]) {
+      for (const [dx, dy] of [
+        [0, 1],
+        [0, -1],
+        [1, 0],
+        [-1, 0],
+      ]) {
         const nx = cx + dx;
         const ny = cy + dy;
         if (nx >= 0 && nx < width && ny >= 0 && ny < height && grid[ny][nx] === 0) {
@@ -188,8 +253,12 @@ export class WebMazeGenerator {
 
         const dist = Math.abs(r1 - r2) + Math.abs(c1 - c2);
         if (dist > 8 && dist > bestDist) {
-          const open1 = [[0, 1], [0, -1], [1, 0], [-1, 0]].filter(([dx, dy]) => grid[c1 + dy]?.[r1 + dx] === 0).length;
-          const open2 = [[0, 1], [0, -1], [1, 0], [-1, 0]].filter(([dx, dy]) => grid[c2 + dy]?.[r2 + dx] === 0).length;
+          const open1 = [[0, 1], [0, -1], [1, 0], [-1, 0]].filter(
+            ([dx, dy]) => grid[c1 + dy]?.[r1 + dx] === 0
+          ).length;
+          const open2 = [[0, 1], [0, -1], [1, 0], [-1, 0]].filter(
+            ([dx, dy]) => grid[c2 + dy]?.[r2 + dx] === 0
+          ).length;
           if (open1 >= 1 && open2 >= 1) {
             bestPair = [r2, c2];
             bestDist = dist;
@@ -212,14 +281,21 @@ export class WebMazeGenerator {
     }
   }
 
-  private static _injectAdvancedDistractors(grid: number[][], width: number, height: number, count: number): void {
+  private static _injectAdvancedDistractors(
+    grid: number[][],
+    width: number,
+    height: number,
+    count: number
+  ): void {
     let added = 0;
     for (let attempt = 0; attempt < count * 40 && added < count; attempt++) {
       const r = 2 + Math.floor(Math.random() * (width - 4));
       const c = 2 + Math.floor(Math.random() * (height - 4));
       if (grid[c][r] !== 1) continue;
 
-      const openNeighbors = [[0, 1], [0, -1], [1, 0], [-1, 0]].filter(([dx, dy]) => grid[c + dy]?.[r + dx] === 0);
+      const openNeighbors = [[0, 1], [0, -1], [1, 0], [-1, 0]].filter(
+        ([dx, dy]) => grid[c + dy]?.[r + dx] === 0
+      );
       if (openNeighbors.length !== 1) continue;
 
       let [dx, dy] = openNeighbors[0];
@@ -252,7 +328,12 @@ export class WebMazeGenerator {
             dy = chosen[1];
           }
         } else if (pattern >= 0.33 && pattern < 0.66 && step > 0 && Math.random() < 0.35) {
-          const rightTurn: [number, number][] = [[0, 1], [1, 0], [0, -1], [-1, 0]];
+          const rightTurn: [number, number][] = [
+            [0, 1],
+            [1, 0],
+            [0, -1],
+            [-1, 0],
+          ];
           const idx = rightTurn.findIndex(([tdx, tdy]) => tdx === dx && tdy === dy);
           if (idx !== -1) {
             const next = rightTurn[(idx + 1) % 4];
@@ -283,7 +364,12 @@ export class WebMazeGenerator {
     let cy = start[1];
     const visited = new Map<string, number>();
     visited.set(`${cx},${cy}`, 0);
-    const dirs = [[0, 1], [1, 0], [0, -1], [-1, 0]];
+    const dirs = [
+      [0, 1],
+      [1, 0],
+      [0, -1],
+      [-1, 0],
+    ];
     let dirIdx = 0;
     let step = 0;
 
@@ -343,7 +429,12 @@ export class WebMazeGenerator {
     let cx = start[0];
     let cy = start[1];
     const visited = new Set<string>([`${cx},${cy}`]);
-    const dirs = [[0, 1], [1, 0], [0, -1], [-1, 0]];
+    const dirs = [
+      [0, 1],
+      [1, 0],
+      [0, -1],
+      [-1, 0],
+    ];
     let dirIdx = 0;
 
     for (let iter = 0; iter < width * height * 4; iter++) {
@@ -386,7 +477,9 @@ export class WebMazeGenerator {
         if (x === 1 && y === 1) continue;
         if (x === width - 2 && y === height - 2) continue;
 
-        const neighbors = [[0, 1], [0, -1], [1, 0], [-1, 0]].filter(([dx, dy]) => grid[y + dy]?.[x + dx] === 0);
+        const neighbors = [[0, 1], [0, -1], [1, 0], [-1, 0]].filter(
+          ([dx, dy]) => grid[y + dy]?.[x + dx] === 0
+        );
         if (neighbors.length === 1) deadEnds.push([x, y]);
       }
     }
@@ -428,7 +521,9 @@ export class WebMazeGenerator {
     if (path.length < 2) return 1.0;
     const start = path[0];
     const end = path[path.length - 1];
-    const euclideanDist = Math.sqrt(Math.pow(end[0] - start[0], 2) + Math.pow(end[1] - start[1], 2));
+    const euclideanDist = Math.sqrt(
+      Math.pow(end[0] - start[0], 2) + Math.pow(end[1] - start[1], 2)
+    );
     if (euclideanDist === 0) return 1.0;
     const actualLength = path.length - 1;
     return Math.min(3.5, actualLength / euclideanDist);
@@ -443,7 +538,8 @@ export class WebMazeGenerator {
     let totalForksOnPath = 0;
     for (const [x, y] of solution) {
       const branches = [[0, 1], [0, -1], [1, 0], [-1, 0]].filter(
-        ([dx, dy]) => x + dx >= 0 && x + dx < width && y + dy >= 0 && y + dy < height && grid[y + dy][x + dx] === 0
+        ([dx, dy]) =>
+          x + dx >= 0 && x + dx < width && y + dy >= 0 && y + dy < height && grid[y + dy][x + dx] === 0
       ).length;
       if (branches >= 3) totalForksOnPath += branches - 1;
     }
