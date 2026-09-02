@@ -1,123 +1,80 @@
 // web-frontend/src/hooks/useLongTermScheduler.ts
 import { useMemo } from 'react';
-import { LearnerProfile, TierKey, calculateDynamicStrength } from './useLearnerProfile';
 import { PuzzleEntity } from '../generated';
-
-export interface MemoryScheduleItem {
-  type: string;
-  urgency: number;
-  currentStrength: number;
-  daysInactive: number;
-  isConsolidated: boolean;
-}
+import { LearnerProfileState, TierKey, CognitiveDimension } from './useLearnerProfile';
 
 export function useLongTermScheduler(
-  profile: LearnerProfile,
+  profile: LearnerProfileState,
   catalog: Record<string, PuzzleEntity[]>
 ) {
-  // 分析所有題型的神經動力學狀態（固化增益 vs 衰退急迫性）
-  const scheduledItems = useMemo(() => {
-    const now = Date.now();
-    const list: MemoryScheduleItem[] = [];
+  // 1. 計算全局巔峰階梯 (Overall Peak Tier)
+  const overallPeakTier: TierKey = useMemo(() => {
+    if (!profile.history || profile.history.length === 0) return 'kids';
 
-    Object.keys(profile.typeStates || {}).forEach((engineType) => {
-      const state = profile.typeStates[engineType];
-      const lastPlayed = profile.lastPlayedAt[engineType] || now;
-      const daysInactive = Math.max(0, (now - lastPlayed) / (1000 * 60 * 60 * 24));
+    const tierRank: Record<TierKey, number> = {
+      kids: 0,
+      intermediate: 1,
+      expert: 2,
+      master: 3,
+    };
 
-      const { strength: currentStrength, isConsolidated } = calculateDynamicStrength(
-        state.strength,
-        state.stability,
-        daysInactive
-      );
+    let maxRank = 0;
+    let peak: TierKey = 'kids';
 
-      // 1. 處於睡眠固化黃金窗口 (16h ~ 48h)
-      if (isConsolidated) {
-        list.push({
-          type: engineType,
-          urgency: 0,
-          currentStrength,
-          daysInactive: Math.round(daysInactive * 10) / 10,
-          isConsolidated: true,
-        });
-      }
-      // 2. 記憶強度跌破安全門檻 (S < 3.5 且閒置 > 2天)
-      else if (currentStrength < 3.5 && daysInactive > 2.0) {
-        const urgencyScore = (10.0 / (currentStrength + 0.1)) * (1 + daysInactive * 0.1);
-        list.push({
-          type: engineType,
-          urgency: Number(urgencyScore.toFixed(2)),
-          currentStrength,
-          daysInactive: Math.round(daysInactive),
-          isConsolidated: false,
-        });
+    profile.history.forEach((h) => {
+      if (h.isSuccess && h.tier) {
+        const rank = tierRank[h.tier as TierKey] ?? 0;
+        if (rank >= maxRank) {
+          maxRank = rank;
+          peak = h.tier as TierKey;
+        }
       }
     });
 
-    // 機會窗口優先策略：黃金固化期永遠置頂
-    return list.sort((a, b) => {
-      if (a.isConsolidated && !b.isConsolidated) return -1;
-      if (!a.isConsolidated && b.isConsolidated) return 1;
-      return b.urgency - a.urgency;
-    });
-  }, [profile.typeStates, profile.lastPlayedAt]);
+    return peak;
+  }, [profile.history]);
 
-  const overallPeakTier = useMemo((): TierKey => {
-    const tiers = Object.values(profile.peakRecords || {}).map((r) => r.tier);
-    if (tiers.length === 0) return 'kids';
+  // 2. 獲取推薦排程謎題 (Get Recommended Schedule Puzzle)
+  const getRecommendedSchedulePuzzle = useMemo(() => {
+    return (): { puzzleId: string; type: string; reason: string } | null => {
+      const types = Object.keys(catalog).filter((k) => (catalog[k]?.length || 0) > 0);
+      if (types.length === 0) return null;
 
-    const rank: Record<TierKey, number> = { kids: 0, intermediate: 1, expert: 2, master: 3 };
-    const maxRank = Math.max(...tiers.map((t) => rank[t] ?? 0));
-    const tierMap: Record<number, TierKey> = {
-      0: 'kids',
-      1: 'intermediate',
-      2: 'expert',
-      3: 'master',
+      // 找出練習次數最少的題型
+      const counts: Record<string, number> = {};
+      types.forEach((t) => (counts[t] = 0));
+
+      profile.history.forEach((h) => {
+        if (counts[h.engineType] !== undefined) {
+          counts[h.engineType]++;
+        }
+      });
+
+      let minType = types[0];
+      let minCount = counts[minType] ?? 0;
+
+      types.forEach((t) => {
+        if ((counts[t] ?? 0) < minCount) {
+          minCount = counts[t] ?? 0;
+          minType = t;
+        }
+      });
+
+      const targetList = catalog[minType] || [];
+      const chosen = targetList[Math.floor(Math.random() * targetList.length)];
+
+      if (!chosen) return null;
+
+      return {
+        puzzleId: chosen.id,
+        type: minType,
+        reason: minCount === 0 ? '全新探索' : '強化最弱迴路',
+      };
     };
-    return tierMap[maxRank] || 'kids';
-  }, [profile.peakRecords]);
-
-  // 取出最推薦的調度題目（突觸特異性難度對齊）
-  const getRecommendedSchedulePuzzle = (): {
-    targetType: string;
-    item: MemoryScheduleItem;
-    puzzle: PuzzleEntity;
-  } | null => {
-    if (scheduledItems.length === 0) return null;
-
-    const top = scheduledItems[0];
-    const pool = catalog[top.type] || [];
-
-    // 🔥【突觸難度同步核心】：固化期直接對齊該題型個人巔峰，衰退期則降至基礎暖身
-    let targetTier: TierKey;
-    if (top.isConsolidated) {
-      const peak = profile.peakRecords?.[top.type];
-      targetTier = peak ? peak.tier : 'intermediate';
-    } else {
-      targetTier = 'kids';
-    }
-
-    // 優先挑選目標階層題目，若無則依序向下相容
-    let reviewPool = pool.filter((p) => p.tier === targetTier);
-    if (reviewPool.length === 0) {
-      reviewPool = pool.filter((p) => p.tier === 'intermediate' || p.tier === 'kids');
-    }
-    if (reviewPool.length === 0 && pool.length > 0) {
-      reviewPool = pool;
-    }
-    if (reviewPool.length === 0) return null;
-
-    return {
-      targetType: top.type,
-      item: top,
-      puzzle: reviewPool[Math.floor(Math.random() * reviewPool.length)],
-    };
-  };
+  }, [catalog, profile.history]);
 
   return {
-    scheduledItems,
     overallPeakTier,
     getRecommendedSchedulePuzzle,
-    hasScheduledItems: scheduledItems.length > 0,
   };
 }
