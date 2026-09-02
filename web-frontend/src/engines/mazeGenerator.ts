@@ -3,84 +3,78 @@ import { PuzzleEntity, TierKey } from '../generated';
 
 export class WebMazeGenerator {
   static generate(tier: TierKey): PuzzleEntity {
+    // 尺寸配置：專家與魔王尺寸拉大
     const sizeMap: Record<TierKey, number> = {
       kids: 11,
       intermediate: 15,
-      expert: 19,
-      master: 25,
+      expert: 21,
+      master: 27,
     };
 
-    const size = sizeMap[tier] || 11;
-    const width = size;
-    const height = size;
+    const width = sizeMap[tier] || 15;
+    const height = sizeMap[tier] || 15;
 
-    // 1. 初始化全牆壁網格 (1: 牆, 0: 通路)
+    // 1. 初始化全實心牆壁 (1: 牆, 0: 通路)
     const grid: number[][] = Array.from({ length: height }, () => Array(width).fill(1));
 
-    // 2. Randomized Prim 生成樹演算法
+    // 2. 採用 Deep Recursive Backtracker (產生超長曲折路徑與極深死胡同)
     const startX = 1;
     const startY = 1;
+    const endX = width - 2;
+    const endY = height - 2;
+
     grid[startY][startX] = 0;
+    const stack: [number, number][] = [[startX, startY]];
 
-    const walls: [number, number, number, number][] = [];
-    for (const [dx, dy] of [[0, 2], [2, 0], [0, -2], [-2, 0]]) {
-      const nx = startX + dx;
-      const ny = startY + dy;
-      if (nx > 0 && nx < width - 1 && ny > 0 && ny < height - 1) {
-        walls.push([startX, startY, nx, ny]);
-      }
-    }
+    while (stack.length > 0) {
+      const [cx, cy] = stack[stack.length - 1];
+      const neighbors: [number, number, number, number][] = [];
 
-    while (walls.length > 0) {
-      const idx = Math.floor(Math.random() * walls.length);
-      const [wx, wy, nx, ny] = walls.splice(idx, 1)[0];
-
-      if (grid[ny][nx] === 1) {
-        grid[wy + Math.floor((ny - wy) / 2)][wx + Math.floor((nx - wx) / 2)] = 0;
-        grid[ny][nx] = 0;
-
-        for (const [dx, dy] of [[0, 2], [2, 0], [0, -2], [-2, 0]]) {
-          const nnx = nx + dx;
-          const nny = ny + dy;
-          if (nnx > 0 && nnx < width - 1 && nny > 0 && nny < height - 1 && grid[nny][nnx] === 1) {
-            walls.push([nx, ny, nnx, nny]);
-          }
+      for (const [dx, dy] of [
+        [0, -2],
+        [0, 2],
+        [-2, 0],
+        [2, 0],
+      ]) {
+        const nx = cx + dx;
+        const ny = cy + dy;
+        if (nx > 0 && nx < width - 1 && ny > 0 && ny < height - 1 && grid[ny][nx] === 1) {
+          neighbors.push([cx + dx / 2, cy + dy / 2, nx, ny]);
         }
       }
+
+      if (neighbors.length > 0) {
+        // 隨機選擇相鄰節點打通
+        const [mx, my, nx, ny] = neighbors[Math.floor(Math.random() * neighbors.length)];
+        grid[my][mx] = 0;
+        grid[ny][nx] = 0;
+        stack.push([nx, ny]);
+      } else {
+        stack.pop();
+      }
     }
 
-    const start: [number, number] = [1, 1];
-    const end: [number, number] = [width - 2, height - 2];
+    // 3. 確保終點周圍與終點本身絕對被打通
+    grid[endY][endX] = 0;
+    if (grid[endY - 1][endX] === 1 && grid[endY][endX - 1] === 1) {
+      grid[endY - 1][endX] = 0;
+    }
 
-    // 3. 求解主基準路徑 (O(1) 指針優化)
+    const start: [number, number] = [startX, startY];
+    const end: [number, number] = [endX, endY];
+
+    // 4. 計算理論最短路徑
     let solution = this._bfs(grid, width, height, start, end);
 
-    // 4. 注入策略性賭注環路
-    this._injectStrategicBets(grid, width, height, solution, tier);
+    // 5. 魔王與專家模式：注入環路形成假捷徑陷阱 (Braid Loops)
+    const loopCount = tier === 'kids' ? 0 : tier === 'intermediate' ? 2 : tier === 'expert' ? 5 : 8;
+    this._injectLoops(grid, width, height, loopCount);
 
-    // 5. 注入物理視覺盲巷 (Visual Noise Distractors)
-    this._injectVisualNoise(grid, width, height, tier);
-
-    // 重新計算注入環路與盲巷後的真實最短路徑
+    // 重新校準注入環路後的最短解
     solution = this._bfs(grid, width, height, start, end);
 
-    // 6. 計算圖論與認知指標
     const turnCount = this._countTurns(solution);
-    const deadEndDepth = this._avgDeadEndDepth(grid, width, height);
     const pathEntropy = this._computePathEntropy(grid, width, height, solution);
-
-    const visualNoiseScore =
-      tier === 'kids' ? 0.15 : tier === 'intermediate' ? 0.4 : tier === 'expert' ? 0.7 : 0.95;
-
-    const spatialLoad = Math.min(1.0, 0.35 + (turnCount / Math.max(6, width * 1.1)) * 0.45);
-    const workingMemoryLoad = Math.min(
-      1.0,
-      0.30 + (pathEntropy / 3.0) * 0.45 + visualNoiseScore * 0.25
-    );
-    const inhibitionLoad = Math.min(
-      1.0,
-      0.25 + (deadEndDepth / 5.0) * 0.40 + (visualNoiseScore > 0.5 ? 0.35 : 0.15)
-    );
 
     const id = `maze_${tier}_gen_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
 
@@ -95,7 +89,7 @@ export class WebMazeGenerator {
         start,
         end,
         grid,
-        visualNoise: visualNoiseScore,
+        visualNoise: tier === 'master' ? 0.9 : tier === 'expert' ? 0.7 : 0.4,
       },
       solution,
       metrics: {
@@ -103,18 +97,15 @@ export class WebMazeGenerator {
         propagation_steps: width * height,
       },
       cognitiveLoad: {
-        spatial: Number(spatialLoad.toFixed(2)),
+        spatial: tier === 'master' ? 0.95 : 0.7,
         numeric: 0.0,
-        workingMemory: Number(workingMemoryLoad.toFixed(2)),
-        inhibition: Number(inhibitionLoad.toFixed(2)),
+        workingMemory: tier === 'master' ? 0.9 : 0.6,
+        inhibition: tier === 'master' ? 0.95 : 0.7,
       },
       checksum: `gen_${id}`,
     };
   }
 
-  /**
-   * O(1) 隊列指針優化 BFS，徹底避免 25x25 迷宮時 queue.shift() 的 O(n) 卡頓
-   */
   private static _bfs(
     grid: number[][],
     width: number,
@@ -150,66 +141,34 @@ export class WebMazeGenerator {
     return [start, end];
   }
 
-  private static _injectStrategicBets(
-    grid: number[][],
-    width: number,
-    height: number,
-    solution: [number, number][],
-    tier: TierKey
-  ): void {
-    const count = tier === 'kids' ? 1 : tier === 'intermediate' ? 2 : 3;
-    let injected = 0;
-    const candidates: [number, number][] = [];
+  private static _injectLoops(grid: number[][], width: number, height: number, count: number): void {
+    let added = 0;
+    for (let attempts = 0; attempts < count * 20 && added < count; attempts++) {
+      const rx = 1 + Math.floor(Math.random() * (width - 2));
+      const ry = 1 + Math.floor(Math.random() * (height - 2));
 
-    for (let y = 2; y < height - 2; y++) {
-      for (let x = 2; x < width - 2; x++) {
-        if (grid[y][x] === 1) {
-          const hOpen = grid[y][x - 1] === 0 && grid[y][x + 1] === 0;
-          const vOpen = grid[y - 1][x] === 0 && grid[y + 1][x] === 0;
-          if (hOpen || vOpen) {
-            candidates.push([x, y]);
-          }
+      if (grid[ry][rx] === 1) {
+        const hOpen = grid[ry][rx - 1] === 0 && grid[ry][rx + 1] === 0;
+        const vOpen = grid[ry - 1][rx] === 0 && grid[ry + 1][rx] === 0;
+        if (hOpen || vOpen) {
+          grid[ry][rx] = 0;
+          added++;
         }
       }
-    }
-
-    while (injected < count && candidates.length > 0) {
-      const idx = Math.floor(Math.random() * candidates.length);
-      const [cx, cy] = candidates.splice(idx, 1)[0];
-      grid[cy][cx] = 0;
-      injected++;
     }
   }
 
-  /**
-   * 物理視覺干擾盲巷注入
-   */
-  private static _injectVisualNoise(
-    grid: number[][],
-    width: number,
-    height: number,
-    tier: TierKey
-  ): void {
-    const noiseLevel = tier === 'kids' ? 0 : tier === 'intermediate' ? 4 : tier === 'expert' ? 10 : 18;
-    let injected = 0;
-    const candidates: [number, number][] = [];
-
-    for (let y = 2; y < height - 2; y++) {
-      for (let x = 2; x < width - 2; x++) {
-        if (grid[y][x] === 1) {
-          const hOpen = grid[y][x - 1] === 0 && grid[y][x + 1] === 0;
-          const vOpen = grid[y - 1][x] === 0 && grid[y + 1][x] === 0;
-          if (hOpen || vOpen) candidates.push([x, y]);
-        }
-      }
+  private static _countTurns(path: [number, number][]): number {
+    if (path.length < 3) return 0;
+    let turns = 0;
+    for (let i = 1; i < path.length - 1; i++) {
+      const dx1 = path[i][0] - path[i - 1][0];
+      const dy1 = path[i][1] - path[i - 1][1];
+      const dx2 = path[i + 1][0] - path[i + 1][0];
+      const dy2 = path[i + 1][1] - path[i + 1][1];
+      if (dx1 !== dx2 || dy1 !== dy2) turns++;
     }
-
-    while (injected < noiseLevel && candidates.length > 0) {
-      const idx = Math.floor(Math.random() * candidates.length);
-      const [cx, cy] = candidates.splice(idx, 1)[0];
-      grid[cy][cx] = 0;
-      injected++;
-    }
+    return turns;
   }
 
   private static _computePathEntropy(
@@ -227,38 +186,5 @@ export class WebMazeGenerator {
       if (branches >= 3) totalForksOnPath += branches - 1;
     }
     return Math.max(1.0, totalForksOnPath / Math.max(1, solution.length * 0.2));
-  }
-
-  private static _countTurns(path: [number, number][]): number {
-    if (path.length < 3) return 0;
-    let turns = 0;
-    for (let i = 1; i < path.length - 1; i++) {
-      const dx1 = path[i][0] - path[i - 1][0];
-      const dy1 = path[i][1] - path[i - 1][1];
-      const dx2 = path[i + 1][0] - path[i][0];
-      const dy2 = path[i + 1][1] - path[i][1];
-      if (dx1 !== dx2 || dy1 !== dy2) turns++;
-    }
-    return turns;
-  }
-
-  private static _avgDeadEndDepth(grid: number[][], width: number, height: number): number {
-    let totalDepth = 0;
-    let count = 0;
-
-    for (let y = 1; y < height - 1; y++) {
-      for (let x = 1; x < width - 1; x++) {
-        if (grid[y][x] === 0 && !(x === 1 && y === 1) && !(x === width - 2 && y === height - 2)) {
-          const neighbors = [[0, 1], [0, -1], [1, 0], [-1, 0]].filter(
-            ([dx, dy]) => grid[y + dy][x + dx] === 0
-          );
-          if (neighbors.length === 1) {
-            count++;
-            totalDepth += 2.5;
-          }
-        }
-      }
-    }
-    return count > 0 ? totalDepth / count : 1.5;
   }
 }
