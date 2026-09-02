@@ -8,6 +8,7 @@ import { LangSwitcher } from './components/LangSwitcher';
 import { VirtualGamepad } from './components/VirtualGamepad';
 import { useLearnerProfile, TierKey } from './hooks/useLearnerProfile';
 import { WebMazeGenerator } from './engines/mazeGenerator';
+import { WebSudokuGenerator } from './engines/sudokuGenerator';
 
 interface PuzzleMeta {
   id: string;
@@ -62,17 +63,31 @@ const MainDashboard: React.FC = () => {
   const [elapsed, setElapsed] = useState<number>(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  // 初始化動態題庫：包含迷宮與數獨的四級題目
   const [dynamicPuzzles, setDynamicPuzzles] = useState<Record<string, PuzzleEntity[]>>(() => {
     const initialMazes: PuzzleEntity[] = [];
+    const initialSudokus: PuzzleEntity[] = [];
     const tiers: TierKey[] = ['kids', 'intermediate', 'expert', 'master'];
+
     tiers.forEach((tier) => {
-      for (let i = 0; i < 25; i++) {
+      // 迷宮初始題
+      for (let i = 0; i < 10; i++) {
         const p = WebMazeGenerator.generate(tier);
         p.id = `auto_maze_${tier}_${i + 1}`;
         initialMazes.push(p);
       }
+      // 數獨初始題 (每個難度生成 5 題)
+      for (let i = 0; i < 5; i++) {
+        const s = WebSudokuGenerator.generate(tier);
+        s.id = `auto_sudoku_${tier}_${i + 1}`;
+        initialSudokus.push(s);
+      }
     });
-    return { maze: initialMazes };
+
+    return {
+      maze: initialMazes,
+      sudoku: initialSudokus,
+    };
   });
 
   const isSpatialExplorationType = selectedType === 'maze' || selectedType === 'skyscraper';
@@ -108,14 +123,23 @@ const MainDashboard: React.FC = () => {
     setPuzzleIndex((prev) => (prev + 1) % (activeList.length || 1));
   }, [activeList.length]);
 
+  // 現場生成：依據當前遊戲類型呼叫對應引擎
   const handleLiveGenerate = useCallback(() => {
     if (navigator.vibrate) navigator.vibrate(20);
+
     if (selectedType === 'maze') {
       const newPuzzle = WebMazeGenerator.generate(currentLevel);
-      setDynamicPuzzles((prev) => {
-        const list = prev['maze'] || [];
-        return { ...prev, maze: [newPuzzle, ...list] };
-      });
+      setDynamicPuzzles((prev) => ({
+        ...prev,
+        maze: [newPuzzle, ...(prev['maze'] || [])],
+      }));
+      setPuzzleIndex(0);
+    } else if (selectedType === 'sudoku') {
+      const newPuzzle = WebSudokuGenerator.generate(currentLevel);
+      setDynamicPuzzles((prev) => ({
+        ...prev,
+        sudoku: [newPuzzle, ...(prev['sudoku'] || [])],
+      }));
       setPuzzleIndex(0);
     }
   }, [selectedType, currentLevel]);
@@ -157,7 +181,7 @@ const MainDashboard: React.FC = () => {
       {/* 頂部整合工具列：遊戲選單 + 難度選單 + 語言切換 (單行緊湊佈局) */}
       <header className="w-full max-w-sm sm:max-w-md flex items-center justify-between gap-1.5 mb-2 pb-1.5 border-b border-slate-800">
         <span className="text-xs font-black tracking-widest text-indigo-400 shrink-0">LOGICORE</span>
-        
+
         <div className="flex items-center gap-1.5 flex-1 min-w-0">
           {/* 1. 遊戲摺疊清單 */}
           <select
@@ -210,7 +234,7 @@ const MainDashboard: React.FC = () => {
             </ErrorBoundary>
           </div>
 
-          {/* 搖桿控制區 */}
+          {/* 迷宮空間類專用搖桿 */}
           {isSpatialExplorationType && (
             <VirtualGamepad
               onMove={handleJoystickMove}
