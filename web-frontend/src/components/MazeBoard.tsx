@@ -8,7 +8,7 @@ interface Props {
   puzzle?: PuzzleEntity;
 }
 
-type StrategyType = 'Macro-Planner' | 'Wall-Follower' | 'Intuitive-Explorer';
+export type StrategyType = 'Macro-Planner' | 'Wall-Follower' | 'Intuitive-Explorer';
 
 interface ProcessTelemetry {
   wallHits: number;
@@ -17,7 +17,7 @@ interface ProcessTelemetry {
   strategy: StrategyType;
   strategyNameZh: string;
   confidence: number;
-  cognitiveAdvantage: number; // 比模擬人類快了幾步
+  cognitiveAdvantage: number;
 }
 
 export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
@@ -141,7 +141,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
     return baits;
   }, [grid, optimalSolution, visualNoise]);
 
-  // 5. 玩家移動操作（注入猶豫停頓與撞牆遙測）
+  // 5. 玩家移動操作（注入猶豫停頓、撞牆遙測與閉環持久化）
   const movePlayer = useCallback(
     (dx: number, dy: number) => {
       if (isCompleted || isReplaying || !grid || grid.length === 0) return;
@@ -194,6 +194,22 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
         // 抵達終點判定
         if (nextX === endPos[0] && nextY === endPos[1]) {
           setIsCompleted(true);
+
+          // 🧬 閉環持久化：計算即時策略並儲存至 localStorage，供下一題生成器調度
+          const finalTrailLength = trail.length + 1;
+          const optimalLen = Math.max(1, optimalSolution.length);
+          const overhead = finalTrailLength / optimalLen;
+          const bt = backtrackCountRef.current;
+          const whr = (wallHitsRef.current / Math.max(1, finalTrailLength + wallHitsRef.current)) * 100;
+
+          let assignedStrategy: StrategyType = 'Intuitive-Explorer';
+          if (overhead <= 1.25 && bt <= 2 && whr <= 10) {
+            assignedStrategy = 'Macro-Planner';
+          } else if (bt <= 3 && whr <= 15 && overhead <= 1.6) {
+            assignedStrategy = 'Wall-Follower';
+          }
+          localStorage.setItem('logicore_last_strategy', assignedStrategy);
+
           if (!hasRecordedRef.current && actualPuzzle) {
             hasRecordedRef.current = true;
             const timeSpent = Math.max(1, Math.round((Date.now() - startTimeRef.current) / 1000));
@@ -217,7 +233,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
         return newPos;
       });
     },
-    [grid, endPos, isCompleted, isReplaying, visitedSet, fogMode, actualPuzzle, recordAttempt]
+    [grid, endPos, isCompleted, isReplaying, visitedSet, fogMode, actualPuzzle, recordAttempt, trail.length, optimalSolution.length]
   );
 
   // 6. 👻 鬼影重播功能
@@ -315,15 +331,13 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
     const bt = backtrackCountRef.current;
     const hesitations = hesitationsRef.current;
 
-    // 比對後端模擬數據
-    const simSteps = (actualPuzzle?.metrics as any)?.human_sim_steps || optimalLen * 1.6;
+    const simSteps = (actualPuzzle?.metrics as any)?.human_sim_steps || Math.round(optimalLen * 1.6);
     const cognitiveAdvantage = Math.round(simSteps - totalSteps);
 
     let strategy: StrategyType = 'Intuitive-Explorer';
     let strategyNameZh = '直覺探索型';
     let confidence = 75;
 
-    // 策略分類決策樹
     if (overheadRatio <= 1.25 && bt <= 2 && wallHitRate <= 10) {
       strategy = 'Macro-Planner';
       strategyNameZh = '宏觀推演型';
@@ -370,6 +384,38 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
     }
     return { grade: 'C', color: 'text-slate-400 border-slate-600 bg-slate-900', desc: '過度回溯 (Drifting)' };
   }, [isCompleted, optimalSolution.length, trail.length]);
+
+  // 11. 📊 匯出匿名心理測量遙測數據報告 (ISO-Mensa Standard JSON)
+  const handleExportPsychometrics = () => {
+    if (!telemetryAnalysis || !actualPuzzle) return;
+
+    const report = {
+      standard: 'ISO-Mensa-Dynamic-Cognitive-Telemetry-v1',
+      timestamp: new Date().toISOString(),
+      puzzleId: actualPuzzle.id,
+      tier: actualPuzzle.tier,
+      elapsedSeconds: Number((elapsedMs / 1000).toFixed(2)),
+      stepsTaken: trail.length,
+      optimalSteps: optimalSolution.length,
+      efficiencyRatio: Number((trail.length / Math.max(1, optimalSolution.length)).toFixed(2)),
+      backtracks: backtrackCountRef.current,
+      wallHits: telemetryAnalysis.wallHits,
+      wallHitRate: `${telemetryAnalysis.wallHitRate}%`,
+      hesitationsAtDecisionForks: telemetryAnalysis.hesitations,
+      classifiedStrategy: telemetryAnalysis.strategy,
+      strategyConfidence: `${telemetryAnalysis.confidence}%`,
+      cognitiveAdvantageVsSimulation: telemetryAnalysis.cognitiveAdvantage,
+      rawTrail: trail,
+    };
+
+    const blob = new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `Psychometrics_${actualPuzzle.id}_${Date.now()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
 
   if (!grid || grid.length === 0) return null;
 
@@ -481,7 +527,6 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
                     : 'bg-slate-900/60'
                 }`}
               >
-                {/* 終點優先級絕對置頂，永不被其他標記覆蓋 */}
                 {isPlayer ? (
                   '●'
                 ) : isEnd ? (
@@ -550,10 +595,15 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
             </div>
           </div>
 
-          <div className="flex items-center justify-between gap-2">
-            <div className="text-[8px] text-emerald-400/90 text-left">
-              ★ 綠色高亮為全域最優解
-            </div>
+          <div className="flex items-center justify-between gap-1.5 border-t border-slate-800/80 pt-2.5">
+            <button
+              onClick={handleExportPsychometrics}
+              className="px-2 py-1 rounded text-[8px] font-bold border border-emerald-500/50 bg-emerald-950/70 hover:bg-emerald-900 text-emerald-300 transition flex items-center gap-1 shadow"
+              title="匯出標準化心理計量報告 (JSON)"
+            >
+              <span>📊</span>
+              <span>匯出數據</span>
+            </button>
             <button
               onClick={handleStartGhostReplay}
               disabled={isReplaying}
