@@ -1,5 +1,6 @@
 // web-frontend/src/hooks/useLearnerProfile.ts
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
+import { SecureStorage } from '../utils/secureStorage';
 
 export type TierKey = 'kids' | 'intermediate' | 'expert' | 'master';
 export type CognitiveDimension = 'spatial' | 'numeric' | 'workingMemory' | 'inhibition' | 'processingSpeed';
@@ -45,7 +46,7 @@ export interface LearnerProfileState {
   userAge: number;
   techniqueStats: Record<string, TechniqueStats>;
   recentRecords: AttemptPayload[];
-  history: AttemptPayload[]; // 保證向後兼容 useLongTermScheduler
+  history: AttemptPayload[];
   cognitiveDimensions: Record<CognitiveDimension, number>;
   previousCognitiveDimensions: Record<CognitiveDimension, number>;
 }
@@ -71,6 +72,36 @@ export interface BenchmarkMetrics {
     reasonEn: string;
   };
 }
+
+const DEFAULT_PROFILE: LearnerProfileState = {
+  totalAttempts: 0,
+  currentStreak: 0,
+  userAge: 35,
+  personalBest: {
+    fastestTime: 9999,
+    highestAccuracy: 1.0,
+    longestStreak: 0,
+    bestPercentile: 50.0,
+    updatedAt: new Date().toISOString(),
+  },
+  techniqueStats: {},
+  recentRecords: [],
+  history: [],
+  cognitiveDimensions: {
+    spatial: 0.65,
+    numeric: 0.65,
+    workingMemory: 0.6,
+    inhibition: 0.7,
+    processingSpeed: 0.7,
+  },
+  previousCognitiveDimensions: {
+    spatial: 0.5,
+    numeric: 0.5,
+    workingMemory: 0.5,
+    inhibition: 0.5,
+    processingSpeed: 0.5,
+  },
+};
 
 function computeAdaptiveBootstrapCI(values: number[], nIterations = 1000): MetricCI {
   const n = values.length;
@@ -151,70 +182,30 @@ export const useLearnerProfile = () => {
       const stored = localStorage.getItem('logicore_learner_profile');
       if (stored) {
         const parsed = JSON.parse(stored);
-        const records = parsed.recentRecords || parsed.history || [];
+        const actual = parsed.payload || parsed;
+        const records = actual.recentRecords || actual.history || [];
         return {
-          totalAttempts: parsed.totalAttempts || 0,
-          currentStreak: parsed.currentStreak || 0,
-          userAge: parsed.userAge || 35,
-          personalBest: parsed.personalBest || {
-            fastestTime: 9999,
-            highestAccuracy: 1.0,
-            longestStreak: 0,
-            bestPercentile: 50.0,
-            updatedAt: new Date().toISOString(),
-          },
-          techniqueStats: parsed.techniqueStats || {},
+          ...DEFAULT_PROFILE,
+          ...actual,
           recentRecords: records,
           history: records,
-          cognitiveDimensions: parsed.cognitiveDimensions || {
-            spatial: 0.65,
-            numeric: 0.65,
-            workingMemory: 0.6,
-            inhibition: 0.7,
-            processingSpeed: 0.7,
-          },
-          previousCognitiveDimensions: parsed.previousCognitiveDimensions || {
-            spatial: 0.5,
-            numeric: 0.5,
-            workingMemory: 0.5,
-            inhibition: 0.5,
-            processingSpeed: 0.5,
-          },
         };
       }
-    } catch (e) {
-      console.warn('Storage parsing failed', e);
-    }
-    return {
-      totalAttempts: 0,
-      currentStreak: 0,
-      userAge: 35,
-      personalBest: {
-        fastestTime: 9999,
-        highestAccuracy: 1.0,
-        longestStreak: 0,
-        bestPercentile: 50.0,
-        updatedAt: new Date().toISOString(),
-      },
-      techniqueStats: {},
-      recentRecords: [],
-      history: [],
-      cognitiveDimensions: {
-        spatial: 0.65,
-        numeric: 0.65,
-        workingMemory: 0.6,
-        inhibition: 0.7,
-        processingSpeed: 0.7,
-      },
-      previousCognitiveDimensions: {
-        spatial: 0.5,
-        numeric: 0.5,
-        workingMemory: 0.5,
-        inhibition: 0.5,
-        processingSpeed: 0.5,
-      },
-    };
+    } catch {}
+    return DEFAULT_PROFILE;
   });
+
+  // 非同步進行防篡改簽章校驗
+  useEffect(() => {
+    SecureStorage.getItemSafe('logicore_learner_profile', DEFAULT_PROFILE).then((verified) => {
+      setProfile((prev) => ({
+        ...prev,
+        ...verified,
+        recentRecords: verified.recentRecords || verified.history || [],
+        history: verified.recentRecords || verified.history || [],
+      }));
+    });
+  }, []);
 
   const recordAttempt = useCallback((payload: AttemptPayload) => {
     setProfile((prev) => {
@@ -290,11 +281,9 @@ export const useLearnerProfile = () => {
         previousCognitiveDimensions: prevSnapshot,
       };
 
-      try {
-        localStorage.setItem('logicore_learner_profile', JSON.stringify(updated));
-      } catch (e) {
-        console.warn('Quota exceeded', e);
-      }
+      // 企業級非同步防篡改儲存
+      SecureStorage.setItemSafe('logicore_learner_profile', updated);
+
       return updated;
     });
   }, []);
