@@ -2,6 +2,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { PuzzleEntity, TierKey } from '../generated';
 import { useLearnerProfile } from '../hooks/useLearnerProfile';
+import { useLanguage } from '../contexts/LanguageContext';
 
 interface Props {
   puzzleData?: PuzzleEntity;
@@ -15,7 +16,7 @@ interface ProcessTelemetry {
   wallHitRate: number;
   hesitations: number;
   strategy: StrategyType;
-  strategyNameZh: string;
+  strategyName: string;
   confidence: number;
   cognitiveAdvantage: number;
 }
@@ -23,6 +24,8 @@ interface ProcessTelemetry {
 export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
   const actualPuzzle = puzzleData || puzzle;
   const { recordAttempt } = useLearnerProfile();
+  const { lang } = useLanguage();
+  const isEn = lang === 'en';
 
   const mazeData = actualPuzzle?.puzzle;
   const grid: number[][] = mazeData?.grid || [];
@@ -36,8 +39,8 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
   const [visitedSet, setVisitedSet] = useState<Set<string>>(new Set([`${startPos[0]},${startPos[1]}`]));
   const [isCompleted, setIsCompleted] = useState<boolean>(false);
 
-  // 預設全圖可視，避免進場全黑
-  const [fogMode, setFogMode] = useState<boolean>(false);
+  // 🌫️ 預設開啟戰霧模式 (Fog of War)
+  const [fogMode, setFogMode] = useState<boolean>(true);
 
   // 1. ⚡ 60fps 計時器
   const startTimeRef = useRef<number>(Date.now());
@@ -48,7 +51,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
   const hasRecordedRef = useRef<boolean>(false);
   const touchStartRef = useRef<{ x: number; y: number } | null>(null);
 
-  // 🧠 過程資料遙測 (Process Telemetry) 參照
+  // 🧠 過程資料遙測 (Process Telemetry)
   const wallHitsRef = useRef<number>(0);
   const [wallHitsDisplay, setWallHitsDisplay] = useState<number>(0);
   const lastStepTimeRef = useRef<number>(Date.now());
@@ -143,7 +146,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
     return baits;
   }, [grid, optimalSolution, visualNoise]);
 
-  // 🧬 5. 滑動平均策略歷史更新函式
+  // 🧬 5. 滑動平均策略歷史更新
   const updateStrategyHistory = useCallback((newStrategy: StrategyType) => {
     const key = 'logicore_strategy_history';
     let history: StrategyType[] = [];
@@ -362,7 +365,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
     return () => window.removeEventListener('logicore:joystick-move' as any, handleCustomMove);
   }, [movePlayer]);
 
-  // 11. 🏆 職業段位與策略分類器計算
+  // 11. 🏆 職業段位與策略分類器計算 (多語言切換)
   const telemetryAnalysis = useMemo((): ProcessTelemetry | null => {
     if (!isCompleted) return null;
 
@@ -378,20 +381,20 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
     const cognitiveAdvantage = Math.round(simSteps - totalSteps);
 
     let strategy: StrategyType = 'Intuitive-Explorer';
-    let strategyNameZh = '直覺探索型';
+    let strategyName = isEn ? 'Intuitive Explorer' : '直覺探索型';
     let confidence = 75;
 
     if (overheadRatio <= 1.25 && bt <= 2 && wallHitRate <= 10) {
       strategy = 'Macro-Planner';
-      strategyNameZh = '宏觀推演型';
+      strategyName = isEn ? 'Macro Planner' : '宏觀推演型';
       confidence = Math.min(98, 80 + Math.round((1.25 - overheadRatio) * 60));
     } else if (bt <= 3 && wallHitRate <= 15 && overheadRatio <= 1.6) {
       strategy = 'Wall-Follower';
-      strategyNameZh = '謹慎壁隨型';
+      strategyName = isEn ? 'Wall Follower' : '謹慎壁隨型';
       confidence = 82;
     } else {
       strategy = 'Intuitive-Explorer';
-      strategyNameZh = '直覺衝刺型';
+      strategyName = isEn ? 'Intuitive Explorer' : '直覺衝刺型';
       confidence = 88;
     }
 
@@ -400,11 +403,11 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
       wallHitRate,
       hesitations,
       strategy,
-      strategyNameZh,
+      strategyName,
       confidence,
       cognitiveAdvantage,
     };
-  }, [isCompleted, trail.length, optimalSolution.length, actualPuzzle?.metrics]);
+  }, [isCompleted, trail.length, optimalSolution.length, actualPuzzle?.metrics, isEn]);
 
   const rankEvaluation = useMemo(() => {
     if (!isCompleted) return null;
@@ -414,19 +417,19 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
     const bt = backtrackCountRef.current;
 
     if (overheadRatio <= 1.05 && bt === 0) {
-      return { grade: 'S++', color: 'text-amber-300 border-amber-400 bg-amber-950/80', desc: '神之先驗 (Flawless)' };
+      return { grade: 'S++', color: 'text-amber-300 border-amber-400 bg-amber-950/80', desc: isEn ? 'Flawless Deduction' : '神之先驗 (Flawless)' };
     }
     if (overheadRatio <= 1.25 && bt <= 2) {
-      return { grade: 'S', color: 'text-cyan-300 border-cyan-400 bg-cyan-950/80', desc: '大師前瞻 (Mastery)' };
+      return { grade: 'S', color: 'text-cyan-300 border-cyan-400 bg-cyan-950/80', desc: isEn ? 'Master Foresight' : '大師前瞻 (Mastery)' };
     }
     if (overheadRatio <= 1.55 && bt <= 5) {
-      return { grade: 'A', color: 'text-emerald-300 border-emerald-400 bg-emerald-950/80', desc: '頂尖推導 (Excellent)' };
+      return { grade: 'A', color: 'text-emerald-300 border-emerald-400 bg-emerald-950/80', desc: isEn ? 'Excellent Derivation' : '頂尖推導 (Excellent)' };
     }
     if (overheadRatio <= 2.0 && bt <= 10) {
-      return { grade: 'B', color: 'text-blue-300 border-blue-400 bg-blue-950/80', desc: '穩健探索 (Competent)' };
+      return { grade: 'B', color: 'text-blue-300 border-blue-400 bg-blue-950/80', desc: isEn ? 'Competent Exploration' : '穩健探索 (Competent)' };
     }
-    return { grade: 'C', color: 'text-slate-400 border-slate-600 bg-slate-900', desc: '過度回溯 (Drifting)' };
-  }, [isCompleted, optimalSolution.length, trail.length]);
+    return { grade: 'C', color: 'text-slate-400 border-slate-600 bg-slate-900', desc: isEn ? 'Excessive Backtracking' : '過度回溯 (Drifting)' };
+  }, [isCompleted, optimalSolution.length, trail.length, isEn]);
 
   // 12. 📊 匯出匿名心理測量遙測報告
   const handleExportPsychometrics = () => {
@@ -446,17 +449,17 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
 
     const efficiencyRank =
       actualEfficiency <= norm.efficiencyThreshold[0]
-        ? 'Top 10% (神級宏觀規劃)'
+        ? 'Top 10% (Macro-Planner)'
         : actualEfficiency <= norm.efficiencyThreshold[1]
-        ? 'Top 35% (優秀探索)'
-        : 'Average (常規水準)';
+        ? 'Top 35% (Proficient)'
+        : 'Average';
 
     const wallHitRank =
       wallRate <= norm.wallHitRateThreshold[0]
-        ? 'Top 15% (精確空間抑制)'
+        ? 'Top 15% (Superior Inhibition)'
         : wallRate <= norm.wallHitRateThreshold[1]
-        ? 'Top 45% (良好控制)'
-        : 'High Interference (衝動性顯著)';
+        ? 'Top 45% (Controlled)'
+        : 'High Interference';
 
     const report = {
       standard: 'ISO-Mensa-Dynamic-Cognitive-Telemetry-v2',
@@ -498,31 +501,31 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
 
   return (
     <div className="flex flex-col items-center justify-center p-2 select-none font-mono">
-      {/* 🏎️ 60fps 壓力儀表板 + 過程遙測即時指標 */}
+      {/* 🏎️ 60fps 壓力儀表板 (全英化支援) */}
       <div className="w-full grid grid-cols-5 gap-1 px-0.5 mb-2 text-[8px] sm:text-[9px]">
         <div className="bg-slate-950 border border-slate-800 p-1 rounded text-center">
-          <div className="text-slate-500 text-[7px]">⏱️ 競速</div>
+          <div className="text-slate-500 text-[7px]">{isEn ? '⏱️ Speed' : '⏱️ 競速'}</div>
           <div className="text-slate-200 font-bold">{(elapsedMs / 1000).toFixed(2)}s</div>
         </div>
 
         <div className="bg-slate-950 border border-slate-800 p-1 rounded text-center">
-          <div className="text-slate-500 text-[7px]">🎯 步數/最佳</div>
+          <div className="text-slate-500 text-[7px]">{isEn ? '🎯 Steps' : '🎯 步數/最佳'}</div>
           <div className={`font-bold ${currentOverhead > 140 ? 'text-rose-400' : 'text-cyan-300'}`}>
             {isReplaying ? replayStep + 1 : trail.length}/{optimalLen}
           </div>
         </div>
 
         <div className="bg-slate-950 border border-slate-800 p-1 rounded text-center">
-          <div className="text-slate-500 text-[7px]">🔄 回溯</div>
+          <div className="text-slate-500 text-[7px]">{isEn ? '🔄 Backtrack' : '🔄 回溯'}</div>
           <div className={`font-bold ${backtrackDisplay > 3 ? 'text-amber-400' : 'text-slate-300'}`}>
-            {backtrackDisplay} 次
+            {backtrackDisplay} {isEn ? 'pts' : '次'}
           </div>
         </div>
 
         <div className="bg-slate-950 border border-slate-800 p-1 rounded text-center">
-          <div className="text-slate-500 text-[7px]">🧱 觸壁</div>
+          <div className="text-slate-500 text-[7px]">{isEn ? '🧱 Wall-Hit' : '🧱 觸壁'}</div>
           <div className={`font-bold ${wallHitsDisplay > 4 ? 'text-rose-400' : 'text-slate-300'}`}>
-            {wallHitsDisplay} 次
+            {wallHitsDisplay} {isEn ? 'pts' : '次'}
           </div>
         </div>
 
@@ -534,8 +537,8 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
               : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'
           }`}
         >
-          <div className="text-[7px]">🌫️ 視野</div>
-          <div className="text-[8px]">{fogMode ? '3x3 戰霧' : '全圖'}</div>
+          <div className="text-[7px]">{isEn ? '🌫️ Vision' : '🌫️ 視野'}</div>
+          <div className="text-[8px]">{fogMode ? (isEn ? 'Fog War' : '3x3 戰霧') : (isEn ? 'Full View' : '全圖')}</div>
         </button>
       </div>
 
@@ -564,17 +567,19 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
             const isOptimal = optimalSolution.some(([ox, oy]) => ox === cIdx && oy === rIdx);
             const isDynamicBait = dynamicBaitSet.has(`${cIdx},${rIdx}`);
 
+            // 💡 關鍵創新：終點作為導航燈塔 (Beacon)，即使被迷霧遮罩也始終穿透發光！
             const inSight =
               !fogMode ||
               (Math.abs(rIdx - playerPos[1]) <= 2 && Math.abs(cIdx - playerPos[0]) <= 2) ||
               isCompleted ||
-              isReplaying;
+              isReplaying ||
+              isEnd; // 🔥 終點穿透戰霧可視
 
             if (!inSight) {
               return (
                 <div
                   key={`${rIdx}-${cIdx}`}
-                  className="w-4 h-4 sm:w-6 sm:h-6 bg-slate-950/95 border border-slate-900 rounded-xs"
+                  className="w-4 h-4 sm:w-6 sm:h-6 bg-slate-950/95 border border-slate-900/60 rounded-xs"
                 />
               );
             }
@@ -586,7 +591,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
                   isPlayer
                     ? 'bg-cyan-500 text-white shadow-lg shadow-cyan-500/80 scale-105 z-20 ring-1 ring-cyan-300'
                     : isEnd
-                    ? 'bg-emerald-500 text-white animate-pulse shadow-[0_0_12px_rgba(16,185,129,0.95)] z-10 border border-emerald-300 ring-1 ring-emerald-400'
+                    ? 'bg-emerald-500 text-white animate-pulse shadow-[0_0_15px_rgba(16,185,129,0.95)] z-10 border border-emerald-300 ring-2 ring-emerald-400'
                     : isWall
                     ? 'bg-slate-800/90 border border-slate-700/40 shadow-inner'
                     : isStart
@@ -600,7 +605,6 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
                     : 'bg-slate-900/60'
                 }`}
               >
-                {/* 終點以 🏁 旗幟清晰呈現，優先級置頂 */}
                 {isPlayer ? (
                   '●'
                 ) : isEnd ? (
@@ -620,7 +624,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
         )}
       </div>
 
-      {/* 🏆 結算評鑑 ＋ Mensa 級過程決策與策略分析卡片 */}
+      {/* 🏆 結算評鑑 ＋ Mensa 級過程決策與策略分析卡片 (全英支援) */}
       {isCompleted && rankEvaluation && telemetryAnalysis && (
         <div className="mt-2.5 p-3 bg-slate-950/95 border border-slate-700 rounded-xl text-center w-full max-w-sm shadow-2xl animate-fade-in">
           <div className="flex items-center justify-between border-b border-slate-800 pb-2 mb-2">
@@ -636,35 +640,39 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
           {/* 基礎遙測數據 */}
           <div className="grid grid-cols-4 gap-1 text-[8px] text-slate-400 mb-2.5">
             <div className="bg-slate-900/60 p-1 rounded">
-              耗時 <div className="text-slate-200 font-bold">{(elapsedMs / 1000).toFixed(2)}s</div>
+              {isEn ? 'Time' : '耗時'} <div className="text-slate-200 font-bold">{(elapsedMs / 1000).toFixed(2)}s</div>
             </div>
             <div className="bg-slate-900/60 p-1 rounded">
-              步數 <div className="text-cyan-300 font-bold">{trail.length}/{optimalLen}</div>
+              {isEn ? 'Steps' : '步數'} <div className="text-cyan-300 font-bold">{trail.length}/{optimalLen}</div>
             </div>
             <div className="bg-slate-900/60 p-1 rounded">
-              回溯 <div className="text-amber-400 font-bold">{backtrackCountRef.current}</div>
+              {isEn ? 'Backtrack' : '回溯'} <div className="text-amber-400 font-bold">{backtrackCountRef.current}</div>
             </div>
             <div className="bg-slate-900/60 p-1 rounded">
-              觸壁率 <div className="text-rose-400 font-bold">{telemetryAnalysis.wallHitRate}%</div>
+              {isEn ? 'Wall Hit' : '觸壁率'} <div className="text-rose-400 font-bold">{telemetryAnalysis.wallHitRate}%</div>
             </div>
           </div>
 
           {/* 🧠 認知決策指紋 */}
           <div className="p-2 bg-slate-900/80 border border-slate-800 rounded-lg text-left text-[9px] mb-2.5 space-y-1">
             <div className="flex justify-between items-center">
-              <span className="text-slate-400">🧠 綜合策略傾向:</span>
+              <span className="text-slate-400">{isEn ? '🧠 Dominant Strategy:' : '🧠 綜合策略傾向:'}</span>
               <span className="text-indigo-300 font-bold">
-                {telemetryAnalysis.strategyNameZh} ({telemetryAnalysis.confidence}%)
+                {telemetryAnalysis.strategyName} ({telemetryAnalysis.confidence}%)
               </span>
             </div>
             <div className="flex justify-between items-center">
-              <span className="text-slate-400">⏳ 分叉口猶豫:</span>
-              <span className="text-slate-300 font-bold">{telemetryAnalysis.hesitations} 次停頓</span>
+              <span className="text-slate-400">{isEn ? '⏳ Decision Pauses:' : '⏳ 分叉口猶豫:'}</span>
+              <span className="text-slate-300 font-bold">
+                {telemetryAnalysis.hesitations} {isEn ? 'pauses' : '次停頓'}
+              </span>
             </div>
             <div className="flex justify-between items-center">
-              <span className="text-slate-400">⚡ 認知優勢 (vs 模擬):</span>
+              <span className="text-slate-400">{isEn ? '⚡ Cognitive Gap (vs Sim):' : '⚡ 認知優勢 (vs 模擬):'}</span>
               <span className={`font-bold ${telemetryAnalysis.cognitiveAdvantage >= 0 ? 'text-emerald-400' : 'text-amber-400'}`}>
-                {telemetryAnalysis.cognitiveAdvantage >= 0 ? `領先 ${telemetryAnalysis.cognitiveAdvantage} 步` : `落後 ${Math.abs(telemetryAnalysis.cognitiveAdvantage)} 步`}
+                {telemetryAnalysis.cognitiveAdvantage >= 0
+                  ? (isEn ? `+${telemetryAnalysis.cognitiveAdvantage} steps ahead` : `領先 ${telemetryAnalysis.cognitiveAdvantage} 步`)
+                  : (isEn ? `${Math.abs(telemetryAnalysis.cognitiveAdvantage)} steps behind` : `落後 ${Math.abs(telemetryAnalysis.cognitiveAdvantage)} 步`)}
               </span>
             </div>
           </div>
@@ -673,10 +681,10 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
             <button
               onClick={handleExportPsychometrics}
               className="px-2 py-1 rounded text-[8px] font-bold border border-emerald-500/50 bg-emerald-950/70 hover:bg-emerald-900 text-emerald-300 transition flex items-center gap-1 shadow"
-              title="匯出含常模對照之心理計量報告 (JSON)"
+              title={isEn ? "Export Psychometrics Report" : "匯出含常模對照之心理計量報告 (JSON)"}
             >
               <span>📊</span>
-              <span>匯出常模數據</span>
+              <span>{isEn ? 'Export Data' : '匯出常模數據'}</span>
             </button>
             <button
               onClick={handleStartGhostReplay}
@@ -688,7 +696,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
               }`}
             >
               <span>👻</span>
-              <span>{isReplaying ? '重播中...' : '觀看重播'}</span>
+              <span>{isReplaying ? (isEn ? 'Replaying...' : '重播中...') : (isEn ? 'Ghost Replay' : '觀看重播')}</span>
             </button>
           </div>
         </div>
