@@ -35,7 +35,9 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
   const [trail, setTrail] = useState<[number, number][]>([startPos]);
   const [visitedSet, setVisitedSet] = useState<Set<string>>(new Set([`${startPos[0]},${startPos[1]}`]));
   const [isCompleted, setIsCompleted] = useState<boolean>(false);
-  const [fogMode, setFogMode] = useState<boolean>(false);
+
+  // 🌫️ TOP 玩家體驗：預設開啟戰霧模式 (Fog of War)
+  const [fogMode, setFogMode] = useState<boolean>(true);
 
   // 1. ⚡ 60fps 計時器
   const startTimeRef = useRef<number>(Date.now());
@@ -57,7 +59,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
   const [replayStep, setReplayStep] = useState<number>(0);
   const replayTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // 2. 初始化重置
+  // 2. 初始化重置狀態
   useEffect(() => {
     setPlayerPos(startPos);
     setTrail([startPos]);
@@ -141,7 +143,38 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
     return baits;
   }, [grid, optimalSolution, visualNoise]);
 
-  // 5. 玩家移動操作（注入猶豫停頓、撞牆遙測與閉環持久化）
+  // 🧬 5. 滑動平均策略歷史更新函式 (Moving Average Strategy Filter)
+  const updateStrategyHistory = useCallback((newStrategy: StrategyType) => {
+    const key = 'logicore_strategy_history';
+    let history: StrategyType[] = [];
+    try {
+      history = JSON.parse(localStorage.getItem(key) || '[]');
+    } catch {
+      history = [];
+    }
+    history.push(newStrategy);
+    if (history.length > 10) history.shift();
+
+    const weights = [0.35, 0.25, 0.20, 0.12, 0.08];
+    const recent = history.slice(-5).reverse();
+    const weightedScore: Record<StrategyType, number> = {
+      'Macro-Planner': 0,
+      'Wall-Follower': 0,
+      'Intuitive-Explorer': 0,
+    };
+
+    recent.forEach((s, i) => {
+      weightedScore[s] += weights[i] || 0.08;
+    });
+
+    const dominant = (Object.entries(weightedScore).sort((a, b) => b[1] - a[1])[0][0]) as StrategyType;
+
+    localStorage.setItem(key, JSON.stringify(history));
+    localStorage.setItem('logicore_dominant_strategy', dominant);
+    localStorage.setItem('logicore_last_strategy', dominant);
+  }, []);
+
+  // 6. 玩家移動操作
   const movePlayer = useCallback(
     (dx: number, dy: number) => {
       if (isCompleted || isReplaying || !grid || grid.length === 0) return;
@@ -153,12 +186,11 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
         const nextX = currX + dx;
         const nextY = currY + dy;
 
-        // 判定當前節點是否為決策分叉點 (Degree >= 3)
+        // 判定分叉口猶豫分析 (Hesitation Point)
         const openBranches = [[0, 1], [0, -1], [1, 0], [-1, 0]].filter(
           ([bx, by]) => grid[currY + by]?.[currX + bx] === 0
         ).length;
 
-        // 在決策分叉口停頓大於 1800ms 記為一次猶豫分析 (Hesitation Point)
         if (openBranches >= 3 && stepDuration > 1800) {
           hesitationsRef.current += 1;
         }
@@ -195,7 +227,6 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
         if (nextX === endPos[0] && nextY === endPos[1]) {
           setIsCompleted(true);
 
-          // 🧬 閉環持久化：計算即時策略並儲存至 localStorage，供下一題生成器調度
           const finalTrailLength = trail.length + 1;
           const optimalLen = Math.max(1, optimalSolution.length);
           const overhead = finalTrailLength / optimalLen;
@@ -208,7 +239,9 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
           } else if (bt <= 3 && whr <= 15 && overhead <= 1.6) {
             assignedStrategy = 'Wall-Follower';
           }
-          localStorage.setItem('logicore_last_strategy', assignedStrategy);
+
+          // 寫入滑動平均閉環
+          updateStrategyHistory(assignedStrategy);
 
           if (!hasRecordedRef.current && actualPuzzle) {
             hasRecordedRef.current = true;
@@ -233,10 +266,22 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
         return newPos;
       });
     },
-    [grid, endPos, isCompleted, isReplaying, visitedSet, fogMode, actualPuzzle, recordAttempt, trail.length, optimalSolution.length]
+    [
+      grid,
+      endPos,
+      isCompleted,
+      isReplaying,
+      visitedSet,
+      fogMode,
+      actualPuzzle,
+      recordAttempt,
+      trail.length,
+      optimalSolution.length,
+      updateStrategyHistory,
+    ]
   );
 
-  // 6. 👻 鬼影重播功能
+  // 7. 👻 鬼影重播功能
   const handleStartGhostReplay = useCallback(() => {
     if (trail.length === 0) return;
     setIsReplaying(true);
@@ -255,7 +300,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
     }, 60);
   }, [trail]);
 
-  // 7. 觸控滑動
+  // 8. 觸控滑動
   const handleTouchStart = (e: React.TouchEvent) => {
     touchStartRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
   };
@@ -274,7 +319,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
     touchStartRef.current = null;
   };
 
-  // 8. 鍵盤監聽
+  // 9. 鍵盤監聽
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (isCompleted || isReplaying) return;
@@ -310,7 +355,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [movePlayer, isCompleted, isReplaying]);
 
-  // 9. 虛擬手把事件
+  // 10. 虛擬手把事件
   useEffect(() => {
     const handleCustomMove = (e: CustomEvent<{ dx: number; dy: number }>) => {
       movePlayer(e.detail.dx, e.detail.dy);
@@ -319,7 +364,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
     return () => window.removeEventListener('logicore:joystick-move' as any, handleCustomMove);
   }, [movePlayer]);
 
-  // 10. 🏆 職業段位與策略分類器計算 (Mensa-Grade Strategy Profiling)
+  // 11. 🏆 職業段位與策略分類器計算
   const telemetryAnalysis = useMemo((): ProcessTelemetry | null => {
     if (!isCompleted) return null;
 
@@ -385,19 +430,45 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
     return { grade: 'C', color: 'text-slate-400 border-slate-600 bg-slate-900', desc: '過度回溯 (Drifting)' };
   }, [isCompleted, optimalSolution.length, trail.length]);
 
-  // 11. 📊 匯出匿名心理測量遙測數據報告 (ISO-Mensa Standard JSON)
+  // 12. 📊 匯出匿名心理測量遙測報告（包含 TOP 玩家常模比對）
   const handleExportPsychometrics = () => {
     if (!telemetryAnalysis || !actualPuzzle) return;
 
+    const normTable: Record<string, { efficiencyThreshold: [number, number]; wallHitRateThreshold: [number, number] }> = {
+      kids: { efficiencyThreshold: [1.2, 1.6], wallHitRateThreshold: [8, 20] },
+      intermediate: { efficiencyThreshold: [1.25, 1.7], wallHitRateThreshold: [10, 22] },
+      expert: { efficiencyThreshold: [1.3, 1.8], wallHitRateThreshold: [12, 25] },
+      master: { efficiencyThreshold: [1.35, 1.9], wallHitRateThreshold: [15, 28] },
+    };
+
+    const currentTier = (actualPuzzle.tier as string) || 'intermediate';
+    const norm = normTable[currentTier] || normTable.intermediate;
+    const actualEfficiency = Number((trail.length / Math.max(1, optimalSolution.length)).toFixed(2));
+    const wallRate = telemetryAnalysis.wallHitRate;
+
+    const efficiencyRank =
+      actualEfficiency <= norm.efficiencyThreshold[0]
+        ? 'Top 10% (神級宏觀規劃)'
+        : actualEfficiency <= norm.efficiencyThreshold[1]
+        ? 'Top 35% (優秀探索)'
+        : 'Average (常規水準)';
+
+    const wallHitRank =
+      wallRate <= norm.wallHitRateThreshold[0]
+        ? 'Top 15% (精確空間抑制)'
+        : wallRate <= norm.wallHitRateThreshold[1]
+        ? 'Top 45% (良好控制)'
+        : 'High Interference (衝動性顯著)';
+
     const report = {
-      standard: 'ISO-Mensa-Dynamic-Cognitive-Telemetry-v1',
+      standard: 'ISO-Mensa-Dynamic-Cognitive-Telemetry-v2',
       timestamp: new Date().toISOString(),
       puzzleId: actualPuzzle.id,
       tier: actualPuzzle.tier,
       elapsedSeconds: Number((elapsedMs / 1000).toFixed(2)),
       stepsTaken: trail.length,
       optimalSteps: optimalSolution.length,
-      efficiencyRatio: Number((trail.length / Math.max(1, optimalSolution.length)).toFixed(2)),
+      efficiencyRatio: actualEfficiency,
       backtracks: backtrackCountRef.current,
       wallHits: telemetryAnalysis.wallHits,
       wallHitRate: `${telemetryAnalysis.wallHitRate}%`,
@@ -405,6 +476,10 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
       classifiedStrategy: telemetryAnalysis.strategy,
       strategyConfidence: `${telemetryAnalysis.confidence}%`,
       cognitiveAdvantageVsSimulation: telemetryAnalysis.cognitiveAdvantage,
+      normBenchmarking: {
+        efficiencyPercentileEst: efficiencyRank,
+        wallControlPercentileEst: wallHitRank,
+      },
       rawTrail: trail,
     };
 
@@ -462,7 +537,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
           }`}
         >
           <div className="text-[7px]">🌫️ 視野</div>
-          <div className="text-[8px]">{fogMode ? '3x3 盲區' : '全圖'}</div>
+          <div className="text-[8px]">{fogMode ? '3x3 戰霧' : '全圖'}</div>
         </button>
       </div>
 
@@ -491,6 +566,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
             const isOptimal = optimalSolution.some(([ox, oy]) => ox === cIdx && oy === rIdx);
             const isDynamicBait = dynamicBaitSet.has(`${cIdx},${rIdx}`);
 
+            // 戰霧模式可視半徑 (Radius: 2)
             const inSight =
               !fogMode ||
               (Math.abs(rIdx - playerPos[1]) <= 2 && Math.abs(cIdx - playerPos[0]) <= 2) ||
@@ -522,11 +598,15 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
                     ? 'bg-emerald-950/80 text-emerald-400 border border-emerald-500/40'
                     : isTrail
                     ? 'bg-cyan-950/40 text-cyan-400/30'
-                    : isDynamicBait && !isCompleted
-                    ? 'bg-amber-900/60 border border-amber-500/50 text-amber-300/80 shadow-[0_0_6px_rgba(245,158,11,0.25)]'
+                    : isDynamicBait && isCompleted
+                    ? 'bg-amber-900/60 border border-amber-500/50 text-amber-300/80'
                     : 'bg-slate-900/60'
                 }`}
               >
+                {/* TOP 玩家體驗：
+                  - isEnd 最高優先級，始終顯示 ★
+                  - 最優解 (·) 與動態誘餌 (⚡) 僅在 isCompleted 時於賽後複盤顯示，遊戲中絕不劇透
+                */}
                 {isPlayer ? (
                   '●'
                 ) : isEnd ? (
@@ -535,7 +615,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
                   'S'
                 ) : isCompleted && isOptimal ? (
                   '·'
-                ) : isDynamicBait && !isCompleted ? (
+                ) : isCompleted && isDynamicBait ? (
                   <span className="text-[7px] text-amber-400/90">⚡</span>
                 ) : (
                   ''
@@ -575,10 +655,10 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
             </div>
           </div>
 
-          {/* 🧠 認知決策指紋 (Cognitive Decision Profile) */}
+          {/* 🧠 認知決策指紋 */}
           <div className="p-2 bg-slate-900/80 border border-slate-800 rounded-lg text-left text-[9px] mb-2.5 space-y-1">
             <div className="flex justify-between items-center">
-              <span className="text-slate-400">🧠 決策風格:</span>
+              <span className="text-slate-400">🧠 綜合策略傾向:</span>
               <span className="text-indigo-300 font-bold">
                 {telemetryAnalysis.strategyNameZh} ({telemetryAnalysis.confidence}%)
               </span>
@@ -599,10 +679,10 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
             <button
               onClick={handleExportPsychometrics}
               className="px-2 py-1 rounded text-[8px] font-bold border border-emerald-500/50 bg-emerald-950/70 hover:bg-emerald-900 text-emerald-300 transition flex items-center gap-1 shadow"
-              title="匯出標準化心理計量報告 (JSON)"
+              title="匯出含常模對照之心理計量報告 (JSON)"
             >
               <span>📊</span>
-              <span>匯出數據</span>
+              <span>匯出常模數據</span>
             </button>
             <button
               onClick={handleStartGhostReplay}
