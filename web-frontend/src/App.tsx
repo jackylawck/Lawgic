@@ -109,15 +109,26 @@ const MainDashboard: React.FC = () => {
 
   const [isProZen, setIsProZen] = useState<boolean>(true);
   const [isChildMode, setIsChildMode] = useState<boolean>(false);
-  const [selectedType, setSelectedType] = useState<string>('sudoku');
+  const [selectedType, setSelectedType] = useState<string>('maze');
   const [currentLevel, setCurrentLevel] = useState<TierKey>('kids');
   const [puzzleIndex, setPuzzleIndex] = useState<number>(0);
   const [isZPDMode, setIsZPDMode] = useState<boolean>(false);
   const [showDetail, setShowDetail] = useState<boolean>(false);
   const [neuroToast, setNeuroToast] = useState<string | null>(null);
 
-  // ⚡ 動態現場生成題目暫存庫
-  const [dynamicPuzzles, setDynamicPuzzles] = useState<Record<string, PuzzleEntity[]>>({});
+  // ⚡ 開機自動為迷宮 4 個階梯各算 25 題（共 100 題，含 50 題專家與宗師級）
+  const [dynamicPuzzles, setDynamicPuzzles] = useState<Record<string, PuzzleEntity[]>>(() => {
+    const initialMazes: PuzzleEntity[] = [];
+    const tiers: TierKey[] = ['kids', 'intermediate', 'expert', 'master'];
+    tiers.forEach((tier) => {
+      for (let i = 0; i < 25; i++) {
+        const p = WebMazeGenerator.generate(tier);
+        p.id = `auto_maze_${tier}_${i + 1}`;
+        initialMazes.push(p);
+      }
+    });
+    return { maze: initialMazes };
+  });
 
   const [elapsed, setElapsed] = useState<number>(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
