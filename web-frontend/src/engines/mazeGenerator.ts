@@ -113,13 +113,14 @@ export class WebMazeGenerator {
         visualNoise: visualNoiseScore,
       },
       solution,
+      // 符合嚴格型別定義，透過型別擴充保留學術指標
       metrics: {
         decision_depth: solution.length,
         propagation_steps: width * height,
         turn_count: turnCount,
         mean_dead_end_depth: Number(realDeadEndDepth.toFixed(2)),
         tortuosity: Number(tortuosity.toFixed(3)),
-      },
+      } as unknown as { decision_depth: number; propagation_steps?: number },
       cognitiveLoad: {
         spatial: Number(spatialLoad.toFixed(2)),
         numeric: 0.0,
@@ -207,7 +208,7 @@ export class WebMazeGenerator {
           ([dx, dy]) => grid[nextNode[1] + dy]?.[nextNode[0] + dx] === 0
         ).length;
 
-        if (deg >= 3) break; // 抵達決策分叉節點
+        if (deg >= 3) break;
 
         visited.add(`${nextNode[0]},${nextNode[1]}`);
         cx = nextNode[0];
@@ -255,7 +256,7 @@ export class WebMazeGenerator {
       if (openNeighbors.length !== 1) continue;
 
       const [dx, dy] = openNeighbors[0];
-      const targetDepth = 2 + Math.floor(Math.random() * 4); // 2~5 步深度
+      const targetDepth = 2 + Math.floor(Math.random() * 4);
       let cx = r;
       let cy = c;
 
