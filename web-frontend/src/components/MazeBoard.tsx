@@ -27,30 +27,28 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
   const { lang } = useLanguage();
   const isEn = lang === 'en';
 
-  // 1. 雙向兼容 spec 與 puzzle 結構
   const rawData = (actualPuzzle as any)?.puzzle || (actualPuzzle as any)?.spec || (actualPuzzle as any);
-  
-  // 建立乾淨的網格副本，避免引用污染
-  const grid: number[][] = useMemo(() => {
-    const g = rawData?.grid || [];
-    if (!g || g.length === 0) return [];
-    return g.map((row: number[]) => [...row]);
-  }, [rawData]);
 
-  const h = grid.length;
-  const w = grid[0]?.length || 0;
+  // 1. 深拷貝 Grid 確保不變性與即時改寫
+  const baseGrid: number[][] = rawData?.grid || [];
+  const h = baseGrid.length;
+  const w = baseGrid[0]?.length || 0;
 
   const startPos: [number, number] = useMemo(() => {
     return rawData?.start || [1, 1];
   }, [rawData]);
 
-  // 2. 確定終點坐標：優先取 end，其次倒數第二格，強制該格打通為通路 0
-  const endPos: [number, number] = useMemo(() => {
-    if (w < 3 || h < 3) return [1, 1];
+  // 2. 確定終點坐標：雙向檢查 end、goal 或右下角，並自動穿透打通
+  const { grid, endPos } = useMemo(() => {
+    if (w < 3 || h < 3) {
+      return { grid: baseGrid, endPos: [1, 1] as [number, number] };
+    }
+
+    const nextGrid = baseGrid.map((row) => [...row]);
     let ex = w - 2;
     let ey = h - 2;
 
-    if (rawData?.end && !(rawData.end[0] === 1 && rawData.end[1] === 1)) {
+    if (rawData?.end && !(rawData.end[0] === startPos[0] && rawData.end[1] === startPos[1])) {
       ex = rawData.end[0];
       ey = rawData.end[1];
     } else if (rawData?.goal) {
@@ -58,15 +56,18 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
       ey = rawData.goal[1];
     }
 
-    // 強制打通終點本身與至少一個相鄰通道
-    if (grid[ey] && grid[ey][ex] !== undefined) {
-      grid[ey][ex] = 0;
-      if (grid[ey - 1] && grid[ey][ex - 1] === 1 && grid[ey - 1][ex] === 1) {
-        grid[ey - 1][ex] = 0;
-      }
+    // 防禦邊界溢出
+    ex = Math.max(1, Math.min(w - 2, ex));
+    ey = Math.max(1, Math.min(h - 2, ey));
+
+    // 💡 關鍵修復：強制打通終點格子與至少一條通路，確保物理上絕對不是牆壁
+    nextGrid[ey][ex] = 0;
+    if (ey > 1 && nextGrid[ey - 1][ex] === 1 && nextGrid[ey][ex - 1] === 1) {
+      nextGrid[ey - 1][ex] = 0;
     }
-    return [ex, ey];
-  }, [rawData, grid, w, h]);
+
+    return { grid: nextGrid, endPos: [ex, ey] as [number, number] };
+  }, [baseGrid, rawData, w, h, startPos]);
 
   const optimalSolution: [number, number][] = actualPuzzle?.solution || [];
 
@@ -74,7 +75,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
   const [trail, setTrail] = useState<[number, number][]>([startPos]);
   const [visitedSet, setVisitedSet] = useState<Set<string>>(new Set([`${startPos[0]},${startPos[1]}`]));
   const [isCompleted, setIsCompleted] = useState<boolean>(false);
-  const [fogMode, setFogMode] = useState<boolean>(true);
+  const [fogMode, setFogMode] = useState<boolean>(false); // 預設先看全貌以確認終點，有需要再切換戰霧
 
   const startTimeRef = useRef<number>(Date.now());
   const [elapsedMs, setElapsedMs] = useState<number>(0);
@@ -167,7 +168,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
 
         const isGoalCell = nextX === endPos[0] && nextY === endPos[1];
 
-        // 碰壁判定：終點格允許直接走入
+        // 碰壁判定：終點格永遠允許進入
         if (
           !isGoalCell &&
           (nextY < 0 ||
@@ -447,9 +448,11 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
         {grid.map((row, rIdx) =>
           row.map((cell, cIdx) => {
             const isStart = cIdx === startPos[0] && rIdx === startPos[1];
-            const isEnd = cIdx === endPos[0] && rIdx === endPos[1];
-
-            // 終點永遠不是牆
+            
+            // 💡 絕對終點判定：排除起點，只要座標吻合 endPos 即為終點
+            const isEnd = !isStart && cIdx === endPos[0] && rIdx === endPos[1];
+            
+            // 終點絕對不為牆
             const isWall = !isEnd && cell === 1;
 
             const isPlayer = isReplaying
@@ -462,7 +465,6 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
 
             const isOptimal = optimalSolution.some(([ox, oy]) => ox === cIdx && oy === rIdx);
 
-            // 燈塔穿透戰霧
             const inSight =
               !fogMode ||
               (Math.abs(rIdx - playerPos[1]) <= 2 && Math.abs(cIdx - playerPos[0]) <= 2) ||
@@ -482,11 +484,16 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
             return (
               <div
                 key={`${rIdx}-${cIdx}`}
+                style={
+                  isEnd
+                    ? { backgroundColor: '#10b981', color: '#ffffff', zIndex: 30 }
+                    : undefined
+                }
                 className={`w-4 h-4 sm:w-6 sm:h-6 flex items-center justify-center rounded-xs font-bold text-[8px] sm:text-[10px] transition-all duration-75 relative ${
                   isPlayer
                     ? 'bg-cyan-500 text-white shadow-lg shadow-cyan-500/80 scale-105 z-20 ring-1 ring-cyan-300'
                     : isEnd
-                    ? '!bg-emerald-500 !text-white animate-pulse shadow-[0_0_18px_rgba(16,185,129,1)] z-30 ring-2 ring-emerald-300'
+                    ? 'animate-pulse shadow-[0_0_18px_rgba(16,185,129,1)] ring-2 ring-emerald-300'
                     : isWall
                     ? 'bg-slate-800/90 border border-slate-700/40 shadow-inner'
                     : isStart
