@@ -6,9 +6,10 @@ import { PuzzleRenderer } from './registry/RendererRegistry';
 import { PUZZLE_CATALOG, PuzzleEntity } from './generated';
 import { LangSwitcher } from './components/LangSwitcher';
 import { VirtualGamepad } from './components/VirtualGamepad';
-import { useLearnerProfile, TierKey } from './hooks/useLearnerProfile';
+import { TierKey } from './hooks/useLearnerProfile';
 import { WebMazeGenerator } from './engines/mazeGenerator';
 import { WebSudokuGenerator } from './engines/sudokuGenerator';
+import { WebSkyscraperGenerator } from './engines/skyscraperGenerator';
 
 interface PuzzleMeta {
   id: string;
@@ -46,7 +47,7 @@ const EngineFallbackUI: React.FC<{ resetErrorBoundary: () => void }> = ({ resetE
     <p className="text-red-300 text-xs">載入異常 / Render Error</p>
     <button
       onClick={resetErrorBoundary}
-      className="mt-3 px-3 py-1 bg-red-900/60 hover:bg-red-800 text-red-100 text-[10px] border border-red-700"
+      className="mt-3 px-3 py-1 bg-red-900/60 hover:bg-red-800 text-red-100 text-[10px] border border-red-700 rounded"
     >
       重試 / Retry
     </button>
@@ -63,38 +64,47 @@ const MainDashboard: React.FC = () => {
   const [elapsed, setElapsed] = useState<number>(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // 1. 🚀 首屏秒開：各階梯先產少量題目（迷宮3題，數獨1題），確保瀏覽器 0.05 秒內完成渲染
+  // 1. 🚀 首屏秒開：預載迷宮、數獨、摩天透視各階梯題目
   const [dynamicPuzzles, setDynamicPuzzles] = useState<Record<string, PuzzleEntity[]>>(() => {
     const initialMazes: PuzzleEntity[] = [];
     const initialSudokus: PuzzleEntity[] = [];
+    const initialSkyscrapers: PuzzleEntity[] = [];
     const tiers: TierKey[] = ['kids', 'intermediate', 'expert', 'master'];
 
     tiers.forEach((tier) => {
+      // 迷宮
       for (let i = 0; i < 3; i++) {
-        const p = WebMazeGenerator.generate(tier);
-        p.id = `maze_${tier}_init_${i + 1}`;
-        initialMazes.push(p);
+        const m = WebMazeGenerator.generate(tier);
+        m.id = `maze_${tier}_init_${i + 1}`;
+        initialMazes.push(m);
       }
+      // 數獨
       const s = WebSudokuGenerator.generate(tier);
       s.id = `sudoku_${tier}_init_1`;
       initialSudokus.push(s);
+
+      // 摩天透視
+      const sky = WebSkyscraperGenerator.generate(tier);
+      sky.id = `skyscraper_${tier}_init_1`;
+      initialSkyscrapers.push(sky);
     });
 
     return {
       maze: initialMazes,
       sudoku: initialSudokus,
+      skyscraper: initialSkyscrapers,
     };
   });
 
-  // 2. ⚡ 背景非同步時間切片填充：在閒置時間漸進補滿至 25 題，不阻礙玩家操作
+  // 2. ⚡ 背景非同步時間切片填充：漸進補充三款遊戲題目至題庫
   useEffect(() => {
     let isMounted = true;
     const tiers: TierKey[] = ['kids', 'intermediate', 'expert', 'master'];
 
     const fillPoolAsync = async () => {
-      // (A) 優先快速補齊迷宮（迷宮演算法快，讓出 4ms）
+      // (A) 迷宮快速切片 (讓出 4ms)
       for (const tier of tiers) {
-        for (let i = 0; i < 22; i++) {
+        for (let i = 0; i < 15; i++) {
           if (!isMounted) return;
           const newMaze = WebMazeGenerator.generate(tier);
           newMaze.id = `maze_${tier}_bg_${i + 4}`;
@@ -106,9 +116,23 @@ const MainDashboard: React.FC = () => {
         }
       }
 
-      // (B) 接著在背景漸進生成數獨（每題讓出 16ms，確保 60fps 絲滑流暢）
+      // (B) 摩天透視切片 (讓出 10ms)
       for (const tier of tiers) {
-        for (let i = 0; i < 24; i++) {
+        for (let i = 0; i < 15; i++) {
+          if (!isMounted) return;
+          const newSky = WebSkyscraperGenerator.generate(tier);
+          newSky.id = `skyscraper_${tier}_bg_${i + 2}`;
+          setDynamicPuzzles((prev) => ({
+            ...prev,
+            skyscraper: [...(prev.skyscraper || []), newSky],
+          }));
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+      }
+
+      // (C) 數獨背景非同步 (讓出 16ms 確保 60fps)
+      for (const tier of tiers) {
+        for (let i = 0; i < 15; i++) {
           if (!isMounted) return;
           const newSudoku = WebSudokuGenerator.generate(tier);
           newSudoku.id = `sudoku_${tier}_bg_${i + 2}`;
@@ -128,7 +152,19 @@ const MainDashboard: React.FC = () => {
     };
   }, []);
 
-  const isSpatialExplorationType = selectedType === 'maze' || selectedType === 'skyscraper';
+  // 3. 🎯 監聽來自各遊戲面板「弱點教練引導」發出的全域跳轉事件
+  useEffect(() => {
+    const handleNav = (e: any) => {
+      if (e.detail?.gameId) {
+        setSelectedType(e.detail.gameId);
+        setPuzzleIndex(0);
+      }
+    };
+    window.addEventListener('logicore:navigate-game', handleNav);
+    return () => window.removeEventListener('logicore:navigate-game', handleNav);
+  }, []);
+
+  const isSpatialExplorationType = selectedType === 'maze';
 
   const filteredPuzzles = useMemo(() => {
     const staticList = PUZZLE_CATALOG[selectedType] || [];
@@ -179,8 +215,29 @@ const MainDashboard: React.FC = () => {
         sudoku: [newPuzzle, ...(prev['sudoku'] || [])],
       }));
       setPuzzleIndex(0);
+    } else if (selectedType === 'skyscraper') {
+      const newPuzzle = WebSkyscraperGenerator.generate(currentLevel);
+      setDynamicPuzzles((prev) => ({
+        ...prev,
+        skyscraper: [newPuzzle, ...(prev['skyscraper'] || [])],
+      }));
+      setPuzzleIndex(0);
     }
   }, [selectedType, currentLevel]);
+
+  // 頂級玩家專屬：多階跳級挑戰函式
+  const handleTierJump = useCallback(
+    (steps: number = 1) => {
+      if (navigator.vibrate) navigator.vibrate([20, 30, 20]);
+      const currentIdx = LEVEL_KEYS.indexOf(currentLevel);
+      const targetIdx = Math.min(LEVEL_KEYS.length - 1, currentIdx + steps);
+      if (targetIdx !== currentIdx) {
+        setCurrentLevel(LEVEL_KEYS[targetIdx]);
+        setPuzzleIndex(0);
+      }
+    },
+    [currentLevel]
+  );
 
   useEffect(() => {
     setElapsed(0);
@@ -272,7 +329,7 @@ const MainDashboard: React.FC = () => {
             </ErrorBoundary>
           </div>
 
-          {/* 搖桿控制區 */}
+          {/* 迷宮專屬虛擬手把 */}
           {isSpatialExplorationType && (
             <VirtualGamepad
               onMove={handleJoystickMove}
@@ -304,6 +361,28 @@ const MainDashboard: React.FC = () => {
               {isEn ? 'Next ▶' : '下一題 ▶'}
             </button>
           </div>
+
+          {/* 頂級玩家專屬：一鍵升階挑戰與跳級通道 */}
+          {currentLevel !== 'master' && (
+            <div className="flex gap-1.5 mt-1.5 w-full">
+              <button
+                onClick={() => handleTierJump(1)}
+                className="flex-1 py-1.5 bg-gradient-to-r from-indigo-950 via-purple-950 to-slate-900 hover:from-indigo-900 border border-indigo-700/60 hover:border-indigo-500 text-indigo-300 text-[10px] font-bold rounded-lg transition shadow flex items-center justify-center gap-1"
+              >
+                <span>🚀</span>
+                <span>{isEn ? 'Tier Jump (+1)' : '升階挑戰 (+1)'}</span>
+              </button>
+              {currentLevel === 'kids' && (
+                <button
+                  onClick={() => handleTierJump(2)}
+                  className="px-3 py-1.5 bg-rose-950/70 hover:bg-rose-900 border border-rose-700/60 text-rose-300 text-[10px] font-bold rounded-lg transition shadow"
+                  title={isEn ? 'Direct Jump to Expert' : '直接跳級至專家'}
+                >
+                  <span>⚡ +2</span>
+                </button>
+              )}
+            </div>
+          )}
 
           {/* 底部時間與關卡進度 */}
           <div className="mt-2 flex items-center justify-between w-full px-1 text-[9px] text-slate-500 border-t border-slate-800/80 pt-1.5">
