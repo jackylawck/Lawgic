@@ -36,8 +36,8 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
   const [visitedSet, setVisitedSet] = useState<Set<string>>(new Set([`${startPos[0]},${startPos[1]}`]));
   const [isCompleted, setIsCompleted] = useState<boolean>(false);
 
-  // 🌫️ TOP 玩家體驗：預設開啟戰霧模式 (Fog of War)
-  const [fogMode, setFogMode] = useState<boolean>(true);
+  // 預設關閉迷霧，進場即看見完整迷宮宏觀全景
+  const [fogMode, setFogMode] = useState<boolean>(false);
 
   // 1. ⚡ 60fps 計時器
   const startTimeRef = useRef<number>(Date.now());
@@ -143,7 +143,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
     return baits;
   }, [grid, optimalSolution, visualNoise]);
 
-  // 🧬 5. 滑動平均策略歷史更新函式 (Moving Average Strategy Filter)
+  // 🧬 5. 滑動平均策略歷史更新函式
   const updateStrategyHistory = useCallback((newStrategy: StrategyType) => {
     const key = 'logicore_strategy_history';
     let history: StrategyType[] = [];
@@ -186,7 +186,6 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
         const nextX = currX + dx;
         const nextY = currY + dy;
 
-        // 判定分叉口猶豫分析 (Hesitation Point)
         const openBranches = [[0, 1], [0, -1], [1, 0], [-1, 0]].filter(
           ([bx, by]) => grid[currY + by]?.[currX + bx] === 0
         ).length;
@@ -240,7 +239,6 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
             assignedStrategy = 'Wall-Follower';
           }
 
-          // 寫入滑動平均閉環
           updateStrategyHistory(assignedStrategy);
 
           if (!hasRecordedRef.current && actualPuzzle) {
@@ -430,7 +428,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
     return { grade: 'C', color: 'text-slate-400 border-slate-600 bg-slate-900', desc: '過度回溯 (Drifting)' };
   }, [isCompleted, optimalSolution.length, trail.length]);
 
-  // 12. 📊 匯出匿名心理測量遙測報告（包含 TOP 玩家常模比對）
+  // 12. 📊 匯出匿名心理測量遙測報告
   const handleExportPsychometrics = () => {
     if (!telemetryAnalysis || !actualPuzzle) return;
 
@@ -566,7 +564,6 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
             const isOptimal = optimalSolution.some(([ox, oy]) => ox === cIdx && oy === rIdx);
             const isDynamicBait = dynamicBaitSet.has(`${cIdx},${rIdx}`);
 
-            // 戰霧模式可視半徑 (Radius: 2)
             const inSight =
               !fogMode ||
               (Math.abs(rIdx - playerPos[1]) <= 2 && Math.abs(cIdx - playerPos[0]) <= 2) ||
@@ -603,10 +600,6 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
                     : 'bg-slate-900/60'
                 }`}
               >
-                {/* TOP 玩家體驗：
-                  - isEnd 最高優先級，始終顯示 ★
-                  - 最優解 (·) 與動態誘餌 (⚡) 僅在 isCompleted 時於賽後複盤顯示，遊戲中絕不劇透
-                */}
                 {isPlayer ? (
                   '●'
                 ) : isEnd ? (
