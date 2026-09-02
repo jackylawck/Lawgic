@@ -44,11 +44,15 @@ export class WebSudokuGenerator {
 
     return {
       id,
-      category: ('numerical' as any),
+      category: ('logic' as any),
       engine_type: 'sudoku',
       tier,
       puzzle,
       solution,
+      metrics: {
+        decision_depth: 81 - currentClues,
+        propagation_steps: 81,
+      } as any,
       cognitiveLoad: {
         spatial: 0.3,
         numeric: tier === 'kids' ? 0.3 : tier === 'intermediate' ? 0.5 : tier === 'expert' ? 0.75 : 0.9,
