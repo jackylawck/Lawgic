@@ -53,6 +53,7 @@ export const SudokuBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
   const [selectedCell, setSelectedCell] = useState<number | null>(null);
   const [conflictCell, setConflictCell] = useState<number | null>(null);
   const [isCompleted, setIsCompleted] = useState<boolean>(false);
+  const [isFailedAssessment, setIsFailedAssessment] = useState<boolean>(false);
   const [isTimedOut, setIsTimedOut] = useState<boolean>(false);
   const [elapsedSec, setElapsedSec] = useState<number>(0);
 
@@ -65,6 +66,7 @@ export const SudokuBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
     setSelectedCell(null);
     setConflictCell(null);
     setIsCompleted(false);
+    setIsFailedAssessment(false);
     setIsTimedOut(false);
     setElapsedSec(0);
     startTimeRef.current = Date.now();
@@ -74,7 +76,7 @@ export const SudokuBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
 
   // 計時與超時判定
   useEffect(() => {
-    if (isCompleted || isTimedOut) return;
+    if (isCompleted || isTimedOut || isFailedAssessment) return;
     const timer = setInterval(() => {
       const currentElapsed = Math.floor((Date.now() - startTimeRef.current) / 1000);
       setElapsedSec(currentElapsed);
@@ -103,7 +105,7 @@ export const SudokuBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
       }
     }, 1000);
     return () => clearInterval(timer);
-  }, [isCompleted, isTimedOut, isAssessmentMode, standardTimeLimit, actualPuzzle, currentTier, highestTech, recordAttempt]);
+  }, [isCompleted, isTimedOut, isFailedAssessment, isAssessmentMode, standardTimeLimit, actualPuzzle, currentTier, highestTech, recordAttempt]);
 
   const checkVictory = useCallback(
     (currentGrid: number[]) => {
@@ -111,7 +113,10 @@ export const SudokuBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
       if (!sol || !Array.isArray(sol)) return;
       const flatSol = Array.isArray(sol[0]) ? sol.flat() : sol;
 
-      if (flatSol.length === 81 && currentGrid.every((v, i) => v === flatSol[i])) {
+      // 檢查是否完全命中正確答案
+      const isPerfectMatch = flatSol.length === 81 && currentGrid.every((v, i) => v === flatSol[i]);
+
+      if (isPerfectMatch) {
         setIsCompleted(true);
         if (!hasRecordedRef.current) {
           hasRecordedRef.current = true;
@@ -132,24 +137,45 @@ export const SudokuBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
             technique: highestTech,
           });
         }
+      } else if (isAssessmentMode && currentGrid.every((v) => v !== 0)) {
+        // 評估模式專屬：盤面已填滿但有錯誤，直接判定施測結束
+        setIsFailedAssessment(true);
+        if (!hasRecordedRef.current) {
+          hasRecordedRef.current = true;
+          const timeSpent = Math.max(1, Math.round((Date.now() - startTimeRef.current) / 1000));
+          recordAttempt({
+            puzzleId: actualPuzzle.id,
+            engineType: actualPuzzle.engine_type || 'sudoku',
+            tier: currentTier,
+            cognitiveLoad: actualPuzzle.cognitiveLoad || {
+              spatial: 0.3,
+              numeric: 0.7,
+              workingMemory: 0.8,
+              inhibition: 0.6,
+            },
+            isSuccess: false,
+            timeSpentSec: timeSpent,
+            conflictsCount: conflictCountRef.current,
+            technique: highestTech,
+          });
+        }
       }
     },
-    [actualPuzzle, recordAttempt, currentTier, highestTech]
+    [actualPuzzle, recordAttempt, currentTier, highestTech, isAssessmentMode]
   );
 
   const handleCellClick = (index: number) => {
-    if (initialGrid[index] !== 0 || isCompleted || isTimedOut) return;
+    if (initialGrid[index] !== 0 || isCompleted || isTimedOut || isFailedAssessment) return;
     setSelectedCell(index);
   };
 
   const handleNumberInput = (num: number) => {
-    if (selectedCell === null || initialGrid[selectedCell] !== 0 || isCompleted || isTimedOut) return;
+    if (selectedCell === null || initialGrid[selectedCell] !== 0 || isCompleted || isTimedOut || isFailedAssessment) return;
 
     const sol = actualPuzzle?.solution;
     const flatSol = sol ? (Array.isArray(sol[0]) ? sol.flat() : sol) : [];
     const expectedValue = flatSol[selectedCell];
 
-    // 關鍵差異：標準施測模式下，禁止「即時阻擋與提示」
     if (!isAssessmentMode) {
       if (num !== 0 && expectedValue !== undefined && num !== expectedValue) {
         if (navigator.vibrate) navigator.vibrate([30, 50, 30]);
@@ -159,7 +185,6 @@ export const SudokuBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
         return;
       }
     } else {
-      // 評估模式：靜默記錄衝突，不干預使用者填入
       if (num !== 0 && expectedValue !== undefined && num !== expectedValue) {
         conflictCountRef.current += 1;
       }
@@ -173,7 +198,7 @@ export const SudokuBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (isCompleted || isTimedOut || selectedCell === null) return;
+      if (isCompleted || isTimedOut || isFailedAssessment || selectedCell === null) return;
       const num = parseInt(e.key, 10);
       if (!isNaN(num) && num >= 1 && num <= 9) {
         handleNumberInput(num);
@@ -184,7 +209,7 @@ export const SudokuBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedCell, isCompleted, isTimedOut, grid]);
+  }, [selectedCell, isCompleted, isTimedOut, isFailedAssessment, grid]);
 
   const userStat = profile.techniqueStats?.[highestTech];
   const solvingPath: string[] = metrics.solving_path || ['Standard Derivation'];
@@ -258,7 +283,7 @@ export const SudokuBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
       </div>
 
       {/* 數字鍵盤 */}
-      {!isCompleted && !isTimedOut && (
+      {!isCompleted && !isTimedOut && !isFailedAssessment && (
         <div className="grid grid-cols-10 gap-1 mt-3 w-[min(90vw,46vh)]">
           {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((num) => (
             <button
@@ -280,12 +305,16 @@ export const SudokuBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
         </div>
       )}
 
-      {/* 超時中斷警告 */}
-      {isTimedOut && (
+      {/* 超時或答錯中斷警告 */}
+      {(isTimedOut || isFailedAssessment) && (
         <div className="mt-3 p-3 bg-rose-950/90 border border-rose-600 rounded-xl text-center w-[min(90vw,46vh)] shadow-2xl animate-fade-in">
-          <div className="text-xs text-rose-200 font-bold mb-1">⚠️ ASSESSMENT CEILING REACHED</div>
+          <div className="text-xs text-rose-200 font-bold mb-1">
+            {isTimedOut ? '⚠️ ASSESSMENT CEILING REACHED' : '⚠️ ASSESSMENT COMPLETED (WITH ERRORS)'}
+          </div>
           <div className="text-[9px] text-slate-300">
-            {isEn ? 'Standardized time limit elapsed. Data logged for IRT calibration.' : '已達標準化施測時限，作答記錄已寫入心理測量常模池。'}
+            {isTimedOut
+              ? (isEn ? 'Standardized time limit elapsed. Data logged for IRT calibration.' : '已達標準化施測時限，作答記錄已寫入常模池。')
+              : (isEn ? 'Assessment finished with conflicts. Accuracy recorded for psychometric analysis.' : '評估已結束（含衝突作答），準確率已列入常模分析。')}
           </div>
         </div>
       )}
