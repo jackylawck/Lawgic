@@ -101,7 +101,6 @@ const MainDashboard: React.FC = () => {
   } = useLearnerProfile();
 
   const {
-    overallPeakTier,
     getRecommendedSchedulePuzzle,
   } = useLongTermScheduler(profile, PUZZLE_CATALOG);
 
@@ -116,7 +115,6 @@ const MainDashboard: React.FC = () => {
   const [showDetail, setShowDetail] = useState<boolean>(false);
   const [neuroToast, setNeuroToast] = useState<string | null>(null);
 
-  // ⚡ 開機自動為迷宮 4 個階梯各算 25 題（共 100 題，含 50 題專家與宗師級）
   const [dynamicPuzzles, setDynamicPuzzles] = useState<Record<string, PuzzleEntity[]>>(() => {
     const initialMazes: PuzzleEntity[] = [];
     const tiers: TierKey[] = ['kids', 'intermediate', 'expert', 'master'];
@@ -141,7 +139,6 @@ const MainDashboard: React.FC = () => {
     return PUZZLE_METAS.filter((m) => CHILD_SAFE_IDS.has(m.id));
   }, [isChildMode]);
 
-  // 合併靜態題庫與現場即時生成題庫
   const filteredPuzzles = useMemo(() => {
     const staticList = PUZZLE_CATALOG[selectedType] || [];
     const liveList = dynamicPuzzles[selectedType] || [];
@@ -165,14 +162,7 @@ const MainDashboard: React.FC = () => {
   const activeList = filteredPuzzles[activeLevel] || [];
   const activePuzzle = activeList.length > 0 ? activeList[puzzleIndex % activeList.length] : null;
 
-  const currentLoad = activePuzzle?.cognitiveLoad || currentMeta.defaultLoad;
   const globalRadar = globalCognitiveProfile();
-  const topSchedule = getRecommendedSchedulePuzzle();
-
-  const weakestDimension = useMemo(() => {
-    const dims: CognitiveDimension[] = ['spatial', 'numeric', 'workingMemory', 'inhibition'];
-    return dims.reduce((min, d) => (globalRadar[d] < globalRadar[min] ? d : min), dims[0]);
-  }, [globalRadar]);
 
   const todayAvg = useMemo(() => {
     const startOfToday = new Date().setHours(0, 0, 0, 0);
@@ -209,11 +199,9 @@ const MainDashboard: React.FC = () => {
     }
   }, [activeList.length]);
 
-  // ⚡ 核心功能：前端現場即時閉環調度生成題目（讀取滑動平均優勢策略）
   const handleLiveGenerate = useCallback(() => {
     if (navigator.vibrate) navigator.vibrate(20);
     if (selectedType === 'maze') {
-      // 優先讀取滑動平均加權優勢策略，若無則讀取單局策略
       const dominantStrategy =
         (localStorage.getItem('logicore_dominant_strategy') as StrategyPersona) ||
         (localStorage.getItem('logicore_last_strategy') as StrategyPersona) ||
@@ -246,26 +234,6 @@ const MainDashboard: React.FC = () => {
       setTimeout(() => setNeuroToast(null), 2500);
     }
   }, [selectedType, activeLevel, isEn]);
-
-  const handleExpedition = useCallback(() => {
-    if (navigator.vibrate) navigator.vibrate(15);
-    const targetMeta = visibleMetas.find(
-      (m) => m.primaryDimension === weakestDimension && (PUZZLE_CATALOG[m.id]?.length || 0) > 0
-    );
-
-    if (targetMeta && targetMeta.id !== selectedType) {
-      setSelectedType(targetMeta.id);
-      setPuzzleIndex(0);
-      setNeuroToast(
-        isEn
-          ? `🧭 Loading targeted training: [${targetMeta.nameEn}]`
-          : `🧭 載入最弱迴路訓練【${targetMeta.nameZh}】`
-      );
-    } else {
-      setPuzzleIndex((prev) => (prev + 1) % (activeList.length || 1));
-    }
-    setTimeout(() => setNeuroToast(null), 3500);
-  }, [visibleMetas, weakestDimension, selectedType, activeList.length, isEn]);
 
   const lastMoveTimeRef = useRef<number>(0);
 
@@ -405,7 +373,7 @@ const MainDashboard: React.FC = () => {
               }`}
               title={isEn ? 'Toggle Neurodivergent Focus Mode' : '切換神經多樣性專注模式'}
             >
-              {settings.focusMode ? '🎯 專注' : '👁️ 常規'}
+              {settings.focusMode ? (isEn ? '🎯 Focus' : '🎯 專注') : (isEn ? '👁️ Normal' : '👁️ 常規')}
             </button>
 
             {profile.streak > 0 && (
@@ -502,7 +470,7 @@ const MainDashboard: React.FC = () => {
                 : 'border-slate-800 text-slate-500 hover:text-slate-300'
             }`}
           >
-            {isZPDMode ? '🧠 ZPD' : '🎛️ 手動'}
+            {isZPDMode ? (isEn ? '🧠 ZPD' : '🧠 ZPD') : (isEn ? '🎛️ Manual' : '🎛️ 手動')}
           </button>
         </div>
 
@@ -627,7 +595,6 @@ const MainDashboard: React.FC = () => {
         </div>
 
         <div className="flex items-center gap-1.5">
-          {/* 🧠 認知特質徽章 */}
           <div
             className={`px-2.5 py-1 rounded-full border text-[10px] font-mono font-bold flex items-center gap-1 ${activePersonaBadge.color}`}
             title={isEn ? `Cognitive Persona: ${activePersonaBadge.en}` : `認知特質：${activePersonaBadge.zh}`}
@@ -636,7 +603,6 @@ const MainDashboard: React.FC = () => {
             <span>{isEn ? activePersonaBadge.en : activePersonaBadge.zh}</span>
           </div>
 
-          {/* 🎯 專注模式開關 */}
           <button
             onClick={toggleFocusMode}
             className={`px-2.5 py-1 rounded-full text-[11px] font-bold transition-all border ${
@@ -645,7 +611,7 @@ const MainDashboard: React.FC = () => {
                 : 'bg-slate-900 border-slate-700 text-slate-300 hover:border-slate-500'
             }`}
           >
-            {settings.focusMode ? '🎯 專注' : '👁️ 常規'}
+            {settings.focusMode ? (isEn ? '🎯 Focus' : '🎯 專注') : (isEn ? '👁️ Normal' : '👁️ 常規')}
           </button>
 
           <button
@@ -743,7 +709,7 @@ const MainDashboard: React.FC = () => {
               : 'bg-slate-900/60 border-slate-700 text-slate-400 hover:text-slate-200'
           }`}
         >
-          {isZPDMode ? '🧠 ZPD 自適應' : '🎛️ 手動'}
+          {isZPDMode ? (isEn ? '🧠 ZPD Adaptive' : '🧠 ZPD 自適應') : (isEn ? '🎛️ Manual' : '🎛️ 手動')}
         </button>
       </div>
 
