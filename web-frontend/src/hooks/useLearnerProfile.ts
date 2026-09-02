@@ -31,6 +31,7 @@ export interface LearnerProfileState {
   totalAttempts: number;
   techniqueStats: Record<string, TechniqueStats>;
   recentRecords: AttemptPayload[];
+  history: AttemptPayload[]; // 兼容 useLongTermScheduler
   cognitiveDimensions?: Record<CognitiveDimension, number>;
 }
 
@@ -44,32 +45,37 @@ export const useLearnerProfile = () => {
   const [profile, setProfile] = useState<LearnerProfileState>(() => {
     try {
       const stored = localStorage.getItem('logicore_learner_profile');
-      return stored
-        ? JSON.parse(stored)
-        : {
-            totalAttempts: 0,
-            techniqueStats: {},
-            recentRecords: [],
-            cognitiveDimensions: {
-              spatial: 0.5,
-              numeric: 0.5,
-              workingMemory: 0.5,
-              inhibition: 0.5,
-            },
-          };
-    } catch {
-      return {
-        totalAttempts: 0,
-        techniqueStats: {},
-        recentRecords: [],
-        cognitiveDimensions: {
-          spatial: 0.5,
-          numeric: 0.5,
-          workingMemory: 0.5,
-          inhibition: 0.5,
-        },
-      };
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        const records = parsed.recentRecords || parsed.history || [];
+        return {
+          totalAttempts: parsed.totalAttempts || 0,
+          techniqueStats: parsed.techniqueStats || {},
+          recentRecords: records,
+          history: records,
+          cognitiveDimensions: parsed.cognitiveDimensions || {
+            spatial: 0.5,
+            numeric: 0.5,
+            workingMemory: 0.5,
+            inhibition: 0.5,
+          },
+        };
+      }
+    } catch (e) {
+      console.warn('Failed to parse learner profile', e);
     }
+    return {
+      totalAttempts: 0,
+      techniqueStats: {},
+      recentRecords: [],
+      history: [],
+      cognitiveDimensions: {
+        spatial: 0.5,
+        numeric: 0.5,
+        workingMemory: 0.5,
+        inhibition: 0.5,
+      },
+    };
   });
 
   const recordAttempt = useCallback((payload: AttemptPayload) => {
@@ -89,6 +95,8 @@ export const useLearnerProfile = () => {
         ((prevStat.accuracy * prevStat.attempts + (payload.conflictsCount === 0 ? 1 : 0.8)) / newAttempts).toFixed(2)
       );
 
+      const records = [payload, ...(prev.recentRecords || prev.history || [])].slice(0, 50);
+
       const updated: LearnerProfileState = {
         totalAttempts: prev.totalAttempts + 1,
         techniqueStats: {
@@ -100,7 +108,8 @@ export const useLearnerProfile = () => {
             times: newTimes,
           },
         },
-        recentRecords: [payload, ...(prev.recentRecords || [])].slice(0, 50),
+        recentRecords: records,
+        history: records,
         cognitiveDimensions: prev.cognitiveDimensions,
       };
 
@@ -140,7 +149,6 @@ export const useLearnerProfile = () => {
     [profile]
   );
 
-  // 向後相容既有模組的單一數值讀取呼叫
   const getBenchmarkTime = useCallback(
     (technique: string, defaultTime: number): number => {
       return getBenchmarkMetrics(technique, defaultTime).benchmarkTime;
