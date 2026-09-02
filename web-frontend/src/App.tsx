@@ -9,7 +9,7 @@ import { LangSwitcher } from './components/LangSwitcher';
 import { VirtualGamepad } from './components/VirtualGamepad';
 import { useLearnerProfile, TierKey, CognitiveDimension, LearnerPersona } from './hooks/useLearnerProfile';
 import { useLongTermScheduler } from './hooks/useLongTermScheduler';
-import { WebMazeGenerator } from './engines/mazeGenerator';
+import { WebMazeGenerator, StrategyPersona } from './engines/mazeGenerator';
 
 interface PuzzleMeta {
   id: string;
@@ -209,17 +209,27 @@ const MainDashboard: React.FC = () => {
     }
   }, [activeList.length]);
 
-  // ⚡ 核心功能：前端現場無限生成題目
+  // ⚡ 核心功能：前端現場即時閉環調度生成題目
   const handleLiveGenerate = useCallback(() => {
     if (navigator.vibrate) navigator.vibrate(20);
     if (selectedType === 'maze') {
-      const newPuzzle = WebMazeGenerator.generate(activeLevel);
+      // 讀取上一局的策略分類，形成對抗性神經可塑性閉環
+      const lastStrategy = (localStorage.getItem('logicore_last_strategy') as StrategyPersona) || undefined;
+      const newPuzzle = WebMazeGenerator.generate(activeLevel, lastStrategy);
+
       setDynamicPuzzles((prev) => {
         const list = prev['maze'] || [];
         return { ...prev, maze: [newPuzzle, ...list] };
       });
       setPuzzleIndex(0);
-      setNeuroToast(isEn ? '⚡ Brand new procedural maze generated!' : '⚡ 現場即時演算迷宮生成完畢！');
+
+      const toastMessage = lastStrategy
+        ? (isEn
+            ? `⚡ Adaptive Maze compiled for [${lastStrategy}]!`
+            : `⚡ 針對【${lastStrategy === 'Macro-Planner' ? '宏觀推演型' : lastStrategy === 'Wall-Follower' ? '謹慎壁隨型' : '直覺衝刺型'}】特質之對抗迷宮已生成！`)
+        : (isEn ? '⚡ Brand new procedural maze generated!' : '⚡ 現場即時演算迷宮生成完畢！');
+
+      setNeuroToast(toastMessage);
       setTimeout(() => setNeuroToast(null), 2500);
     } else {
       setNeuroToast(isEn ? '⚡ Generator for this type is compiling...' : '⚡ 此題型前端即時生成器編譯中...');
