@@ -69,7 +69,7 @@ export class WebMazeGenerator {
     const start: [number, number] = [startX, startY];
     const end: [number, number] = [endX, endY];
 
-    // 4. 🧠 策略閉環動態調整 (Closed-Loop Adaptation)
+    // 4. 策略閉環動態調整 (Closed-Loop Adaptation)
     let loopCount = tier === 'kids' ? 0 : tier === 'intermediate' ? 2 : tier === 'expert' ? 5 : 8;
     let distractorCount = tier === 'kids' ? 0 : tier === 'intermediate' ? 4 : tier === 'expert' ? 8 : 16;
 
@@ -118,6 +118,16 @@ export class WebMazeGenerator {
       0.20 + (realDeadEndDepth / 7.0) * 0.45 + (tier === 'master' ? 0.35 : 0.15)
     );
 
+    // 動態合成 IRT Logit 難度 (-2.8 ~ +2.8)
+    const normalizedSteps = limitedHumanPath.length / (width * height);
+    const rawDifficulty = (pathEntropy * 0.35) + (realDeadEndDepth * 0.25) + (normalizedSteps * 1.2);
+    const irtLogitDifficulty = Number(Math.max(-2.5, Math.min(2.5, (rawDifficulty - 2.0) * 1.3)).toFixed(2));
+
+    // Wechsler 級空間尋路期望時間 (Processing Speed Gs)
+    const estimatedTimeSec = Math.round(
+      15 + limitedHumanPath.length * 0.6 + turnCount * 1.2 + (tier === 'master' ? 40 : 0)
+    );
+
     const id = `maze_${tier}_gen_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
 
     return {
@@ -131,7 +141,7 @@ export class WebMazeGenerator {
         size,
         start: [startX, startY],
         end: [endX, endY],
-        goal: [endX, endY], // 雙鍵容錯
+        goal: [endX, endY],
         grid,
         visualNoise: visualNoiseScore,
         adaptedFor: personaBias || 'standard',
@@ -146,7 +156,9 @@ export class WebMazeGenerator {
         human_sim_steps: limitedHumanPath.length,
         baseline_wall_steps: baselineWallFollow.length,
         cognitive_gap: cognitiveGap,
-      } as unknown as { decision_depth: number; propagation_steps?: number },
+        irt_logit_difficulty: irtLogitDifficulty,
+        estimated_time_sec: estimatedTimeSec,
+      } as any,
       cognitiveLoad: {
         spatial: Number(spatialLoad.toFixed(2)),
         numeric: 0.0,
@@ -157,9 +169,6 @@ export class WebMazeGenerator {
     };
   }
 
-  /**
-   * O(1) 隊列指針 BFS 最短路徑求解 (嚴格保持 [x, y] 格式)
-   */
   private static _bfs(
     grid: number[][],
     width: number,
@@ -195,9 +204,6 @@ export class WebMazeGenerator {
     return [start, end];
   }
 
-  /**
-   * 長距離欺騙環路注入
-   */
   private static _injectDeceptiveLongLoops(
     grid: number[][],
     width: number,
@@ -252,9 +258,6 @@ export class WebMazeGenerator {
     }
   }
 
-  /**
-   * 階梯型與螺旋型多樣態盲巷
-   */
   private static _injectAdvancedDistractors(
     grid: number[][],
     width: number,
@@ -324,9 +327,6 @@ export class WebMazeGenerator {
     }
   }
 
-  /**
-   * 受限人類模擬器
-   */
   private static _simulateHumanPathLimited(
     grid: number[][],
     width: number,
