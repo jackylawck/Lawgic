@@ -63,25 +63,21 @@ const MainDashboard: React.FC = () => {
   const [elapsed, setElapsed] = useState<number>(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // 初始化動態題庫：包含迷宮與數獨的四級題目
+  // 1. 🚀 首屏秒開：各階梯先產少量題目（迷宮3題，數獨1題），確保瀏覽器 0.05 秒內完成渲染
   const [dynamicPuzzles, setDynamicPuzzles] = useState<Record<string, PuzzleEntity[]>>(() => {
     const initialMazes: PuzzleEntity[] = [];
     const initialSudokus: PuzzleEntity[] = [];
     const tiers: TierKey[] = ['kids', 'intermediate', 'expert', 'master'];
 
     tiers.forEach((tier) => {
-      // 迷宮初始題
-      for (let i = 0; i < 10; i++) {
+      for (let i = 0; i < 3; i++) {
         const p = WebMazeGenerator.generate(tier);
-        p.id = `auto_maze_${tier}_${i + 1}`;
+        p.id = `maze_${tier}_init_${i + 1}`;
         initialMazes.push(p);
       }
-      // 數獨初始題 (每個難度生成 5 題)
-      for (let i = 0; i < 5; i++) {
-        const s = WebSudokuGenerator.generate(tier);
-        s.id = `auto_sudoku_${tier}_${i + 1}`;
-        initialSudokus.push(s);
-      }
+      const s = WebSudokuGenerator.generate(tier);
+      s.id = `sudoku_${tier}_init_1`;
+      initialSudokus.push(s);
     });
 
     return {
@@ -89,6 +85,48 @@ const MainDashboard: React.FC = () => {
       sudoku: initialSudokus,
     };
   });
+
+  // 2. ⚡ 背景非同步時間切片填充：在閒置時間漸進補滿至 25 題，不阻礙玩家操作
+  useEffect(() => {
+    let isMounted = true;
+    const tiers: TierKey[] = ['kids', 'intermediate', 'expert', 'master'];
+
+    const fillPoolAsync = async () => {
+      // (A) 優先快速補齊迷宮（迷宮演算法快，讓出 4ms）
+      for (const tier of tiers) {
+        for (let i = 0; i < 22; i++) {
+          if (!isMounted) return;
+          const newMaze = WebMazeGenerator.generate(tier);
+          newMaze.id = `maze_${tier}_bg_${i + 4}`;
+          setDynamicPuzzles((prev) => ({
+            ...prev,
+            maze: [...(prev.maze || []), newMaze],
+          }));
+          await new Promise((resolve) => setTimeout(resolve, 4));
+        }
+      }
+
+      // (B) 接著在背景漸進生成數獨（每題讓出 16ms，確保 60fps 絲滑流暢）
+      for (const tier of tiers) {
+        for (let i = 0; i < 24; i++) {
+          if (!isMounted) return;
+          const newSudoku = WebSudokuGenerator.generate(tier);
+          newSudoku.id = `sudoku_${tier}_bg_${i + 2}`;
+          setDynamicPuzzles((prev) => ({
+            ...prev,
+            sudoku: [...(prev.sudoku || []), newSudoku],
+          }));
+          await new Promise((resolve) => setTimeout(resolve, 16));
+        }
+      }
+    };
+
+    const timer = setTimeout(fillPoolAsync, 300);
+    return () => {
+      isMounted = false;
+      clearTimeout(timer);
+    };
+  }, []);
 
   const isSpatialExplorationType = selectedType === 'maze' || selectedType === 'skyscraper';
 
@@ -123,7 +161,7 @@ const MainDashboard: React.FC = () => {
     setPuzzleIndex((prev) => (prev + 1) % (activeList.length || 1));
   }, [activeList.length]);
 
-  // 現場生成：依據當前遊戲類型呼叫對應引擎
+  // 現場生成：隨時無限追加並切換至第 1 題
   const handleLiveGenerate = useCallback(() => {
     if (navigator.vibrate) navigator.vibrate(20);
 
@@ -178,12 +216,12 @@ const MainDashboard: React.FC = () => {
 
   return (
     <main className="min-h-screen bg-[#090d14] text-slate-200 flex flex-col items-center py-2 px-2 font-mono selection:bg-indigo-600">
-      {/* 頂部整合工具列：遊戲選單 + 難度選單 + 語言切換 (單行緊湊佈局) */}
+      {/* 頂部整合工具列：遊戲摺疊選單 + 難度摺疊選單 + 語言切換 */}
       <header className="w-full max-w-sm sm:max-w-md flex items-center justify-between gap-1.5 mb-2 pb-1.5 border-b border-slate-800">
         <span className="text-xs font-black tracking-widest text-indigo-400 shrink-0">LOGICORE</span>
 
         <div className="flex items-center gap-1.5 flex-1 min-w-0">
-          {/* 1. 遊戲摺疊清單 */}
+          {/* 遊戲摺疊清單 */}
           <select
             value={selectedType}
             onChange={(e) => {
@@ -202,7 +240,7 @@ const MainDashboard: React.FC = () => {
             })}
           </select>
 
-          {/* 2. 難度摺疊清單 (兒童 / 進階 / 專家 / 魔王) */}
+          {/* 難度摺疊清單 */}
           <select
             value={currentLevel}
             onChange={(e) => {
@@ -234,7 +272,7 @@ const MainDashboard: React.FC = () => {
             </ErrorBoundary>
           </div>
 
-          {/* 迷宮空間類專用搖桿 */}
+          {/* 搖桿控制區 */}
           {isSpatialExplorationType && (
             <VirtualGamepad
               onMove={handleJoystickMove}
