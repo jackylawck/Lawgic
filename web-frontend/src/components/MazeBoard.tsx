@@ -27,30 +27,48 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
   const { lang } = useLanguage();
   const isEn = lang === 'en';
 
-  const mazeData = actualPuzzle?.puzzle || (actualPuzzle as any)?.spec;
-  const grid: number[][] = mazeData?.grid || [];
-  const startPos: [number, number] = mazeData?.start || [1, 1];
-  const optimalSolution: [number, number][] = actualPuzzle?.solution || [];
+  // 1. 雙向兼容 spec 與 puzzle 結構
+  const rawData = (actualPuzzle as any)?.puzzle || (actualPuzzle as any)?.spec || (actualPuzzle as any);
+  
+  // 建立乾淨的網格副本，避免引用污染
+  const grid: number[][] = useMemo(() => {
+    const g = rawData?.grid || [];
+    if (!g || g.length === 0) return [];
+    return g.map((row: number[]) => [...row]);
+  }, [rawData]);
 
-  // 💡 終點定位：最優路徑最後一格為真實終點，其次檢查 end/goal，最後鎖定網格右下角
+  const h = grid.length;
+  const w = grid[0]?.length || 0;
+
+  const startPos: [number, number] = useMemo(() => {
+    return rawData?.start || [1, 1];
+  }, [rawData]);
+
+  // 2. 確定終點坐標：優先取 end，其次倒數第二格，強制該格打通為通路 0
   const endPos: [number, number] = useMemo(() => {
-    if (optimalSolution && optimalSolution.length > 1) {
-      const lastPoint = optimalSolution[optimalSolution.length - 1];
-      if (!(lastPoint[0] === startPos[0] && lastPoint[1] === startPos[1])) {
-        return [lastPoint[0], lastPoint[1]];
+    if (w < 3 || h < 3) return [1, 1];
+    let ex = w - 2;
+    let ey = h - 2;
+
+    if (rawData?.end && !(rawData.end[0] === 1 && rawData.end[1] === 1)) {
+      ex = rawData.end[0];
+      ey = rawData.end[1];
+    } else if (rawData?.goal) {
+      ex = rawData.goal[0];
+      ey = rawData.goal[1];
+    }
+
+    // 強制打通終點本身與至少一個相鄰通道
+    if (grid[ey] && grid[ey][ex] !== undefined) {
+      grid[ey][ex] = 0;
+      if (grid[ey - 1] && grid[ey][ex - 1] === 1 && grid[ey - 1][ex] === 1) {
+        grid[ey - 1][ex] = 0;
       }
     }
-    if (mazeData?.end && !(mazeData.end[0] === startPos[0] && mazeData.end[1] === startPos[1])) {
-      return mazeData.end;
-    }
-    if ((mazeData as any)?.goal) {
-      return (mazeData as any).goal;
-    }
-    if (grid.length > 2 && grid[0]?.length > 2) {
-      return [grid[0].length - 2, grid.length - 2];
-    }
-    return [1, 1];
-  }, [optimalSolution, mazeData, grid, startPos]);
+    return [ex, ey];
+  }, [rawData, grid, w, h]);
+
+  const optimalSolution: [number, number][] = actualPuzzle?.solution || [];
 
   const [playerPos, setPlayerPos] = useState<[number, number]>(startPos);
   const [trail, setTrail] = useState<[number, number][]>([startPos]);
@@ -58,7 +76,6 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
   const [isCompleted, setIsCompleted] = useState<boolean>(false);
   const [fogMode, setFogMode] = useState<boolean>(true);
 
-  // 1. ⚡ 60fps 計時器
   const startTimeRef = useRef<number>(Date.now());
   const [elapsedMs, setElapsedMs] = useState<number>(0);
 
@@ -76,7 +93,6 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
   const [replayStep, setReplayStep] = useState<number>(0);
   const replayTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // 2. 初始化重置
   useEffect(() => {
     setPlayerPos(startPos);
     setTrail([startPos]);
@@ -97,7 +113,6 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
     if (replayTimerRef.current) clearInterval(replayTimerRef.current);
   }, [actualPuzzle?.id, startPos]);
 
-  // 3. 計時器
   useEffect(() => {
     if (isCompleted) return;
     let frameId: number;
@@ -109,7 +124,6 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
     return () => cancelAnimationFrame(frameId);
   }, [isCompleted]);
 
-  // 4. 滑動平均策略歷史更新
   const updateStrategyHistory = useCallback((newStrategy: StrategyType) => {
     const key = 'logicore_strategy_history';
     let history: StrategyType[] = [];
@@ -140,7 +154,6 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
     localStorage.setItem('logicore_last_strategy', dominant);
   }, []);
 
-  // 5. 玩家移動操作
   const movePlayer = useCallback(
     (dx: number, dy: number) => {
       if (isCompleted || isReplaying || !grid || grid.length === 0) return;
@@ -152,23 +165,11 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
         const nextX = currX + dx;
         const nextY = currY + dy;
 
-        const openBranches = [[0, 1], [0, -1], [1, 0], [-1, 0]].filter(
-          ([bx, by]) => grid[currY + by]?.[currX + bx] === 0
-        ).length;
+        const isGoalCell = nextX === endPos[0] && nextY === endPos[1];
 
-        if (openBranches >= 3 && stepDuration > 1800) {
-          hesitationsRef.current += 1;
-        }
-        lastStepTimeRef.current = now;
-
-        // 判定終點座標（允許終點即使原先是1也可走入）
-        const isTargetCell =
-          (nextX === endPos[0] && nextY === endPos[1]) ||
-          (nextX === grid[0].length - 2 && nextY === grid.length - 2);
-
-        // 碰壁判定
+        // 碰壁判定：終點格允許直接走入
         if (
-          !isTargetCell &&
+          !isGoalCell &&
           (nextY < 0 ||
             nextY >= grid.length ||
             nextX < 0 ||
@@ -180,6 +181,15 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
           if (navigator.vibrate) navigator.vibrate(10);
           return [currX, currY];
         }
+
+        const openBranches = [[0, 1], [0, -1], [1, 0], [-1, 0]].filter(
+          ([bx, by]) => grid[currY + by]?.[currX + bx] === 0
+        ).length;
+
+        if (openBranches >= 3 && stepDuration > 1800) {
+          hesitationsRef.current += 1;
+        }
+        lastStepTimeRef.current = now;
 
         const nextKey = `${nextX},${nextY}`;
         const newPos: [number, number] = [nextX, nextY];
@@ -193,11 +203,11 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
 
         setTrail((prev) => [...prev, newPos]);
 
-        if (isTargetCell) {
+        if (isGoalCell) {
           setIsCompleted(true);
 
           const finalTrailLength = trail.length + 1;
-          const optimalLen = Math.max(1, optimalSolution.length);
+          const optimalLen = Math.max(1, optimalSolution.length || 1);
           const overhead = finalTrailLength / optimalLen;
           const bt = backtrackCountRef.current;
           const whr = (wallHitsRef.current / Math.max(1, finalTrailLength + wallHitsRef.current)) * 100;
@@ -321,7 +331,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
     const totalSteps = trail.length;
     const wallHits = wallHitsRef.current;
     const wallHitRate = Math.round((wallHits / Math.max(1, totalSteps + wallHits)) * 100);
-    const optimalLen = Math.max(1, optimalSolution.length);
+    const optimalLen = Math.max(1, optimalSolution.length || 1);
     const overheadRatio = totalSteps / optimalLen;
     const bt = backtrackCountRef.current;
     const hesitations = hesitationsRef.current;
@@ -341,10 +351,6 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
       strategy = 'Wall-Follower';
       strategyName = isEn ? 'Wall Follower' : '謹慎壁隨型';
       confidence = 82;
-    } else {
-      strategy = 'Intuitive-Explorer';
-      strategyName = isEn ? 'Intuitive Explorer' : '直覺衝刺型';
-      confidence = 88;
     }
 
     return {
@@ -360,7 +366,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
 
   const rankEvaluation = useMemo(() => {
     if (!isCompleted) return null;
-    const optimalLen = Math.max(1, optimalSolution.length);
+    const optimalLen = Math.max(1, optimalSolution.length || 1);
     const actualSteps = trail.length;
     const overheadRatio = actualSteps / optimalLen;
     const bt = backtrackCountRef.current;
@@ -380,42 +386,15 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
     return { grade: 'C', color: 'text-slate-400 border-slate-600 bg-slate-900', desc: isEn ? 'Excessive Backtracking' : '過度回溯 (Drifting)' };
   }, [isCompleted, optimalSolution.length, trail.length, isEn]);
 
-  const handleExportPsychometrics = () => {
-    if (!telemetryAnalysis || !actualPuzzle) return;
-    const report = {
-      standard: 'ISO-Mensa-Dynamic-Cognitive-Telemetry-v2',
-      timestamp: new Date().toISOString(),
-      puzzleId: actualPuzzle.id,
-      tier: actualPuzzle.tier,
-      elapsedSeconds: Number((elapsedMs / 1000).toFixed(2)),
-      stepsTaken: trail.length,
-      optimalSteps: optimalSolution.length,
-      efficiencyRatio: Number((trail.length / Math.max(1, optimalSolution.length)).toFixed(2)),
-      backtracks: backtrackCountRef.current,
-      wallHits: telemetryAnalysis.wallHits,
-      wallHitRate: `${telemetryAnalysis.wallHitRate}%`,
-      classifiedStrategy: telemetryAnalysis.strategy,
-      rawTrail: trail,
-    };
-
-    const blob = new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `Psychometrics_${actualPuzzle.id}_${Date.now()}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
-
   if (!grid || grid.length === 0) return null;
 
-  const optimalLen = Math.max(1, optimalSolution.length);
+  const optimalLen = Math.max(1, optimalSolution.length || 1);
   const currentOverhead = Math.round((trail.length / optimalLen) * 100);
   const replayCurrentPos = isReplaying && trail[replayStep] ? trail[replayStep] : null;
 
   return (
     <div className="flex flex-col items-center justify-center p-2 select-none font-mono">
-      {/* 🏎️ 儀表板 */}
+      {/* 儀表板 */}
       <div className="w-full grid grid-cols-5 gap-1 px-0.5 mb-2 text-[8px] sm:text-[9px]">
         <div className="bg-slate-950 border border-slate-800 p-1 rounded text-center">
           <div className="text-slate-500 text-[7px]">{isEn ? '⏱️ Speed' : '⏱️ 競速'}</div>
@@ -456,7 +435,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
         </button>
       </div>
 
-      {/* 迷宮主盤面 */}
+      {/* 迷宮盤面 */}
       <div
         onTouchStart={handleTouchStart}
         onTouchEnd={handleTouchEnd}
@@ -468,12 +447,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
         {grid.map((row, rIdx) =>
           row.map((cell, cIdx) => {
             const isStart = cIdx === startPos[0] && rIdx === startPos[1];
-            
-            // 💡 絕對終點判定：只要是終點坐標，強制覆蓋一切狀態
-            const isEnd =
-              !isStart &&
-              ((cIdx === endPos[0] && rIdx === endPos[1]) ||
-                (cIdx === grid[0].length - 2 && rIdx === grid.length - 2));
+            const isEnd = cIdx === endPos[0] && rIdx === endPos[1];
 
             // 終點永遠不是牆
             const isWall = !isEnd && cell === 1;
@@ -541,7 +515,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
         )}
       </div>
 
-      {/* 🏆 結算評鑑 */}
+      {/* 結算面板 */}
       {isCompleted && rankEvaluation && telemetryAnalysis && (
         <div className="mt-2.5 p-3 bg-slate-950/95 border border-slate-700 rounded-xl text-center w-full max-w-sm shadow-2xl animate-fade-in">
           <div className="flex items-center justify-between border-b border-slate-800 pb-2 mb-2">
@@ -569,14 +543,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
             </div>
           </div>
 
-          <div className="flex items-center justify-between gap-1.5 border-t border-slate-800/80 pt-2.5">
-            <button
-              onClick={handleExportPsychometrics}
-              className="px-2 py-1 rounded text-[8px] font-bold border border-emerald-500/50 bg-emerald-950/70 hover:bg-emerald-900 text-emerald-300 transition flex items-center gap-1 shadow"
-            >
-              <span>📊</span>
-              <span>{isEn ? 'Export Data' : '匯出常模數據'}</span>
-            </button>
+          <div className="flex items-center justify-end border-t border-slate-800/80 pt-2.5">
             <button
               onClick={handleStartGhostReplay}
               disabled={isReplaying}
