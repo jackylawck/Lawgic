@@ -30,10 +30,17 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
   const mazeData = actualPuzzle?.puzzle || (actualPuzzle as any)?.spec;
   const grid: number[][] = mazeData?.grid || [];
   const startPos: [number, number] = mazeData?.start || [1, 1];
+  const optimalSolution: [number, number][] = actualPuzzle?.solution || [];
 
-  // 終點座標容錯機制：絕不退回 [1, 1]，預設鎖定網格右下角
+  // 💡 終點定位：最優路徑最後一格為真實終點，其次檢查 end/goal，最後鎖定網格右下角
   const endPos: [number, number] = useMemo(() => {
-    if (mazeData?.end && !(mazeData.end[0] === 1 && mazeData.end[1] === 1)) {
+    if (optimalSolution && optimalSolution.length > 1) {
+      const lastPoint = optimalSolution[optimalSolution.length - 1];
+      if (!(lastPoint[0] === startPos[0] && lastPoint[1] === startPos[1])) {
+        return [lastPoint[0], lastPoint[1]];
+      }
+    }
+    if (mazeData?.end && !(mazeData.end[0] === startPos[0] && mazeData.end[1] === startPos[1])) {
       return mazeData.end;
     }
     if ((mazeData as any)?.goal) {
@@ -43,15 +50,13 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
       return [grid[0].length - 2, grid.length - 2];
     }
     return [1, 1];
-  }, [mazeData, grid]);
-
-  const optimalSolution: [number, number][] = actualPuzzle?.solution || [];
+  }, [optimalSolution, mazeData, grid, startPos]);
 
   const [playerPos, setPlayerPos] = useState<[number, number]>(startPos);
   const [trail, setTrail] = useState<[number, number][]>([startPos]);
   const [visitedSet, setVisitedSet] = useState<Set<string>>(new Set([`${startPos[0]},${startPos[1]}`]));
   const [isCompleted, setIsCompleted] = useState<boolean>(false);
-  const [fogMode, setFogMode] = useState<boolean>(true); // 預設開啟戰霧
+  const [fogMode, setFogMode] = useState<boolean>(true);
 
   // 1. ⚡ 60fps 計時器
   const startTimeRef = useRef<number>(Date.now());
@@ -156,13 +161,19 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
         }
         lastStepTimeRef.current = now;
 
-        // 碰壁
+        // 判定終點座標（允許終點即使原先是1也可走入）
+        const isTargetCell =
+          (nextX === endPos[0] && nextY === endPos[1]) ||
+          (nextX === grid[0].length - 2 && nextY === grid.length - 2);
+
+        // 碰壁判定
         if (
-          nextY < 0 ||
-          nextY >= grid.length ||
-          nextX < 0 ||
-          nextX >= grid[0].length ||
-          grid[nextY][nextX] === 1
+          !isTargetCell &&
+          (nextY < 0 ||
+            nextY >= grid.length ||
+            nextX < 0 ||
+            nextX >= grid[0].length ||
+            grid[nextY][nextX] === 1)
         ) {
           wallHitsRef.current += 1;
           setWallHitsDisplay(wallHitsRef.current);
@@ -182,12 +193,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
 
         setTrail((prev) => [...prev, newPos]);
 
-        // 雙保險終點判定
-        const isReachedGoal =
-          (nextX === endPos[0] && nextY === endPos[1] && !(nextX === 1 && nextY === 1)) ||
-          (nextX === grid[0].length - 2 && nextY === grid.length - 2);
-
-        if (isReachedGoal) {
+        if (isTargetCell) {
           setIsCompleted(true);
 
           const finalTrailLength = trail.length + 1;
@@ -309,7 +315,6 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
     return () => window.removeEventListener('logicore:joystick-move' as any, handleCustomMove);
   }, [movePlayer]);
 
-  // 統計與策略分析
   const telemetryAnalysis = useMemo((): ProcessTelemetry | null => {
     if (!isCompleted) return null;
 
@@ -462,13 +467,16 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
       >
         {grid.map((row, rIdx) =>
           row.map((cell, cIdx) => {
-            const isWall = cell === 1;
             const isStart = cIdx === startPos[0] && rIdx === startPos[1];
             
-            // 💡 燈塔模式雙保險：絕對鎖定終點座標，絕不隱形
+            // 💡 絕對終點判定：只要是終點坐標，強制覆蓋一切狀態
             const isEnd =
-              (cIdx === endPos[0] && rIdx === endPos[1] && !(cIdx === 1 && rIdx === 1)) ||
-              (cIdx === grid[0].length - 2 && rIdx === grid.length - 2);
+              !isStart &&
+              ((cIdx === endPos[0] && rIdx === endPos[1]) ||
+                (cIdx === grid[0].length - 2 && rIdx === grid.length - 2));
+
+            // 終點永遠不是牆
+            const isWall = !isEnd && cell === 1;
 
             const isPlayer = isReplaying
               ? replayCurrentPos && replayCurrentPos[0] === cIdx && replayCurrentPos[1] === rIdx
@@ -480,7 +488,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
 
             const isOptimal = optimalSolution.some(([ox, oy]) => ox === cIdx && oy === rIdx);
 
-            // 💡 戰霧下終點作為燈塔 (Beacon)，持續穿透迷霧發光
+            // 燈塔穿透戰霧
             const inSight =
               !fogMode ||
               (Math.abs(rIdx - playerPos[1]) <= 2 && Math.abs(cIdx - playerPos[0]) <= 2) ||
@@ -504,7 +512,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
                   isPlayer
                     ? 'bg-cyan-500 text-white shadow-lg shadow-cyan-500/80 scale-105 z-20 ring-1 ring-cyan-300'
                     : isEnd
-                    ? '!bg-emerald-500 !text-white animate-pulse shadow-[0_0_15px_rgba(16,185,129,0.95)] z-10 border border-emerald-300 ring-2 ring-emerald-400'
+                    ? '!bg-emerald-500 !text-white animate-pulse shadow-[0_0_18px_rgba(16,185,129,1)] z-30 ring-2 ring-emerald-300'
                     : isWall
                     ? 'bg-slate-800/90 border border-slate-700/40 shadow-inner'
                     : isStart
@@ -519,7 +527,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
                 {isPlayer ? (
                   '●'
                 ) : isEnd ? (
-                  <span className="text-[10px] sm:text-xs select-none">🏁</span>
+                  <span className="text-[11px] sm:text-xs leading-none select-none z-30">🏁</span>
                 ) : isStart ? (
                   'S'
                 ) : isCompleted && isOptimal ? (
