@@ -16,7 +16,7 @@ interface PuzzleMeta {
   icon: string;
 }
 
-// 包含系統所有遊戲
+// 完整 12 款遊戲
 const ALL_GAMES: PuzzleMeta[] = [
   { id: 'maze', nameZh: '空間迷宮', nameEn: 'Maze', icon: '🌀' },
   { id: 'sudoku', nameZh: '數獨魔陣', nameEn: 'Sudoku', icon: '🔢' },
@@ -34,7 +34,6 @@ const ALL_GAMES: PuzzleMeta[] = [
 
 export const LEVEL_KEYS: TierKey[] = ['kids', 'intermediate', 'expert', 'master'];
 
-// 正常清晰的 4 級分類
 const TIER_NAMES: Record<TierKey, { zh: string; en: string }> = {
   kids: { zh: '兒童', en: 'Kids' },
   intermediate: { zh: '進階', en: 'Intermediate' },
@@ -64,7 +63,6 @@ const MainDashboard: React.FC = () => {
   const [elapsed, setElapsed] = useState<number>(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // 動態生成池
   const [dynamicPuzzles, setDynamicPuzzles] = useState<Record<string, PuzzleEntity[]>>(() => {
     const initialMazes: PuzzleEntity[] = [];
     const tiers: TierKey[] = ['kids', 'intermediate', 'expert', 'master'];
@@ -80,7 +78,6 @@ const MainDashboard: React.FC = () => {
 
   const isSpatialExplorationType = selectedType === 'maze' || selectedType === 'skyscraper';
 
-  // 組合靜態與動態題庫
   const filteredPuzzles = useMemo(() => {
     const staticList = PUZZLE_CATALOG[selectedType] || [];
     const liveList = dynamicPuzzles[selectedType] || [];
@@ -99,11 +96,9 @@ const MainDashboard: React.FC = () => {
     return grouped;
   }, [selectedType, dynamicPuzzles]);
 
-  const currentMeta = ALL_GAMES.find((m) => m.id === selectedType) || ALL_GAMES[0];
   const activeList = filteredPuzzles[currentLevel] || [];
   const activePuzzle = activeList.length > 0 ? activeList[puzzleIndex % activeList.length] : null;
 
-  // 上一題 / 下一題
   const handlePrevPuzzle = useCallback(() => {
     if (navigator.vibrate) navigator.vibrate(8);
     setPuzzleIndex((prev) => (prev > 0 ? prev - 1 : Math.max(0, activeList.length - 1)));
@@ -114,7 +109,6 @@ const MainDashboard: React.FC = () => {
     setPuzzleIndex((prev) => (prev + 1) % (activeList.length || 1));
   }, [activeList.length]);
 
-  // 現場生成
   const handleLiveGenerate = useCallback(() => {
     if (navigator.vibrate) navigator.vibrate(20);
     if (selectedType === 'maze') {
@@ -127,7 +121,6 @@ const MainDashboard: React.FC = () => {
     }
   }, [selectedType, currentLevel]);
 
-  // 計時器
   useEffect(() => {
     setElapsed(0);
     if (timerRef.current) clearInterval(timerRef.current);
@@ -139,7 +132,6 @@ const MainDashboard: React.FC = () => {
     };
   }, [activePuzzle?.id]);
 
-  // 虛擬鍵盤與實體手柄支援
   const lastMoveTimeRef = useRef<number>(0);
   const handleJoystickMove = useCallback((x: number, y: number) => {
     const now = Date.now();
@@ -162,49 +154,36 @@ const MainDashboard: React.FC = () => {
   }, []);
 
   return (
-    <main className="min-h-screen bg-[#090d14] text-slate-200 flex flex-col items-center py-3 px-2 font-mono selection:bg-indigo-600">
-      {/* 頂部簡潔導航 */}
-      <header className="w-full max-w-lg flex items-center justify-between mb-2 pb-1.5 border-b border-slate-800">
-        <div className="flex items-center gap-2">
-          <span className="text-xs font-black tracking-widest text-indigo-400">LOGICORE</span>
-          <span className="text-[10px] text-slate-400 border border-slate-800 px-1.5 py-0.5 rounded">
-            {isEn ? currentMeta.nameEn : currentMeta.nameZh}
-          </span>
+    <main className="min-h-screen bg-[#090d14] text-slate-200 flex flex-col items-center py-2 px-2 font-mono selection:bg-indigo-600">
+      {/* 頂部整合工具列：摺疊選單 + 語言切換 */}
+      <header className="w-full max-w-sm sm:max-w-md flex items-center justify-between gap-2 mb-2 pb-1.5 border-b border-slate-800">
+        <div className="flex items-center gap-2 flex-1 min-w-0">
+          <span className="text-xs font-black tracking-widest text-indigo-400 shrink-0">LOGICORE</span>
+          
+          {/* 遊戲摺疊清單 (Dropdown) */}
+          <select
+            value={selectedType}
+            onChange={(e) => {
+              setSelectedType(e.target.value);
+              setPuzzleIndex(0);
+            }}
+            className="flex-1 min-w-0 bg-slate-900 border border-slate-700 text-slate-200 text-xs rounded px-2 py-1 outline-none focus:border-indigo-500 cursor-pointer"
+          >
+            {ALL_GAMES.map((game) => {
+              const count = (PUZZLE_CATALOG[game.id]?.length || 0) + (dynamicPuzzles[game.id]?.length || 0);
+              return (
+                <option key={game.id} value={game.id} disabled={count === 0} className="bg-slate-900 text-slate-200">
+                  {game.icon} {isEn ? game.nameEn : game.nameZh} ({count})
+                </option>
+              );
+            })}
+          </select>
         </div>
         <LangSwitcher />
       </header>
 
-      {/* 1. 所有遊戲列表 (可滑動橫列) */}
-      <div className="w-full max-w-lg flex gap-1.5 overflow-x-auto pb-1.5 mb-2 scrollbar-none border-b border-slate-800/80">
-        {ALL_GAMES.map((game) => {
-          const isActive = selectedType === game.id;
-          const count = (PUZZLE_CATALOG[game.id]?.length || 0) + (dynamicPuzzles[game.id]?.length || 0);
-          return (
-            <button
-              key={game.id}
-              onClick={() => {
-                setSelectedType(game.id);
-                setPuzzleIndex(0);
-              }}
-              disabled={count === 0}
-              className={`px-2.5 py-1 text-[11px] whitespace-nowrap rounded transition border flex items-center gap-1 ${
-                isActive
-                  ? 'bg-indigo-600 border-indigo-400 text-white font-bold shadow'
-                  : count === 0
-                  ? 'border-slate-900 text-slate-700 cursor-not-allowed'
-                  : 'border-slate-800 text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <span>{game.icon}</span>
-              <span>{isEn ? game.nameEn : game.nameZh}</span>
-              <span className="text-[8px] opacity-50">({count})</span>
-            </button>
-          );
-        })}
-      </div>
-
-      {/* 2. 正常難度劃分：兒童 / 進階 / 專家 / 魔王 */}
-      <div className="w-full max-w-lg grid grid-cols-4 gap-1.5 mb-2.5">
+      {/* 4 級標準難度切換 */}
+      <div className="w-full max-w-sm sm:max-w-md grid grid-cols-4 gap-1.5 mb-2">
         {LEVEL_KEYS.map((tierKey) => {
           const isSelected = currentLevel === tierKey;
           const count = filteredPuzzles[tierKey]?.length || 0;
@@ -228,7 +207,7 @@ const MainDashboard: React.FC = () => {
         })}
       </div>
 
-      {/* 3. 核心遊戲區域 */}
+      {/* 核心盤面 */}
       {activePuzzle ? (
         <section className="flex flex-col items-center w-full max-w-sm sm:max-w-md">
           <div className="w-full p-1 bg-slate-900/60 border border-slate-800 rounded-xl shadow-2xl">
@@ -237,7 +216,7 @@ const MainDashboard: React.FC = () => {
             </ErrorBoundary>
           </div>
 
-          {/* 迷宮專用虛擬方向鍵盤 */}
+          {/* 搖桿控制區 */}
           {isSpatialExplorationType && (
             <VirtualGamepad
               onMove={handleJoystickMove}
@@ -247,30 +226,30 @@ const MainDashboard: React.FC = () => {
             />
           )}
 
-          {/* 操作按鈕：上一題 / 現場生成 / 下一題 */}
-          <div className="mt-2.5 grid grid-cols-3 gap-1.5 w-full">
+          {/* 操作導覽列 */}
+          <div className="mt-2 grid grid-cols-3 gap-1.5 w-full">
             <button
               onClick={handlePrevPuzzle}
-              className="py-2.5 bg-slate-900 hover:bg-slate-800 text-slate-300 text-[10px] border border-slate-800 rounded transition"
+              className="py-2 bg-slate-900 hover:bg-slate-800 text-slate-300 text-[10px] border border-slate-800 rounded transition"
             >
               {isEn ? '◀ Prev' : '◀ 上一題'}
             </button>
             <button
               onClick={handleLiveGenerate}
-              className="py-2.5 bg-cyan-950 hover:bg-cyan-900 text-cyan-300 font-bold text-[10px] border border-cyan-700/60 rounded shadow transition flex items-center justify-center gap-1"
+              className="py-2 bg-cyan-950 hover:bg-cyan-900 text-cyan-300 font-bold text-[10px] border border-cyan-700/60 rounded shadow transition flex items-center justify-center gap-1"
             >
               <span>⚡</span>
               <span>{isEn ? 'Generate' : '現場生成'}</span>
             </button>
             <button
               onClick={handleNextPuzzle}
-              className="py-2.5 bg-slate-800 hover:bg-slate-700 text-white text-[10px] border border-slate-700 rounded transition"
+              className="py-2 bg-slate-800 hover:bg-slate-700 text-white text-[10px] border border-slate-700 rounded transition"
             >
               {isEn ? 'Next ▶' : '下一題 ▶'}
             </button>
           </div>
 
-          {/* 底部進度與計時 */}
+          {/* 底部時間與關卡進度 */}
           <div className="mt-2 flex items-center justify-between w-full px-1 text-[9px] text-slate-500 border-t border-slate-800/80 pt-1.5">
             <div>
               ⏱️ {String(Math.floor(elapsed / 60)).padStart(2, '0')}:{String(elapsed % 60).padStart(2, '0')}
