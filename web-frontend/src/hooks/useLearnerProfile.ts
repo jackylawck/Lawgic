@@ -2,6 +2,7 @@
 import { useState, useCallback } from 'react';
 
 export type TierKey = 'kids' | 'intermediate' | 'expert' | 'master';
+export type CognitiveDimension = 'spatial' | 'numeric' | 'workingMemory' | 'inhibition';
 
 export interface AttemptPayload {
   puzzleId: string;
@@ -23,7 +24,14 @@ export interface TechniqueStats {
   attempts: number;
   avgTimeSec: number;
   accuracy: number;
-  times: number[]; // 儲存歷史時間計算精確標準誤
+  times?: number[];
+}
+
+export interface LearnerProfileState {
+  totalAttempts: number;
+  techniqueStats: Record<string, TechniqueStats>;
+  recentRecords: AttemptPayload[];
+  cognitiveDimensions?: Record<CognitiveDimension, number>;
 }
 
 export interface BenchmarkMetrics {
@@ -33,23 +41,39 @@ export interface BenchmarkMetrics {
 }
 
 export const useLearnerProfile = () => {
-  const [profile, setProfile] = useState(() => {
+  const [profile, setProfile] = useState<LearnerProfileState>(() => {
     try {
       const stored = localStorage.getItem('logicore_learner_profile');
       return stored
         ? JSON.parse(stored)
         : {
             totalAttempts: 0,
-            techniqueStats: {} as Record<string, TechniqueStats>,
-            recentRecords: [] as AttemptPayload[],
+            techniqueStats: {},
+            recentRecords: [],
+            cognitiveDimensions: {
+              spatial: 0.5,
+              numeric: 0.5,
+              workingMemory: 0.5,
+              inhibition: 0.5,
+            },
           };
     } catch {
-      return { totalAttempts: 0, techniqueStats: {}, recentRecords: [] };
+      return {
+        totalAttempts: 0,
+        techniqueStats: {},
+        recentRecords: [],
+        cognitiveDimensions: {
+          spatial: 0.5,
+          numeric: 0.5,
+          workingMemory: 0.5,
+          inhibition: 0.5,
+        },
+      };
     }
   });
 
   const recordAttempt = useCallback((payload: AttemptPayload) => {
-    setProfile((prev: any) => {
+    setProfile((prev) => {
       const tech = payload.technique || 'General';
       const prevStat: TechniqueStats = prev.techniqueStats[tech] || {
         attempts: 0,
@@ -65,7 +89,7 @@ export const useLearnerProfile = () => {
         ((prevStat.accuracy * prevStat.attempts + (payload.conflictsCount === 0 ? 1 : 0.8)) / newAttempts).toFixed(2)
       );
 
-      const updated = {
+      const updated: LearnerProfileState = {
         totalAttempts: prev.totalAttempts + 1,
         techniqueStats: {
           ...prev.techniqueStats,
@@ -77,6 +101,7 @@ export const useLearnerProfile = () => {
           },
         },
         recentRecords: [payload, ...(prev.recentRecords || [])].slice(0, 50),
+        cognitiveDimensions: prev.cognitiveDimensions,
       };
 
       try {
@@ -88,7 +113,6 @@ export const useLearnerProfile = () => {
     });
   }, []);
 
-  // 取得基準時間並計算 95% 信賴區間與標準誤 (SEM)
   const getBenchmarkMetrics = useCallback(
     (technique: string, defaultTime: number): BenchmarkMetrics => {
       const stat = profile.techniqueStats[technique];
@@ -116,5 +140,13 @@ export const useLearnerProfile = () => {
     [profile]
   );
 
-  return { profile, recordAttempt, getBenchmarkMetrics };
+  // 向後相容既有模組的單一數值讀取呼叫
+  const getBenchmarkTime = useCallback(
+    (technique: string, defaultTime: number): number => {
+      return getBenchmarkMetrics(technique, defaultTime).benchmarkTime;
+    },
+    [getBenchmarkMetrics]
+  );
+
+  return { profile, recordAttempt, getBenchmarkMetrics, getBenchmarkTime };
 };
