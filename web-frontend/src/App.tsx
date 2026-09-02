@@ -209,13 +209,17 @@ const MainDashboard: React.FC = () => {
     }
   }, [activeList.length]);
 
-  // ⚡ 核心功能：前端現場即時閉環調度生成題目
+  // ⚡ 核心功能：前端現場即時閉環調度生成題目（讀取滑動平均優勢策略）
   const handleLiveGenerate = useCallback(() => {
     if (navigator.vibrate) navigator.vibrate(20);
     if (selectedType === 'maze') {
-      // 讀取上一局的策略分類，形成對抗性神經可塑性閉環
-      const lastStrategy = (localStorage.getItem('logicore_last_strategy') as StrategyPersona) || undefined;
-      const newPuzzle = WebMazeGenerator.generate(activeLevel, lastStrategy);
+      // 優先讀取滑動平均加權優勢策略，若無則讀取單局策略
+      const dominantStrategy =
+        (localStorage.getItem('logicore_dominant_strategy') as StrategyPersona) ||
+        (localStorage.getItem('logicore_last_strategy') as StrategyPersona) ||
+        undefined;
+
+      const newPuzzle = WebMazeGenerator.generate(activeLevel, dominantStrategy);
 
       setDynamicPuzzles((prev) => {
         const list = prev['maze'] || [];
@@ -223,10 +227,16 @@ const MainDashboard: React.FC = () => {
       });
       setPuzzleIndex(0);
 
-      const toastMessage = lastStrategy
+      const strategyZhMap: Record<StrategyPersona, string> = {
+        'Macro-Planner': '宏觀推演型',
+        'Wall-Follower': '謹慎壁隨型',
+        'Intuitive-Explorer': '直覺衝刺型',
+      };
+
+      const toastMessage = dominantStrategy
         ? (isEn
-            ? `⚡ Adaptive Maze compiled for [${lastStrategy}]!`
-            : `⚡ 針對【${lastStrategy === 'Macro-Planner' ? '宏觀推演型' : lastStrategy === 'Wall-Follower' ? '謹慎壁隨型' : '直覺衝刺型'}】特質之對抗迷宮已生成！`)
+            ? `⚡ Adaptive Maze compiled for [${dominantStrategy}]!`
+            : `⚡ 針對【${strategyZhMap[dominantStrategy] || dominantStrategy}】加權特質之對抗迷宮已生成！`)
         : (isEn ? '⚡ Brand new procedural maze generated!' : '⚡ 現場即時演算迷宮生成完畢！');
 
       setNeuroToast(toastMessage);
