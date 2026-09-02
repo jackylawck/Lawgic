@@ -36,7 +36,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
   const [visitedSet, setVisitedSet] = useState<Set<string>>(new Set([`${startPos[0]},${startPos[1]}`]));
   const [isCompleted, setIsCompleted] = useState<boolean>(false);
 
-  // 預設關閉迷霧，進場即看見完整迷宮宏觀全景
+  // 預設全圖可視，避免進場全黑
   const [fogMode, setFogMode] = useState<boolean>(false);
 
   // 1. ⚡ 60fps 計時器
@@ -583,12 +583,12 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
               <div
                 key={`${rIdx}-${cIdx}`}
                 className={`w-4 h-4 sm:w-6 sm:h-6 flex items-center justify-center rounded-xs font-bold text-[8px] sm:text-[10px] transition-all duration-75 relative ${
-                  isWall
-                    ? 'bg-slate-800/90 border border-slate-700/40 shadow-inner'
-                    : isPlayer
+                  isPlayer
                     ? 'bg-cyan-500 text-white shadow-lg shadow-cyan-500/80 scale-105 z-20 ring-1 ring-cyan-300'
                     : isEnd
-                    ? 'bg-emerald-500 text-white animate-pulse shadow-md shadow-emerald-500/50'
+                    ? 'bg-emerald-500 text-white animate-pulse shadow-[0_0_12px_rgba(16,185,129,0.95)] z-10 border border-emerald-300 ring-1 ring-emerald-400'
+                    : isWall
+                    ? 'bg-slate-800/90 border border-slate-700/40 shadow-inner'
                     : isStart
                     ? 'bg-indigo-900 text-indigo-200'
                     : isCompleted && isOptimal
@@ -600,10 +600,11 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
                     : 'bg-slate-900/60'
                 }`}
               >
+                {/* 終點以 🏁 旗幟清晰呈現，優先級置頂 */}
                 {isPlayer ? (
                   '●'
                 ) : isEnd ? (
-                  '★'
+                  <span className="text-[10px] sm:text-xs select-none">🏁</span>
                 ) : isStart ? (
                   'S'
                 ) : isCompleted && isOptimal ? (
