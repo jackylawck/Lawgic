@@ -3,26 +3,24 @@ import { PuzzleEntity, TierKey } from '../generated';
 
 export class WebSudokuGenerator {
   static generate(tier: TierKey): PuzzleEntity {
-    // 依難度設定提示格數 (Givens)
     const cluesMap: Record<TierKey, number> = {
-      kids: 46,         // 兒童：提示多，直覺推理
-      intermediate: 36, // 進階：適度分叉
-      expert: 28,       // 專家：需深入排除法
-      master: 22,       // 魔王：高難度唯一定解
+      kids: 46,
+      intermediate: 36,
+      expert: 28,
+      master: 22,
     };
 
     const targetClues = cluesMap[tier] || 36;
     const solution = this._generateCompleteBoard();
     const puzzle = solution.map((row) => [...row]);
 
-    // 隨機挖空保留唯一定解
     const cells: [number, number][] = [];
     for (let r = 0; r < 9; r++) {
       for (let c = 0; c < 9; c++) {
         cells.push([r, c]);
       }
     }
-    // 洗牌
+
     for (let i = cells.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
       [cells[i], cells[j]] = [cells[j], cells[i]];
@@ -34,10 +32,9 @@ export class WebSudokuGenerator {
       const backup = puzzle[r][c];
       puzzle[r][c] = 0;
 
-      // 檢查是否維持唯一定解
       const testBoard = puzzle.map((row) => [...row]);
       if (this._countSolutions(testBoard) !== 1) {
-        puzzle[r][c] = backup; // 不具唯一定解則還原
+        puzzle[r][c] = backup;
       } else {
         currentClues--;
       }
@@ -110,7 +107,7 @@ export class WebSudokuGenerator {
               board[r][c] = num;
               this._countSolutions(board, count);
               board[r][c] = 0;
-              if (count.total >= 2) return count.total; // 超過 1 組解即可提前終止
+              if (count.total >= 2) return count.total;
             }
           }
           return count.total;
