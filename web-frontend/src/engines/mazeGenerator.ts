@@ -55,12 +55,10 @@ export class WebMazeGenerator {
       }
     }
 
-    // 3. 確保起點與終點實體格子必定為 0 (通路)
+    // 3. 確保起點與終點實體格子必定為 0 (通路)，並強制打穿連通至主迷宮
     grid[startY][startX] = 0;
     grid[endY][endX] = 0;
-
-    // 強制挖掘確保終點 100% 連接至拓撲迷宮主體
-    this._connectGoalSafely(grid, width, height, endX, endY);
+    this._guaranteeConnectedGoal(grid, width, height, startX, startY, endX, endY);
 
     const start: [number, number] = [startX, startY];
     const end: [number, number] = [endX, endY];
@@ -81,14 +79,11 @@ export class WebMazeGenerator {
     this._injectDeceptiveLongLoops(grid, width, height, start, end, loopCount);
     this._injectAdvancedDistractors(grid, width, height, distractorCount);
 
-    // 計算數學理論最優解
+    // 重新校驗終點與計算最短路徑
     let solution = this._bfs(grid, width, height, start, end);
-
-    // 雙重防護：若極端情況下仍未連通，強行拉直連通終點相鄰路徑並重新求解
     if (solution.length <= 2) {
       grid[endY][endX - 1] = 0;
       grid[endY - 1][endX] = 0;
-      grid[endY - 1][endX - 1] = 0;
       solution = this._bfs(grid, width, height, start, end);
     }
 
@@ -129,6 +124,7 @@ export class WebMazeGenerator {
         height,
         start,
         end,
+        goal: end, // 雙鍵容錯，防止前端因屬性名稱讀取不到
         grid,
         visualNoise: visualNoiseScore,
         adaptedFor: personaBias || 'standard',
@@ -155,40 +151,39 @@ export class WebMazeGenerator {
   }
 
   /**
-   * 確保終點與迷宮主通路絕對連通
+   * 雙向連通硬性保證：若 BFS 發現無法從起點抵達終點，直接從終點向內挖掘直到遇見通路
    */
-  private static _connectGoalSafely(
+  private static _guaranteeConnectedGoal(
     grid: number[][],
     width: number,
     height: number,
+    startX: number,
+    startY: number,
     endX: number,
     endY: number
   ): void {
     grid[endY][endX] = 0;
 
-    // 檢查四周是否有通路
-    const dirs = [
-      [0, -1],
-      [-1, 0],
-      [0, 1],
-      [1, 0],
-    ];
-    const hasOpenNeighbor = dirs.some(([dx, dy]) => {
-      const nx = endX + dx;
-      const ny = endY + dy;
-      return nx >= 0 && nx < width && ny >= 0 && ny < height && grid[ny][nx] === 0;
-    });
+    let testPath = this._bfs(grid, width, height, [startX, startY], [endX, endY]);
+    if (testPath.length > 2) return;
 
-    if (!hasOpenNeighbor) {
-      // 終點為孤島時，向左與向上打通兩格直到遇見通路
-      if (endX > 1) {
-        grid[endY][endX - 1] = 0;
-        grid[endY][endX - 2] = 0;
-      }
-      if (endY > 1) {
-        grid[endY - 1][endX] = 0;
-        grid[endY - 2][endX] = 0;
-      }
+    // 向左和向上連續挖掘通路
+    let cx = endX;
+    let cy = endY;
+
+    while (cx > 1) {
+      cx--;
+      grid[cy][cx] = 0;
+      testPath = this._bfs(grid, width, height, [startX, startY], [endX, endY]);
+      if (testPath.length > 2) return;
+    }
+
+    cx = endX;
+    while (cy > 1) {
+      cy--;
+      grid[cy][cx] = 0;
+      testPath = this._bfs(grid, width, height, [startX, startY], [endX, endY]);
+      if (testPath.length > 2) return;
     }
   }
 
