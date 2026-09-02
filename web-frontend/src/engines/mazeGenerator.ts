@@ -5,6 +5,7 @@ export type StrategyPersona = 'Macro-Planner' | 'Wall-Follower' | 'Intuitive-Exp
 
 export class WebMazeGenerator {
   static generate(tier: TierKey, personaBias?: StrategyPersona): PuzzleEntity {
+    // 嚴格奇數尺寸階梯
     const sizeMap: Record<TierKey, number> = {
       kids: 11,
       intermediate: 15,
@@ -19,6 +20,7 @@ export class WebMazeGenerator {
     // 1. 初始化全實心牆面 (1: 牆, 0: 通路)
     const grid: number[][] = Array.from({ length: height }, () => Array(width).fill(1));
 
+    // 座標定義：startX = 1 (列/X), startY = 1 (行/Y)
     const startX = 1;
     const startY = 1;
     const endX = width - 2;
@@ -55,10 +57,14 @@ export class WebMazeGenerator {
       }
     }
 
-    // 3. 確保起點與終點實體格子必定為 0 (通路)，並強制打穿連通至主迷宮
+    // 3. 確保起點與終點實體格子必定為通路 (0)
     grid[startY][startX] = 0;
     grid[endY][endX] = 0;
-    this._guaranteeConnectedGoal(grid, width, height, startX, startY, endX, endY);
+
+    // 保證終點連通性：若終點為死胡同，強制打通相鄰內牆
+    if (grid[endY - 1][endX] === 1 && grid[endY][endX - 1] === 1) {
+      grid[endY - 1][endX] = 0;
+    }
 
     const start: [number, number] = [startX, startY];
     const end: [number, number] = [endX, endY];
@@ -79,7 +85,7 @@ export class WebMazeGenerator {
     this._injectDeceptiveLongLoops(grid, width, height, start, end, loopCount);
     this._injectAdvancedDistractors(grid, width, height, distractorCount);
 
-    // 重新校驗終點與計算最短路徑
+    // 重新計算並驗證數學理論最優解
     let solution = this._bfs(grid, width, height, start, end);
     if (solution.length <= 2) {
       grid[endY][endX - 1] = 0;
@@ -122,9 +128,10 @@ export class WebMazeGenerator {
       puzzle: {
         width,
         height,
-        start,
-        end,
-        goal: end, // 雙鍵容錯，防止前端因屬性名稱讀取不到
+        size,
+        start: [startX, startY],
+        end: [endX, endY],
+        goal: [endX, endY], // 雙鍵容錯
         grid,
         visualNoise: visualNoiseScore,
         adaptedFor: personaBias || 'standard',
@@ -151,42 +158,8 @@ export class WebMazeGenerator {
   }
 
   /**
-   * 雙向連通硬性保證：若 BFS 發現無法從起點抵達終點，直接從終點向內挖掘直到遇見通路
+   * O(1) 隊列指針 BFS 最短路徑求解 (嚴格保持 [x, y] 格式)
    */
-  private static _guaranteeConnectedGoal(
-    grid: number[][],
-    width: number,
-    height: number,
-    startX: number,
-    startY: number,
-    endX: number,
-    endY: number
-  ): void {
-    grid[endY][endX] = 0;
-
-    let testPath = this._bfs(grid, width, height, [startX, startY], [endX, endY]);
-    if (testPath.length > 2) return;
-
-    // 向左和向上連續挖掘通路
-    let cx = endX;
-    let cy = endY;
-
-    while (cx > 1) {
-      cx--;
-      grid[cy][cx] = 0;
-      testPath = this._bfs(grid, width, height, [startX, startY], [endX, endY]);
-      if (testPath.length > 2) return;
-    }
-
-    cx = endX;
-    while (cy > 1) {
-      cy--;
-      grid[cy][cx] = 0;
-      testPath = this._bfs(grid, width, height, [startX, startY], [endX, endY]);
-      if (testPath.length > 2) return;
-    }
-  }
-
   private static _bfs(
     grid: number[][],
     width: number,
@@ -222,6 +195,9 @@ export class WebMazeGenerator {
     return [start, end];
   }
 
+  /**
+   * 長距離欺騙環路注入
+   */
   private static _injectDeceptiveLongLoops(
     grid: number[][],
     width: number,
@@ -276,6 +252,9 @@ export class WebMazeGenerator {
     }
   }
 
+  /**
+   * 階梯型與螺旋型多樣態盲巷
+   */
   private static _injectAdvancedDistractors(
     grid: number[][],
     width: number,
@@ -345,6 +324,9 @@ export class WebMazeGenerator {
     }
   }
 
+  /**
+   * 受限人類模擬器
+   */
   private static _simulateHumanPathLimited(
     grid: number[][],
     width: number,
