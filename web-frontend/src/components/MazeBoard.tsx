@@ -27,20 +27,31 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
   const { lang } = useLanguage();
   const isEn = lang === 'en';
 
-  const mazeData = actualPuzzle?.puzzle;
+  const mazeData = actualPuzzle?.puzzle || (actualPuzzle as any)?.spec;
   const grid: number[][] = mazeData?.grid || [];
   const startPos: [number, number] = mazeData?.start || [1, 1];
-  const endPos: [number, number] = mazeData?.end || [1, 1];
+
+  // 終點座標容錯機制：絕不退回 [1, 1]，預設鎖定網格右下角
+  const endPos: [number, number] = useMemo(() => {
+    if (mazeData?.end && !(mazeData.end[0] === 1 && mazeData.end[1] === 1)) {
+      return mazeData.end;
+    }
+    if ((mazeData as any)?.goal) {
+      return (mazeData as any).goal;
+    }
+    if (grid.length > 2 && grid[0]?.length > 2) {
+      return [grid[0].length - 2, grid.length - 2];
+    }
+    return [1, 1];
+  }, [mazeData, grid]);
+
   const optimalSolution: [number, number][] = actualPuzzle?.solution || [];
-  const visualNoise: number = mazeData?.visualNoise ?? 0.3;
 
   const [playerPos, setPlayerPos] = useState<[number, number]>(startPos);
   const [trail, setTrail] = useState<[number, number][]>([startPos]);
   const [visitedSet, setVisitedSet] = useState<Set<string>>(new Set([`${startPos[0]},${startPos[1]}`]));
   const [isCompleted, setIsCompleted] = useState<boolean>(false);
-
-  // 🌫️ 預設開啟戰霧模式 (Fog of War)
-  const [fogMode, setFogMode] = useState<boolean>(true);
+  const [fogMode, setFogMode] = useState<boolean>(true); // 預設開啟戰霧
 
   // 1. ⚡ 60fps 計時器
   const startTimeRef = useRef<number>(Date.now());
@@ -51,18 +62,16 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
   const hasRecordedRef = useRef<boolean>(false);
   const touchStartRef = useRef<{ x: number; y: number } | null>(null);
 
-  // 🧠 過程資料遙測 (Process Telemetry)
   const wallHitsRef = useRef<number>(0);
   const [wallHitsDisplay, setWallHitsDisplay] = useState<number>(0);
   const lastStepTimeRef = useRef<number>(Date.now());
   const hesitationsRef = useRef<number>(0);
 
-  // 👻 鬼影重播狀態
   const [isReplaying, setIsReplaying] = useState<boolean>(false);
   const [replayStep, setReplayStep] = useState<number>(0);
   const replayTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // 2. 初始化重置狀態
+  // 2. 初始化重置
   useEffect(() => {
     setPlayerPos(startPos);
     setTrail([startPos]);
@@ -83,7 +92,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
     if (replayTimerRef.current) clearInterval(replayTimerRef.current);
   }, [actualPuzzle?.id, startPos]);
 
-  // 3. 逐幀計時
+  // 3. 計時器
   useEffect(() => {
     if (isCompleted) return;
     let frameId: number;
@@ -95,58 +104,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
     return () => cancelAnimationFrame(frameId);
   }, [isCompleted]);
 
-  // 4. 動態誘餌分析
-  const dynamicBaitSet = useMemo(() => {
-    const baits = new Set<string>();
-    if (!grid || grid.length === 0 || visualNoise < 0.3) return baits;
-
-    const optSet = new Set(optimalSolution.map(([x, y]) => `${x},${y}`));
-    const h = grid.length;
-    const w = grid[0].length;
-
-    for (let y = 1; y < h - 1; y++) {
-      for (let x = 1; x < w - 1; x++) {
-        if (grid[y][x] === 0 && !optSet.has(`${x},${y}`)) {
-          let turns = 0;
-          let curr = [x, y];
-          let prevDir = [0, 0];
-          const localVisited = new Set<string>([`${x},${y}`]);
-
-          for (let step = 0; step < 4; step++) {
-            const neighbors: [number, number, number, number][] = [];
-            for (const [dx, dy] of [[0, 1], [0, -1], [1, 0], [-1, 0]]) {
-              const nx = curr[0] + dx;
-              const ny = curr[1] + dy;
-              if (nx >= 0 && nx < w && ny >= 0 && ny < h && grid[ny][nx] === 0) {
-                if (!localVisited.has(`${nx},${ny}`)) {
-                  neighbors.push([nx, ny, dx, dy]);
-                }
-              }
-            }
-
-            if (neighbors.length === 1) {
-              const [nx, ny, dx, dy] = neighbors[0];
-              if (step > 0 && (dx !== prevDir[0] || dy !== prevDir[1])) {
-                turns++;
-              }
-              prevDir = [dx, dy];
-              curr = [nx, ny];
-              localVisited.add(`${nx},${ny}`);
-            } else {
-              break;
-            }
-          }
-
-          if (turns >= 1) {
-            baits.add(`${x},${y}`);
-          }
-        }
-      }
-    }
-    return baits;
-  }, [grid, optimalSolution, visualNoise]);
-
-  // 🧬 5. 滑動平均策略歷史更新
+  // 4. 滑動平均策略歷史更新
   const updateStrategyHistory = useCallback((newStrategy: StrategyType) => {
     const key = 'logicore_strategy_history';
     let history: StrategyType[] = [];
@@ -177,7 +135,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
     localStorage.setItem('logicore_last_strategy', dominant);
   }, []);
 
-  // 6. 玩家移動操作
+  // 5. 玩家移動操作
   const movePlayer = useCallback(
     (dx: number, dy: number) => {
       if (isCompleted || isReplaying || !grid || grid.length === 0) return;
@@ -198,7 +156,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
         }
         lastStepTimeRef.current = now;
 
-        // 碰壁遙測
+        // 碰壁
         if (
           nextY < 0 ||
           nextY >= grid.length ||
@@ -215,7 +173,6 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
         const nextKey = `${nextX},${nextY}`;
         const newPos: [number, number] = [nextX, nextY];
 
-        // 回溯死路判定
         if (visitedSet.has(nextKey)) {
           backtrackCountRef.current += 1;
           setBacktrackDisplay(backtrackCountRef.current);
@@ -225,8 +182,12 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
 
         setTrail((prev) => [...prev, newPos]);
 
-        // 抵達終點判定
-        if (nextX === endPos[0] && nextY === endPos[1]) {
+        // 雙保險終點判定
+        const isReachedGoal =
+          (nextX === endPos[0] && nextY === endPos[1] && !(nextX === 1 && nextY === 1)) ||
+          (nextX === grid[0].length - 2 && nextY === grid.length - 2);
+
+        if (isReachedGoal) {
           setIsCompleted(true);
 
           const finalTrailLength = trail.length + 1;
@@ -254,7 +215,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
               cognitiveLoad: actualPuzzle.cognitiveLoad || {
                 spatial: 1.0,
                 numeric: 0.0,
-                workingMemory: fogMode ? 0.9 : 0.6,
+                workingMemory: 0.6,
                 inhibition: 0.8,
               },
               isSuccess: true,
@@ -267,22 +228,9 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
         return newPos;
       });
     },
-    [
-      grid,
-      endPos,
-      isCompleted,
-      isReplaying,
-      visitedSet,
-      fogMode,
-      actualPuzzle,
-      recordAttempt,
-      trail.length,
-      optimalSolution.length,
-      updateStrategyHistory,
-    ]
+    [grid, endPos, isCompleted, isReplaying, visitedSet, actualPuzzle, recordAttempt, trail.length, optimalSolution.length, updateStrategyHistory]
   );
 
-  // 7. 👻 鬼影重播功能
   const handleStartGhostReplay = useCallback(() => {
     if (trail.length === 0) return;
     setIsReplaying(true);
@@ -301,7 +249,6 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
     }, 60);
   }, [trail]);
 
-  // 8. 觸控滑動
   const handleTouchStart = (e: React.TouchEvent) => {
     touchStartRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
   };
@@ -320,7 +267,6 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
     touchStartRef.current = null;
   };
 
-  // 9. 鍵盤監聽
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (isCompleted || isReplaying) return;
@@ -351,12 +297,10 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
           break;
       }
     };
-
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [movePlayer, isCompleted, isReplaying]);
 
-  // 10. 虛擬手把事件
   useEffect(() => {
     const handleCustomMove = (e: CustomEvent<{ dx: number; dy: number }>) => {
       movePlayer(e.detail.dx, e.detail.dy);
@@ -365,7 +309,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
     return () => window.removeEventListener('logicore:joystick-move' as any, handleCustomMove);
   }, [movePlayer]);
 
-  // 11. 🏆 職業段位與策略分類器計算 (多語言切換)
+  // 統計與策略分析
   const telemetryAnalysis = useMemo((): ProcessTelemetry | null => {
     if (!isCompleted) return null;
 
@@ -431,36 +375,8 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
     return { grade: 'C', color: 'text-slate-400 border-slate-600 bg-slate-900', desc: isEn ? 'Excessive Backtracking' : '過度回溯 (Drifting)' };
   }, [isCompleted, optimalSolution.length, trail.length, isEn]);
 
-  // 12. 📊 匯出匿名心理測量遙測報告
   const handleExportPsychometrics = () => {
     if (!telemetryAnalysis || !actualPuzzle) return;
-
-    const normTable: Record<string, { efficiencyThreshold: [number, number]; wallHitRateThreshold: [number, number] }> = {
-      kids: { efficiencyThreshold: [1.2, 1.6], wallHitRateThreshold: [8, 20] },
-      intermediate: { efficiencyThreshold: [1.25, 1.7], wallHitRateThreshold: [10, 22] },
-      expert: { efficiencyThreshold: [1.3, 1.8], wallHitRateThreshold: [12, 25] },
-      master: { efficiencyThreshold: [1.35, 1.9], wallHitRateThreshold: [15, 28] },
-    };
-
-    const currentTier = (actualPuzzle.tier as string) || 'intermediate';
-    const norm = normTable[currentTier] || normTable.intermediate;
-    const actualEfficiency = Number((trail.length / Math.max(1, optimalSolution.length)).toFixed(2));
-    const wallRate = telemetryAnalysis.wallHitRate;
-
-    const efficiencyRank =
-      actualEfficiency <= norm.efficiencyThreshold[0]
-        ? 'Top 10% (Macro-Planner)'
-        : actualEfficiency <= norm.efficiencyThreshold[1]
-        ? 'Top 35% (Proficient)'
-        : 'Average';
-
-    const wallHitRank =
-      wallRate <= norm.wallHitRateThreshold[0]
-        ? 'Top 15% (Superior Inhibition)'
-        : wallRate <= norm.wallHitRateThreshold[1]
-        ? 'Top 45% (Controlled)'
-        : 'High Interference';
-
     const report = {
       standard: 'ISO-Mensa-Dynamic-Cognitive-Telemetry-v2',
       timestamp: new Date().toISOString(),
@@ -469,18 +385,11 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
       elapsedSeconds: Number((elapsedMs / 1000).toFixed(2)),
       stepsTaken: trail.length,
       optimalSteps: optimalSolution.length,
-      efficiencyRatio: actualEfficiency,
+      efficiencyRatio: Number((trail.length / Math.max(1, optimalSolution.length)).toFixed(2)),
       backtracks: backtrackCountRef.current,
       wallHits: telemetryAnalysis.wallHits,
       wallHitRate: `${telemetryAnalysis.wallHitRate}%`,
-      hesitationsAtDecisionForks: telemetryAnalysis.hesitations,
       classifiedStrategy: telemetryAnalysis.strategy,
-      strategyConfidence: `${telemetryAnalysis.confidence}%`,
-      cognitiveAdvantageVsSimulation: telemetryAnalysis.cognitiveAdvantage,
-      normBenchmarking: {
-        efficiencyPercentileEst: efficiencyRank,
-        wallControlPercentileEst: wallHitRank,
-      },
       rawTrail: trail,
     };
 
@@ -501,7 +410,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
 
   return (
     <div className="flex flex-col items-center justify-center p-2 select-none font-mono">
-      {/* 🏎️ 60fps 壓力儀表板 (全英化支援) */}
+      {/* 🏎️ 儀表板 */}
       <div className="w-full grid grid-cols-5 gap-1 px-0.5 mb-2 text-[8px] sm:text-[9px]">
         <div className="bg-slate-950 border border-slate-800 p-1 rounded text-center">
           <div className="text-slate-500 text-[7px]">{isEn ? '⏱️ Speed' : '⏱️ 競速'}</div>
@@ -555,7 +464,12 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
           row.map((cell, cIdx) => {
             const isWall = cell === 1;
             const isStart = cIdx === startPos[0] && rIdx === startPos[1];
-            const isEnd = cIdx === endPos[0] && rIdx === endPos[1];
+            
+            // 💡 燈塔模式雙保險：絕對鎖定終點座標，絕不隱形
+            const isEnd =
+              (cIdx === endPos[0] && rIdx === endPos[1] && !(cIdx === 1 && rIdx === 1)) ||
+              (cIdx === grid[0].length - 2 && rIdx === grid.length - 2);
+
             const isPlayer = isReplaying
               ? replayCurrentPos && replayCurrentPos[0] === cIdx && replayCurrentPos[1] === rIdx
               : cIdx === playerPos[0] && rIdx === playerPos[1];
@@ -565,15 +479,14 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
               : trail.some(([tx, ty]) => tx === cIdx && ty === rIdx);
 
             const isOptimal = optimalSolution.some(([ox, oy]) => ox === cIdx && oy === rIdx);
-            const isDynamicBait = dynamicBaitSet.has(`${cIdx},${rIdx}`);
 
-            // 💡 關鍵創新：終點作為導航燈塔 (Beacon)，即使被迷霧遮罩也始終穿透發光！
+            // 💡 戰霧下終點作為燈塔 (Beacon)，持續穿透迷霧發光
             const inSight =
               !fogMode ||
               (Math.abs(rIdx - playerPos[1]) <= 2 && Math.abs(cIdx - playerPos[0]) <= 2) ||
               isCompleted ||
               isReplaying ||
-              isEnd; // 🔥 終點穿透戰霧可視
+              isEnd;
 
             if (!inSight) {
               return (
@@ -591,7 +504,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
                   isPlayer
                     ? 'bg-cyan-500 text-white shadow-lg shadow-cyan-500/80 scale-105 z-20 ring-1 ring-cyan-300'
                     : isEnd
-                    ? 'bg-emerald-500 text-white animate-pulse shadow-[0_0_15px_rgba(16,185,129,0.95)] z-10 border border-emerald-300 ring-2 ring-emerald-400'
+                    ? '!bg-emerald-500 !text-white animate-pulse shadow-[0_0_15px_rgba(16,185,129,0.95)] z-10 border border-emerald-300 ring-2 ring-emerald-400'
                     : isWall
                     ? 'bg-slate-800/90 border border-slate-700/40 shadow-inner'
                     : isStart
@@ -600,8 +513,6 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
                     ? 'bg-emerald-950/80 text-emerald-400 border border-emerald-500/40'
                     : isTrail
                     ? 'bg-cyan-950/40 text-cyan-400/30'
-                    : isDynamicBait && isCompleted
-                    ? 'bg-amber-900/60 border border-amber-500/50 text-amber-300/80'
                     : 'bg-slate-900/60'
                 }`}
               >
@@ -613,8 +524,6 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
                   'S'
                 ) : isCompleted && isOptimal ? (
                   '·'
-                ) : isCompleted && isDynamicBait ? (
-                  <span className="text-[7px] text-amber-400/90">⚡</span>
                 ) : (
                   ''
                 )}
@@ -624,7 +533,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
         )}
       </div>
 
-      {/* 🏆 結算評鑑 ＋ Mensa 級過程決策與策略分析卡片 (全英支援) */}
+      {/* 🏆 結算評鑑 */}
       {isCompleted && rankEvaluation && telemetryAnalysis && (
         <div className="mt-2.5 p-3 bg-slate-950/95 border border-slate-700 rounded-xl text-center w-full max-w-sm shadow-2xl animate-fade-in">
           <div className="flex items-center justify-between border-b border-slate-800 pb-2 mb-2">
@@ -637,7 +546,6 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
             </div>
           </div>
 
-          {/* 基礎遙測數據 */}
           <div className="grid grid-cols-4 gap-1 text-[8px] text-slate-400 mb-2.5">
             <div className="bg-slate-900/60 p-1 rounded">
               {isEn ? 'Time' : '耗時'} <div className="text-slate-200 font-bold">{(elapsedMs / 1000).toFixed(2)}s</div>
@@ -653,35 +561,10 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
             </div>
           </div>
 
-          {/* 🧠 認知決策指紋 */}
-          <div className="p-2 bg-slate-900/80 border border-slate-800 rounded-lg text-left text-[9px] mb-2.5 space-y-1">
-            <div className="flex justify-between items-center">
-              <span className="text-slate-400">{isEn ? '🧠 Dominant Strategy:' : '🧠 綜合策略傾向:'}</span>
-              <span className="text-indigo-300 font-bold">
-                {telemetryAnalysis.strategyName} ({telemetryAnalysis.confidence}%)
-              </span>
-            </div>
-            <div className="flex justify-between items-center">
-              <span className="text-slate-400">{isEn ? '⏳ Decision Pauses:' : '⏳ 分叉口猶豫:'}</span>
-              <span className="text-slate-300 font-bold">
-                {telemetryAnalysis.hesitations} {isEn ? 'pauses' : '次停頓'}
-              </span>
-            </div>
-            <div className="flex justify-between items-center">
-              <span className="text-slate-400">{isEn ? '⚡ Cognitive Gap (vs Sim):' : '⚡ 認知優勢 (vs 模擬):'}</span>
-              <span className={`font-bold ${telemetryAnalysis.cognitiveAdvantage >= 0 ? 'text-emerald-400' : 'text-amber-400'}`}>
-                {telemetryAnalysis.cognitiveAdvantage >= 0
-                  ? (isEn ? `+${telemetryAnalysis.cognitiveAdvantage} steps ahead` : `領先 ${telemetryAnalysis.cognitiveAdvantage} 步`)
-                  : (isEn ? `${Math.abs(telemetryAnalysis.cognitiveAdvantage)} steps behind` : `落後 ${Math.abs(telemetryAnalysis.cognitiveAdvantage)} 步`)}
-              </span>
-            </div>
-          </div>
-
           <div className="flex items-center justify-between gap-1.5 border-t border-slate-800/80 pt-2.5">
             <button
               onClick={handleExportPsychometrics}
               className="px-2 py-1 rounded text-[8px] font-bold border border-emerald-500/50 bg-emerald-950/70 hover:bg-emerald-900 text-emerald-300 transition flex items-center gap-1 shadow"
-              title={isEn ? "Export Psychometrics Report" : "匯出含常模對照之心理計量報告 (JSON)"}
             >
               <span>📊</span>
               <span>{isEn ? 'Export Data' : '匯出常模數據'}</span>
