@@ -47,7 +47,7 @@ export class WebSudokuGenerator {
 
     return {
       id,
-      category: 'numerical',
+      category: ('numerical' as any),
       engine_type: 'sudoku',
       tier,
       puzzle,
