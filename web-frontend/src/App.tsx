@@ -16,7 +16,6 @@ interface PuzzleMeta {
   icon: string;
 }
 
-// 完整 12 款遊戲
 const ALL_GAMES: PuzzleMeta[] = [
   { id: 'maze', nameZh: '空間迷宮', nameEn: 'Maze', icon: '🌀' },
   { id: 'sudoku', nameZh: '數獨魔陣', nameEn: 'Sudoku', icon: '🔢' },
@@ -155,12 +154,12 @@ const MainDashboard: React.FC = () => {
 
   return (
     <main className="min-h-screen bg-[#090d14] text-slate-200 flex flex-col items-center py-2 px-2 font-mono selection:bg-indigo-600">
-      {/* 頂部整合工具列：摺疊選單 + 語言切換 */}
-      <header className="w-full max-w-sm sm:max-w-md flex items-center justify-between gap-2 mb-2 pb-1.5 border-b border-slate-800">
-        <div className="flex items-center gap-2 flex-1 min-w-0">
-          <span className="text-xs font-black tracking-widest text-indigo-400 shrink-0">LOGICORE</span>
-          
-          {/* 遊戲摺疊清單 (Dropdown) */}
+      {/* 頂部整合工具列：遊戲選單 + 難度選單 + 語言切換 (單行緊湊佈局) */}
+      <header className="w-full max-w-sm sm:max-w-md flex items-center justify-between gap-1.5 mb-2 pb-1.5 border-b border-slate-800">
+        <span className="text-xs font-black tracking-widest text-indigo-400 shrink-0">LOGICORE</span>
+        
+        <div className="flex items-center gap-1.5 flex-1 min-w-0">
+          {/* 1. 遊戲摺疊清單 */}
           <select
             value={selectedType}
             onChange={(e) => {
@@ -178,34 +177,29 @@ const MainDashboard: React.FC = () => {
               );
             })}
           </select>
+
+          {/* 2. 難度摺疊清單 (兒童 / 進階 / 專家 / 魔王) */}
+          <select
+            value={currentLevel}
+            onChange={(e) => {
+              setCurrentLevel(e.target.value as TierKey);
+              setPuzzleIndex(0);
+            }}
+            className="w-28 shrink-0 bg-slate-900 border border-slate-700 text-cyan-300 text-xs font-bold rounded px-2 py-1 outline-none focus:border-cyan-500 cursor-pointer"
+          >
+            {LEVEL_KEYS.map((tierKey) => {
+              const count = filteredPuzzles[tierKey]?.length || 0;
+              return (
+                <option key={tierKey} value={tierKey} className="bg-slate-900 text-cyan-300">
+                  {isEn ? TIER_NAMES[tierKey].en : TIER_NAMES[tierKey].zh} ({count})
+                </option>
+              );
+            })}
+          </select>
         </div>
+
         <LangSwitcher />
       </header>
-
-      {/* 4 級標準難度切換 */}
-      <div className="w-full max-w-sm sm:max-w-md grid grid-cols-4 gap-1.5 mb-2">
-        {LEVEL_KEYS.map((tierKey) => {
-          const isSelected = currentLevel === tierKey;
-          const count = filteredPuzzles[tierKey]?.length || 0;
-          return (
-            <button
-              key={tierKey}
-              onClick={() => {
-                setCurrentLevel(tierKey);
-                setPuzzleIndex(0);
-              }}
-              className={`py-1 text-center text-[10px] font-bold rounded border transition ${
-                isSelected
-                  ? 'bg-gradient-to-r from-indigo-700 to-cyan-700 border-cyan-400 text-white shadow-md'
-                  : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <div>{isEn ? TIER_NAMES[tierKey].en : TIER_NAMES[tierKey].zh}</div>
-              <div className="text-[8px] opacity-50 font-normal">({count})</div>
-            </button>
-          );
-        })}
-      </div>
 
       {/* 核心盤面 */}
       {activePuzzle ? (
