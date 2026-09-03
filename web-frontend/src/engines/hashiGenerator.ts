@@ -20,9 +20,9 @@ export interface PotentialEdge {
   v: number;
   key: string;
   isHoriz: boolean;
-  fixedCoord: number; // 水平線為 y，垂直線為 x
-  minVar: number;     // 水平線為 minX，垂直線為 minY
-  maxVar: number;     // 水平線為 maxX，垂直線為 maxY
+  fixedCoord: number;
+  minVar: number;
+  maxVar: number;
 }
 
 export interface HashiHintStep {
@@ -53,16 +53,13 @@ export class WebHashiGenerator {
       const { islands, solutionBridges } = generated;
       const potentialEdges = this._findPotentialEdges(islands);
 
-      // 嚴謹 MRV 唯一解驗證（納入全域連通分量與正交防交叉）
       const solutionCount = this._countSolutionsRigorous(islands, potentialEdges);
       if (solutionCount !== 1) {
         continue;
       }
 
-      // 生成具備嚴格因果邏輯鏈的提示階梯
       const hints = this._buildHintLadder(islands, potentialEdges, solutionBridges);
 
-      // 動態合成 IRT Logit 難度與認知負荷
       const bridgeCount = solutionBridges.reduce((acc, b) => acc + b.count, 0);
       const avgDegree = (bridgeCount * 2) / islands.length;
       const edgeDensity = potentialEdges.length / islands.length;
@@ -109,9 +106,6 @@ export class WebHashiGenerator {
     return this._createFallback(tier, size);
   }
 
-  /**
-   * 構建保證全域連通的 180° 對稱網格
-   */
   private static _buildSymmetricConnectedNetwork(
     size: number,
     pairCount: number
@@ -199,7 +193,6 @@ export class WebHashiGenerator {
 
     if (islands.length < pairCount * 1.5) return null;
 
-    // 計算各島嶼預期度數
     islands.forEach((isl) => {
       let total = 0;
       bridges.forEach((b) => {
@@ -275,9 +268,6 @@ export class WebHashiGenerator {
     return edges;
   }
 
-  /**
-   * 嚴謹求解計數器：包含正交防交叉矩陣與全域連通分量（Single Spanning Component）檢驗
-   */
   private static _countSolutionsRigorous(islands: HashiIsland[], edges: PotentialEdge[]): number {
     let solutions = 0;
     const nIslands = islands.length;
@@ -288,7 +278,6 @@ export class WebHashiGenerator {
     const assignedCount = new Int8Array(nEdges);
     const edgeIncident = edges.map((e) => [e.u, e.v] as [number, number]);
 
-    // 預先構建正交交叉互斥邊集合
     const conflictEdges = Array.from({ length: nEdges }, () => [] as number[]);
     for (let i = 0; i < nEdges; i++) {
       for (let j = i + 1; j < nEdges; j++) {
@@ -297,7 +286,6 @@ export class WebHashiGenerator {
         if (e1.isHoriz !== e2.isHoriz) {
           const h = e1.isHoriz ? e1 : e2;
           const v = e1.isHoriz ? e2 : e1;
-          // 判斷是否正交相交
           if (v.fixedCoord > h.minVar && v.fixedCoord < h.maxVar && h.fixedCoord > v.minVar && h.fixedCoord < v.maxVar) {
             conflictEdges[i].push(j);
             conflictEdges[j].push(i);
@@ -312,4 +300,281 @@ export class WebHashiGenerator {
       islandEdges[e.v].push(e.id);
     });
 
-    const isEdgeAssigned =
+    const isEdgeAssigned = new Uint8Array(nEdges);
+    const activeBridgeConflicts = new Int8Array(nEdges);
+
+    const isSingleComponent = (): boolean => {
+      const adj = Array.from({ length: nIslands }, () => [] as number[]);
+      for (let e = 0; e < nEdges; e++) {
+        if (assignedCount[e] > 0) {
+          const [u, v] = edgeIncident[e];
+          adj[u].push(v);
+          adj[v].push(u);
+        }
+      }
+
+      let visitedCount = 0;
+      const visited = new Uint8Array(nIslands);
+      const queue = [0];
+      visited[0] = 1;
+
+      while (queue.length > 0) {
+        const curr = queue.shift()!;
+        visitedCount++;
+        for (const neighbor of adj[curr]) {
+          if (!visited[neighbor]) {
+            visited[neighbor] = 1;
+            queue.push(neighbor);
+          }
+        }
+      }
+
+      return visitedCount === nIslands;
+    };
+
+    const solve = () => {
+      if (solutions >= 2) return;
+
+      let allSatisfied = true;
+      for (let i = 0; i < nIslands; i++) {
+        if (remainingCapacity[i] !== 0) {
+          allSatisfied = false;
+          break;
+        }
+      }
+
+      if (allSatisfied) {
+        if (isSingleComponent()) {
+          solutions++;
+        }
+        return;
+      }
+
+      let bestIsland = -1;
+      let minUnassignedEdges = 999;
+
+      for (let i = 0; i < nIslands; i++) {
+        const remCap = remainingCapacity[i];
+        if (remCap <= 0) continue;
+
+        let unassignedEdges = 0;
+        let potentialCapacity = 0;
+
+        for (const eId of islandEdges[i]) {
+          if (!isEdgeAssigned[eId] && activeBridgeConflicts[eId] === 0) {
+            const other = edgeIncident[eId][0] === i ? edgeIncident[eId][1] : edgeIncident[eId][0];
+            if (remainingCapacity[other] > 0) {
+              potentialCapacity += 2;
+              unassignedEdges++;
+            }
+          }
+        }
+
+        if (potentialCapacity < remCap) return;
+
+        if (unassignedEdges < minUnassignedEdges && unassignedEdges > 0) {
+          minUnassignedEdges = unassignedEdges;
+          bestIsland = i;
+        }
+      }
+
+      if (bestIsland === -1) return;
+
+      let targetEdgeId = -1;
+      for (const eId of islandEdges[bestIsland]) {
+        if (!isEdgeAssigned[eId] && activeBridgeConflicts[eId] === 0) {
+          targetEdgeId = eId;
+          break;
+        }
+      }
+      if (targetEdgeId === -1) return;
+
+      const [u, v] = edgeIncident[targetEdgeId];
+      const maxBridges = Math.min(2, remainingCapacity[u], remainingCapacity[v]);
+
+      isEdgeAssigned[targetEdgeId] = 1;
+
+      for (let count = maxBridges; count >= 0; count--) {
+        assignedCount[targetEdgeId] = count;
+        remainingCapacity[u] -= count;
+        remainingCapacity[v] -= count;
+
+        if (count > 0) {
+          for (const conf of conflictEdges[targetEdgeId]) {
+            activeBridgeConflicts[conf]++;
+          }
+        }
+
+        solve();
+
+        if (count > 0) {
+          for (const conf of conflictEdges[targetEdgeId]) {
+            activeBridgeConflicts[conf]--;
+          }
+        }
+
+        remainingCapacity[u] += count;
+        remainingCapacity[v] += count;
+        assignedCount[targetEdgeId] = 0;
+
+        if (solutions >= 2) break;
+      }
+
+      isEdgeAssigned[targetEdgeId] = 0;
+    };
+
+    solve();
+    return solutions;
+  }
+
+  private static _buildHintLadder(
+    islands: HashiIsland[],
+    edges: PotentialEdge[],
+    solution: HashiBridge[]
+  ): HashiHintStep[] {
+    const hints: HashiHintStep[] = [];
+
+    for (const isl of islands) {
+      const incidentEdges = edges.filter((e) => e.u === isl.id || e.v === isl.id);
+      const solIncident = solution.filter((b) => b.fromId === isl.id || b.toId === isl.id);
+      const dirCount = incidentEdges.length;
+
+      if (dirCount > 0 && isl.expectedCount === dirCount * 2) {
+        const targetBridge = solIncident[0];
+        const neighborId = targetBridge.fromId === isl.id ? targetBridge.toId : targetBridge.fromId;
+        const neighbor = islands.find((i) => i.id === neighborId)!;
+
+        hints.push({
+          level: 1,
+          targetIslandId: isl.id,
+          messageZh: `島嶼 (${isl.x + 1}, ${isl.y + 1}) 數字為 ${isl.expectedCount}，周圍僅有 ${dirCount} 個延伸方向。因每方向最多容納 2 條橋，所有方向已達完全飽和。`,
+          messageEn: `Island at (${isl.x + 1}, ${isl.y + 1}) demands ${isl.expectedCount} bridges with only ${dirCount} branch(es). Since max capacity is 2 per branch, all directions are fully saturated.`,
+        });
+
+        hints.push({
+          level: 2,
+          targetIslandId: isl.id,
+          neighborIslandId: neighborId,
+          messageZh: `基於全方向飽和定理：通往島嶼 (${neighbor.x + 1}, ${neighbor.y + 1}) 的分支必然架設 2 條雙橋。`,
+          messageEn: `By saturation theorem: the connection to island (${neighbor.x + 1}, ${neighbor.y + 1}) is mathematically forced to have 2 bridges.`,
+        });
+
+        hints.push({
+          level: 3,
+          targetIslandId: isl.id,
+          neighborIslandId: neighborId,
+          bridgeCount: 2,
+          messageZh: `👉 請親自落子確認：點選島嶼 (${isl.x + 1}, ${isl.y + 1}) 與 (${neighbor.x + 1}, ${neighbor.y + 1})，手動架設 2 條雙橋。`,
+          messageEn: `👉 Action: Tap island (${isl.x + 1}, ${isl.y + 1}) and (${neighbor.x + 1}, ${neighbor.y + 1}) to manually place 2 bridges.`,
+        });
+        return hints;
+      }
+    }
+
+    for (const isl of islands) {
+      const incidentEdges = edges.filter((e) => e.u === isl.id || e.v === isl.id);
+      const solIncident = solution.filter((b) => b.fromId === isl.id || b.toId === isl.id);
+      const dirCount = incidentEdges.length;
+
+      if (dirCount === 2 && isl.expectedCount === 3 && solIncident.length >= 2) {
+        const targetBridge = solIncident[0];
+        const neighborId = targetBridge.fromId === isl.id ? targetBridge.toId : targetBridge.fromId;
+        const neighbor = islands.find((i) => i.id === neighborId)!;
+
+        hints.push({
+          level: 1,
+          targetIslandId: isl.id,
+          messageZh: `島嶼 (${isl.x + 1}, ${isl.y + 1}) 數字為 3，但僅有 2 個方向可延伸。單一方向最多僅能分擔 2 條橋，任一方向皆不能為 0。`,
+          messageEn: `Island at (${isl.x + 1}, ${isl.y + 1}) requires 3 bridges across only 2 directions. Neither branch can be empty.`,
+        });
+
+        hints.push({
+          level: 2,
+          targetIslandId: isl.id,
+          neighborIslandId: neighborId,
+          messageZh: `由鴿巢原理：兩方向各自分配的橋數必定至少保底 1 條（1+2=3）。`,
+          messageEn: `By Pigeonhole Principle: each branch is guaranteed to carry at least 1 bridge (1+2=3).`,
+        });
+
+        hints.push({
+          level: 3,
+          targetIslandId: isl.id,
+          neighborIslandId: neighborId,
+          bridgeCount: 1,
+          messageZh: `👉 請親自落子確認：點選這兩座島嶼，手動架設至少 1 條保底單橋。`,
+          messageEn: `👉 Action: Tap these two islands to manually place the guaranteed single bridge.`,
+        });
+        return hints;
+      }
+    }
+
+    if (solution.length > 0) {
+      const firstBridge = solution[0];
+      const islA = islands.find((i) => i.id === firstBridge.fromId)!;
+      const islB = islands.find((i) => i.id === firstBridge.toId)!;
+      hints.push({
+        level: 1,
+        targetIslandId: islA.id,
+        messageZh: `檢視島嶼 (${islA.x + 1}, ${islA.y + 1}) 的度數 ${islA.expectedCount}，周邊分支存在約束收斂。`,
+        messageEn: `Inspect degree ${islA.expectedCount} of island (${islA.x + 1}, ${islA.y + 1}); branches are constrained.`,
+      });
+      hints.push({
+        level: 2,
+        targetIslandId: islA.id,
+        neighborIslandId: islB.id,
+        messageZh: `排除互斥交叉與孤島閉環後，此通道必定承擔連接任務。`,
+        messageEn: `After eliminating cycle risks and cross collisions, this branch must carry bridge(s).`,
+      });
+      hints.push({
+        level: 3,
+        targetIslandId: islA.id,
+        neighborIslandId: islB.id,
+        bridgeCount: firstBridge.count,
+        messageZh: `👉 請親自落子確認：手動架設 ${firstBridge.count} 條橋連通此島嶼對。`,
+        messageEn: `👉 Action: Manually place ${firstBridge.count} bridge(s) between these islands.`,
+      });
+    }
+
+    return hints;
+  }
+
+  private static _createFallback(tier: TierKey, size: number): PuzzleEntity {
+    const id = `hashi_sym_fb_${tier}_${Date.now()}`;
+    const islands: HashiIsland[] = [
+      { id: 0, x: 1, y: 1, expectedCount: 2 },
+      { id: 1, x: 1, y: size - 2, expectedCount: 2 },
+      { id: 2, x: size - 2, y: 1, expectedCount: 2 },
+      { id: 3, x: size - 2, y: size - 2, expectedCount: 2 },
+    ];
+    return {
+      id,
+      category: ('topological' as any),
+      engine_type: 'hashi',
+      tier,
+      puzzle: {
+        size,
+        islands,
+        hints: [
+          { level: 1, targetIslandId: 0, messageZh: '角落島嶼僅有 2 個直角方向可供延伸。', messageEn: 'Corner islands have only 2 orthogonal branches.' },
+          { level: 2, targetIslandId: 0, neighborIslandId: 1, messageZh: '度數為 2 且需全域連通，每個方向各需 1 條橋。', messageEn: 'Degree is 2 with global spanning; each branch needs 1 bridge.' },
+          { level: 3, targetIslandId: 0, neighborIslandId: 1, bridgeCount: 1, messageZh: '👉 請親自手動架設 1 條橋樑。', messageEn: '👉 Action Required: Manually place 1 bridge.' },
+        ],
+      } as any,
+      solution: [
+        { fromId: 0, toId: 1, count: 1 },
+        { fromId: 0, toId: 2, count: 1 },
+        { fromId: 1, toId: 3, count: 1 },
+        { fromId: 2, toId: 3, count: 1 },
+      ] as any,
+      metrics: {
+        grid_size: size,
+        island_count: 4,
+        bridge_count: 4,
+        irt_logit_difficulty: -1.2,
+        estimated_time_sec: 90,
+      } as any,
+      cognitiveLoad: { spatial: 0.5, numeric: 0.4, workingMemory: 0.5, inhibition: 0.6 },
+      checksum: `fb_sym_${id}`,
+    };
+  }
+}
