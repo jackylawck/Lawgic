@@ -7,10 +7,18 @@ import { PUZZLE_CATALOG, PuzzleEntity } from './generated';
 import { LangSwitcher } from './components/LangSwitcher';
 import { VirtualGamepad } from './components/VirtualGamepad';
 import { useLearnerProfile, TierKey } from './hooks/useLearnerProfile';
+
+// 匯入已完成的 8 大世界級演算法生成器
 import { WebMazeGenerator } from './engines/mazeGenerator';
 import { WebSudokuGenerator } from './engines/sudokuGenerator';
 import { WebSkyscraperGenerator } from './engines/skyscraperGenerator';
 import { WebHashiGenerator } from './engines/hashiGenerator';
+import { WebKropkiGenerator } from './engines/kropkiGenerator';
+import { WebSlitherlinkGenerator } from './engines/slitherlinkGenerator';
+import { WebTentsGenerator } from './engines/tentsGenerator';
+import { WebLightUpGenerator } from './engines/lightupGenerator';
+
+export type ExtendedTierKey = TierKey | 'legendary';
 
 interface PuzzleMeta {
   id: string;
@@ -19,6 +27,7 @@ interface PuzzleMeta {
   icon: string;
 }
 
+// 8 款完整實裝引擎置頂，其餘保留在未來擴充清單
 const ALL_GAMES: PuzzleMeta[] = [
   { id: 'maze', nameZh: '空間迷宮', nameEn: 'Maze', icon: '🌀' },
   { id: 'sudoku', nameZh: '數獨魔陣', nameEn: 'Sudoku', icon: '🔢' },
@@ -26,6 +35,8 @@ const ALL_GAMES: PuzzleMeta[] = [
   { id: 'hashi', nameZh: '星際數橋', nameEn: 'Hashi', icon: '🌉' },
   { id: 'kropki', nameZh: '黑白雙星', nameEn: 'Kropki', icon: '⚪' },
   { id: 'slitherlink', nameZh: '迴路封閉', nameEn: 'Slitherlink', icon: '➰' },
+  { id: 'tents', nameZh: '帳篷扎營', nameEn: 'Tents & Trees', icon: '⛺' },
+  { id: 'lightup', nameZh: '燈泡照明', nameEn: 'Light Up', icon: '💡' },
   { id: 'kakuro', nameZh: '數和密碼', nameEn: 'Kakuro', icon: '➕' },
   { id: 'nurikabe', nameZh: '暗夜數牆', nameEn: 'Nurikabe', icon: '🧱' },
   { id: 'hitori', nameZh: '孤島數壹', nameEn: 'Hitori', icon: '⬛' },
@@ -34,13 +45,14 @@ const ALL_GAMES: PuzzleMeta[] = [
   { id: 'dominoes', nameZh: '骨牌矩陣', nameEn: 'Dominoes', icon: '🀄' },
 ];
 
-export const LEVEL_KEYS: TierKey[] = ['kids', 'intermediate', 'expert', 'master'];
+export const LEVEL_KEYS: ExtendedTierKey[] = ['kids', 'intermediate', 'expert', 'master', 'legendary'];
 
-const TIER_NAMES: Record<TierKey, { zh: string; en: string }> = {
+const TIER_NAMES: Record<ExtendedTierKey, { zh: string; en: string }> = {
   kids: { zh: '兒童', en: 'Kids' },
   intermediate: { zh: '進階', en: 'Intermediate' },
   expert: { zh: '專家', en: 'Expert' },
-  master: { zh: '魔王', en: 'Master' },
+  master: { zh: '大師', en: 'Master' },
+  legendary: { zh: '傳奇', en: 'Legendary' },
 };
 
 const EngineFallbackUI: React.FC<{ resetErrorBoundary: () => void }> = ({ resetErrorBoundary }) => (
@@ -55,88 +67,86 @@ const EngineFallbackUI: React.FC<{ resetErrorBoundary: () => void }> = ({ resetE
   </div>
 );
 
+// 統一單題生成輔助函式
+function generateEnginePuzzle(gameId: string, tier: ExtendedTierKey): PuzzleEntity | null {
+  const t = tier === 'legendary' ? 'master' : (tier as TierKey);
+  switch (gameId) {
+    case 'maze': return WebMazeGenerator.generate(t);
+    case 'sudoku': return WebSudokuGenerator.generate(t);
+    case 'skyscraper': return WebSkyscraperGenerator.generate(t);
+    case 'hashi': return WebHashiGenerator.generate(t);
+    case 'kropki': return WebKropkiGenerator.generate(t);
+    case 'slitherlink': return WebSlitherlinkGenerator.generate(t);
+    case 'tents': return WebTentsGenerator.generate(t);
+    case 'lightup': return WebLightUpGenerator.generate(tier as any);
+    default: return null;
+  }
+}
+
 const MainDashboard: React.FC = () => {
   const { lang } = useLanguage();
   const isEn = lang === 'en';
   const { profile, getCompositeCognitiveIndex } = useLearnerProfile();
 
   const [selectedType, setSelectedType] = useState<string>('maze');
-  const [currentLevel, setCurrentLevel] = useState<TierKey>('kids');
+  const [currentLevel, setCurrentLevel] = useState<ExtendedTierKey>('kids');
   const [puzzleIndex, setPuzzleIndex] = useState<number>(0);
   const [tournamentMode, setTournamentMode] = useState<boolean>(false);
   const [elapsed, setElapsed] = useState<number>(0);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // 1. 首屏秒開：同步產生核心四大引擎各階第 1 題
+  // 1. 首屏同步產生：8 大主力引擎各階第 1 題
   const [dynamicPuzzles, setDynamicPuzzles] = useState<Record<string, PuzzleEntity[]>>(() => {
-    const initialMazes: PuzzleEntity[] = [];
-    const initialSudokus: PuzzleEntity[] = [];
-    const initialSkyscrapers: PuzzleEntity[] = [];
-    const initialHashis: PuzzleEntity[] = [];
-    const tiers: TierKey[] = ['kids', 'intermediate', 'expert', 'master'];
+    const initialPool: Record<string, PuzzleEntity[]> = {
+      maze: [],
+      sudoku: [],
+      skyscraper: [],
+      hashi: [],
+      kropki: [],
+      slitherlink: [],
+      tents: [],
+      lightup: [],
+    };
 
-    tiers.forEach((tier) => {
-      const m = WebMazeGenerator.generate(tier);
-      m.id = `maze_${tier}_init_1`;
-      initialMazes.push(m);
+    const activeEngines = Object.keys(initialPool);
 
-      const s = WebSudokuGenerator.generate(tier);
-      s.id = `sudoku_${tier}_init_1`;
-      initialSudokus.push(s);
-
-      const sky = WebSkyscraperGenerator.generate(tier);
-      sky.id = `skyscraper_${tier}_init_1`;
-      initialSkyscrapers.push(sky);
-
-      const h = WebHashiGenerator.generate(tier);
-      h.id = `hashi_${tier}_init_1`;
-      initialHashis.push(h);
+    LEVEL_KEYS.forEach((tier) => {
+      activeEngines.forEach((engineId) => {
+        const p = generateEnginePuzzle(engineId, tier);
+        if (p) {
+          p.id = `${engineId}_${tier}_init_1`;
+          initialPool[engineId].push(p);
+        }
+      });
     });
 
-    return {
-      maze: initialMazes,
-      sudoku: initialSudokus,
-      skyscraper: initialSkyscrapers,
-      hashi: initialHashis,
-    };
+    return initialPool;
   });
 
-  // 2. 背景非同步時間切片填充：平滑填補題庫至充裕儲備
+  // 2. 背景非同步切片預載：將 8 大引擎題庫擴充
   useEffect(() => {
     let isMounted = true;
-    const tiers: TierKey[] = ['kids', 'intermediate', 'expert', 'master'];
+    const activeEngines = ['maze', 'sudoku', 'skyscraper', 'hashi', 'kropki', 'slitherlink', 'tents', 'lightup'];
 
     const fillPoolAsync = async () => {
-      for (const tier of tiers) {
-        for (let i = 0; i < 6; i++) {
+      for (const tier of LEVEL_KEYS) {
+        for (const engineId of activeEngines) {
           if (!isMounted) return;
-          const newMaze = WebMazeGenerator.generate(tier);
-          newMaze.id = `maze_${tier}_bg_${i + 2}`;
-
-          const newSky = WebSkyscraperGenerator.generate(tier);
-          newSky.id = `skyscraper_${tier}_bg_${i + 2}`;
-
-          const newSudoku = WebSudokuGenerator.generate(tier);
-          newSudoku.id = `sudoku_${tier}_bg_${i + 2}`;
-
-          const newHashi = WebHashiGenerator.generate(tier);
-          newHashi.id = `hashi_${tier}_bg_${i + 2}`;
-
-          setDynamicPuzzles((prev) => ({
-            ...prev,
-            maze: [...(prev.maze || []), newMaze],
-            skyscraper: [...(prev.skyscraper || []), newSky],
-            sudoku: [...(prev.sudoku || []), newSudoku],
-            hashi: [...(prev.hashi || []), newHashi],
-          }));
-
-          await new Promise((resolve) => setTimeout(resolve, 15));
+          const p = generateEnginePuzzle(engineId, tier);
+          if (p) {
+            p.id = `${engineId}_${tier}_bg_${Date.now().toString(36).slice(-4)}`;
+            setDynamicPuzzles((prev) => ({
+              ...prev,
+              [engineId]: [...(prev[engineId] || []), p],
+            }));
+          }
+          await new Promise((resolve) => setTimeout(resolve, 20));
         }
       }
     };
 
-    const timer = setTimeout(fillPoolAsync, 200);
+    const timer = setTimeout(fillPoolAsync, 300);
     return () => {
       isMounted = false;
       clearTimeout(timer);
@@ -155,7 +165,7 @@ const MainDashboard: React.FC = () => {
     return () => window.removeEventListener('logicore:navigate-game', handleNav);
   }, []);
 
-  // 4. 動態同步網頁標題 (Lawgic 羅輯)
+  // 4. 動態同步網頁標題
   useEffect(() => {
     const activeGame = ALL_GAMES.find((g) => g.id === selectedType);
     const gameName = activeGame ? (isEn ? activeGame.nameEn : activeGame.nameZh) : 'Cognitive Arena';
@@ -170,14 +180,16 @@ const MainDashboard: React.FC = () => {
     const liveList = dynamicPuzzles[selectedType] || [];
     const fullList = [...liveList, ...staticList];
 
-    const grouped: Record<TierKey, PuzzleEntity[]> = {
+    const grouped: Record<ExtendedTierKey, PuzzleEntity[]> = {
       kids: [],
       intermediate: [],
       expert: [],
       master: [],
+      legendary: [],
     };
+
     fullList.forEach((p) => {
-      const tier = (p.tier as TierKey) || 'kids';
+      const tier = (p.tier as ExtendedTierKey) || 'kids';
       if (grouped[tier]) grouped[tier].push(p);
     });
     return grouped;
@@ -196,20 +208,16 @@ const MainDashboard: React.FC = () => {
     setPuzzleIndex((prev) => (prev + 1) % (activeList.length || 1));
   }, [activeList.length]);
 
-  // 現場無限演算法生成
+  // 現場即時演算法合成：支援全部 8 大引擎
   const handleLiveGenerate = useCallback(() => {
     if (navigator.vibrate) navigator.vibrate(20);
 
-    let newPuzzle: PuzzleEntity | null = null;
-    if (selectedType === 'maze') newPuzzle = WebMazeGenerator.generate(currentLevel);
-    else if (selectedType === 'sudoku') newPuzzle = WebSudokuGenerator.generate(currentLevel);
-    else if (selectedType === 'skyscraper') newPuzzle = WebSkyscraperGenerator.generate(currentLevel);
-    else if (selectedType === 'hashi') newPuzzle = WebHashiGenerator.generate(currentLevel);
+    const newPuzzle = generateEnginePuzzle(selectedType, currentLevel);
 
     if (newPuzzle) {
       setDynamicPuzzles((prev) => ({
         ...prev,
-        [selectedType]: [newPuzzle!, ...(prev[selectedType] || [])],
+        [selectedType]: [newPuzzle, ...(prev[selectedType] || [])],
       }));
       setPuzzleIndex(0);
       setToastMsg(isEn ? '⚡ Dynamic puzzle synthesized' : '⚡ 演算法已即時合成全新題目');
@@ -292,7 +300,7 @@ const MainDashboard: React.FC = () => {
         </div>
       )}
 
-      {/* 頂部全域狀態橫條 (Wechsler IQ, 連勝, 賽事模式) */}
+      {/* 頂部全域狀態橫條 */}
       <div className="w-full max-w-sm sm:max-w-md flex items-center justify-between px-1 mb-1 text-[8px] text-slate-500">
         <div className="flex items-center gap-1.5">
           <span className="font-bold text-cyan-400">IQ {cci.standardIQ}</span>
@@ -303,7 +311,7 @@ const MainDashboard: React.FC = () => {
         </div>
         <button
           onClick={() => setTournamentMode((prev) => !prev)}
-          className={`px-1.5 py-0.2 rounded border transition text-[7px] font-bold ${
+          className={`px-1.5 py-0.5 rounded border transition text-[7px] font-bold ${
             tournamentMode
               ? 'bg-amber-950 border-amber-500 text-amber-300 shadow-xs'
               : 'bg-slate-900 border-slate-800 text-slate-500 hover:text-slate-300'
@@ -315,7 +323,6 @@ const MainDashboard: React.FC = () => {
 
       {/* 頂部品牌與整合選單 */}
       <header className="w-full max-w-sm sm:max-w-md flex items-center justify-between gap-1.5 mb-2 pb-1.5 border-b border-slate-800">
-        {/* 正式升級品牌：Lawgic 羅輯 */}
         <div className="flex flex-col shrink-0 leading-tight">
           <span className="text-xs font-black tracking-widest text-indigo-400">LAWGIC</span>
           <span className="text-[6.5px] font-bold text-slate-500 tracking-wider">羅輯・遊戲</span>
@@ -343,7 +350,7 @@ const MainDashboard: React.FC = () => {
           <select
             value={currentLevel}
             onChange={(e) => {
-              setCurrentLevel(e.target.value as TierKey);
+              setCurrentLevel(e.target.value as ExtendedTierKey);
               setPuzzleIndex(0);
             }}
             className="w-28 shrink-0 bg-slate-900 border border-slate-700 text-cyan-300 text-xs font-bold rounded px-2 py-1 outline-none focus:border-cyan-500 cursor-pointer"
@@ -409,7 +416,7 @@ const MainDashboard: React.FC = () => {
           </div>
 
           {/* 升階跳級挑戰通道 */}
-          {currentLevel !== 'master' && (
+          {currentLevel !== 'legendary' && (
             <div className="flex gap-1.5 mt-1.5 w-full">
               <button
                 onClick={() => handleTierJump(1)}
