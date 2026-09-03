@@ -5,14 +5,14 @@ import { PersonalBest } from '../hooks/useLearnerProfile';
 interface Props {
   pb: PersonalBest;
   onClose: () => void;
-  isEn: boolean;
-  improvedDeltaSec?: number; // 提升秒數（可選）
+  isEn?: boolean; // 設為可選，避免呼叫端漏傳導致編譯中斷
+  improvedDeltaSec?: number;
 }
 
 export const PBCelebrationModal: React.FC<Props> = ({
   pb,
   onClose,
-  isEn,
+  isEn = true,
   improvedDeltaSec,
 }) => {
   // 1. 豪華音效合成器 (含 iOS Safari resume 與水晶泛音)
@@ -26,7 +26,6 @@ export const PBCelebrationModal: React.FC<Props> = ({
       if (AudioContextClass) {
         const ctx = new AudioContextClass();
 
-        // 突破 iOS Safari 靜音鎖
         if (ctx.state === 'suspended') {
           ctx.resume();
         }
@@ -49,18 +48,18 @@ export const PBCelebrationModal: React.FC<Props> = ({
         };
 
         // 大三和弦琶音升調 + 水晶泛音 (C5 -> E5 -> G5 -> C6)
-        playChime(523.25, 0.00, 0.35, 0.20); // C5
-        playChime(659.25, 0.12, 0.35, 0.22); // E5
-        playChime(783.99, 0.24, 0.45, 0.25); // G5
-        playChime(1046.50, 0.38, 0.65, 0.30); // C6 (燦爛高八度)
-        playChime(1318.51, 0.42, 0.50, 0.12); // E6 (飄逸泛音)
+        playChime(523.25, 0.00, 0.35, 0.20);
+        playChime(659.25, 0.12, 0.35, 0.22);
+        playChime(783.99, 0.24, 0.45, 0.25);
+        playChime(1046.50, 0.38, 0.65, 0.30);
+        playChime(1318.51, 0.42, 0.50, 0.12);
       }
     } catch {
       // 靜默容錯
     }
   }, []);
 
-  // 2. 鍵盤 Enter / Space 快速關閉
+  // 2. 鍵盤快速關閉
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Enter' || e.key === ' ' || e.key === 'Escape') {
@@ -72,7 +71,7 @@ export const PBCelebrationModal: React.FC<Props> = ({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [onClose]);
 
-  // 3. 純前端動態碎紙屑粒子 (Confetti) 座標
+  // 3. 純前端動態碎紙屑粒子
   const confettiParticles = useMemo(() => {
     return Array.from({ length: 24 }).map((_, i) => ({
       id: i,
@@ -149,14 +148,13 @@ export const PBCelebrationModal: React.FC<Props> = ({
         {/* 關閉按鈕 */}
         <button
           onClick={onClose}
-          className="w-full py-2.5 bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-400 text-slate-950 font-black text-xs rounded-xl shadow-lg shadow-amber-900/40 transition active:scale-95 flex items-center justify-center gap-1.5"
+          className="w-full py-2.5 bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-400 text-slate-950 font-black text-xs rounded-xl shadow-lg shadow-amber-900/40 transition active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer"
         >
           <span>{isEn ? 'Continue Journey' : '繼續前進'}</span>
           <span className="text-[9px] opacity-75 font-mono">(↵ Enter)</span>
         </button>
       </div>
 
-      {/* 粒子飄落自定義 CSS 動畫 */}
       <style>{`
         @keyframes confettiFall {
           0% {
