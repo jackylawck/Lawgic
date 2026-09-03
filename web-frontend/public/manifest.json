@@ -1,7 +1,7 @@
 {
-  "name": "LogiCore Cognitive Assessment",
-  "short_name": "LogiCore",
-  "description": "High-Precision Cognitive Assessment & Competitive Training Platform",
+  "name": "Lawgic 羅輯・遊戲",
+  "short_name": "Lawgic",
+  "description": "Lawgic Logic Games & Arena",
   "start_url": "./",
   "display": "standalone",
   "orientation": "portrait",
@@ -9,13 +9,13 @@
   "theme_color": "#090d14",
   "icons": [
     {
-      "src": "LogiCore192icon.png",
+      "src": "Lawgic192icon.png",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "any maskable"
     },
     {
-      "src": "LogiCore512icon.png",
+      "src": "Lawgic512icon.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any maskable"
