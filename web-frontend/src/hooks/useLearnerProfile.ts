@@ -6,9 +6,9 @@ export type TierKey = 'kids' | 'intermediate' | 'expert' | 'master';
 export type CognitiveDimension = 'spatial' | 'numeric' | 'workingMemory' | 'inhibition' | 'processingSpeed';
 
 export interface HintDistributionTrend {
-  t1Count: number; // 0~30s (早期直覺瓶頸)
-  t2Count: number; // 30~60s (中期交織瓶頸)
-  t3Count: number; // 60s+ (深水區拓撲瓶頸)
+  t1Count: number; // 0~30s
+  t2Count: number; // 30~60s
+  t3Count: number; // 60s+
   totalCalls: number;
 }
 
@@ -31,7 +31,7 @@ export interface AttemptPayload {
   isPureModeAttempt?: boolean;
   isPureClear?: boolean;
   hintLogs?: { secFromStart: number; level: number }[];
-  irtDifficulty?: number; // 題目本身 IRT 難度參數 (用於貝氏信念更新)
+  irtDifficulty?: number;
 }
 
 export interface TechniqueStats {
@@ -54,7 +54,7 @@ export interface BookmarkRecord {
   puzzleId: string;
   engineType: string;
   tier: TierKey;
-  boardState: any; // 通用盤面快照 (相容 Hashi / Sudoku / Skyscraper / Maze)
+  boardState: any;
   elapsedSec: number;
   bookmarkedAt: string;
 }
@@ -303,7 +303,6 @@ export const useLearnerProfile = () => {
         newPureStreak = 0;
       }
 
-      // 提示長期時序分佈
       let updatedTrend = { ...prev.hintTrend };
       if (payload.hintLogs && payload.hintLogs.length > 0) {
         let t1 = updatedTrend.t1Count;
@@ -325,7 +324,6 @@ export const useLearnerProfile = () => {
       const shouldSnapshot = (prev.totalAttempts + 1) % 10 === 0;
       const prevSnapshot = shouldSnapshot ? { ...prev.cognitiveDimensions } : prev.previousCognitiveDimensions;
 
-      // 貝氏信念更新權重：高難度題目的資訊量更大
       const irtFactor = payload.irtDifficulty ? Math.max(0.08, Math.min(0.24, 0.15 + payload.irtDifficulty * 0.04)) : 0.15;
       const speedScore = Math.max(0.2, Math.min(0.98, 120 / (payload.timeSpentSec || 120)));
       const accuracyScore = payload.conflictsCount === 0 ? 0.95 : Math.max(0.3, 0.9 - payload.conflictsCount * 0.1);
@@ -438,7 +436,6 @@ export const useLearnerProfile = () => {
     const ageAdjustedZ = Number(((standardIQ - cohort.mean) / cohort.sd).toFixed(2));
     const agePercentile = Number((normalCDF(ageAdjustedZ) * 100).toFixed(1));
 
-    // 信度計算：難度標準化後的奇偶分半信度
     const records = profile.recentRecords || [];
     let cronbachAlpha = 0.88;
     let splitHalfReliability = 0.85;
@@ -481,9 +478,6 @@ export const useLearnerProfile = () => {
     };
   }, [profile]);
 
-  /**
-   * 基準指標與動態弱項互補推薦 (排除當前正在遊玩的遊戲，形成交叉訓練閉環)
-   */
   const getBenchmarkMetrics = useCallback(
     (technique: string, defaultTime: number, currentEngineType?: string): BenchmarkMetrics => {
       const stat = profile.techniqueStats[technique];
@@ -492,7 +486,6 @@ export const useLearnerProfile = () => {
       const dimEntries = Object.entries(dims) as [CognitiveDimension, number][];
       dimEntries.sort((a, b) => a[1] - b[1]);
 
-      // 互補遊戲候選矩陣
       const candidateMap: Record<CognitiveDimension, { game: string; altGame: string; zh: string; en: string }> = {
         spatial: { game: 'skyscraper', altGame: 'maze', zh: '空間維度偏弱，建議強化「摩天透視」3D 心理旋轉', en: 'Spatial perception needs focus; train 3D rotation in Skyscraper.' },
         numeric: { game: 'sudoku', altGame: 'hashi', zh: '數理約束推導偏弱，建議挑戰「數獨魔陣」', en: 'Numeric deduction needs focus; challenge Sudoku.' },
@@ -501,7 +494,6 @@ export const useLearnerProfile = () => {
         processingSpeed: { game: 'maze', altGame: 'skyscraper', zh: '反應速度可進一步激發，建議速通「空間迷宮」', en: 'Processing speed could be boosted; sprint through Maze.' },
       };
 
-      // 挑選弱項，若首選遊戲與當前遊戲相同，自動切換至備選互補遊戲
       const weakestDim = dimEntries[0][0];
       const conf = candidateMap[weakestDim] || candidateMap.spatial;
       const targetGame = (currentEngineType && conf.game === currentEngineType) ? conf.altGame : conf.game;
@@ -560,7 +552,7 @@ export const useLearnerProfile = () => {
 
 ## 1. 全域指標 (Global Psychometrics)
 - **estimatedStandardIQ**: Wechsler 標準量尺 IQ (μ=100, σ=15)。
-- **pureStreak**: 當前純挑戰 (Pure Mode) 連續通關場次 (享有 Streak Shield 暖身保護)。
+- **pureStreak**: 當前純挑戰 (Pure Mode) 連續通關場次。
 - **hintTrend**: 長期提示調用分佈 (T1: 0~30s, T2: 30~60s, T3: 60s+)。
 - **compositeGf**: 原始流體智力估計值 (0.000 ~ 1.000)。
 - **csem**: 條件測量標準誤。
