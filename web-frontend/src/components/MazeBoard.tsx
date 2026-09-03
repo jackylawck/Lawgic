@@ -6,6 +6,8 @@ import { useLanguage } from '../contexts/LanguageContext';
 import { MetricErrorBar } from './MetricErrorBar';
 import { CognitiveRadarChart } from './CognitiveRadarChart';
 import { PBCelebrationModal } from './PBCelebrationModal';
+import { TournamentSubmissionModal } from './TournamentSubmissionModal';
+import { getEnvironmentFingerprint, calculateInfractionScore } from '../utils/tournamentSecurity';
 
 interface Props {
   puzzleData?: PuzzleEntity;
@@ -14,6 +16,7 @@ interface Props {
 }
 
 export type StrategyType = 'Macro-Planner' | 'Wall-Follower' | 'Intuitive-Explorer';
+export type ViewMode = 'full' | 5 | 3;
 
 interface ProcessTelemetry {
   wallHits: number;
@@ -24,6 +27,16 @@ interface ProcessTelemetry {
   confidence: number;
   cognitiveAdvantage: number;
 }
+
+const getDefaultViewMode = (tier: TierKey): ViewMode => {
+  switch (tier) {
+    case 'kids': return 'full';
+    case 'intermediate': return 5;
+    case 'expert': return 3;
+    case 'master': return 3;
+    default: return 'full';
+  }
+};
 
 export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode = false }) => {
   const actualPuzzle = puzzleData || puzzle;
@@ -37,6 +50,9 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode 
 
   const { lang } = useLanguage();
   const isEn = lang === 'en';
+
+  const currentTier = (actualPuzzle?.tier as TierKey) || 'kids';
+  const isMaster = currentTier === 'master';
 
   const rawData = (actualPuzzle as any)?.puzzle || (actualPuzzle as any)?.spec || (actualPuzzle as any);
   const baseGrid: number[][] = rawData?.grid || [];
@@ -79,7 +95,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode 
   const theoryTime = (actualPuzzle?.metrics as any)?.estimated_time_sec || Math.max(15, Math.round(optimalSolution.length * 0.8));
 
   const benchmarkData = useMemo(() => {
-    return getBenchmarkMetrics('TopologicalLookahead', theoryTime);
+    return getBenchmarkMetrics('TopologicalLookahead', theoryTime, 'maze');
   }, [getBenchmarkMetrics, theoryTime]);
 
   const [playerPos, setPlayerPos] = useState<[number, number]>(startPos);
@@ -88,9 +104,11 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode 
   const [breadcrumbs, setBreadcrumbs] = useState<Set<string>>(new Set());
   const [lookOffset, setLookOffset] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
 
+  // 自適應戰霧視野狀態管理
+  const [viewMode, setViewMode] = useState<ViewMode>(() => getDefaultViewMode(currentTier));
   const [isCompleted, setIsCompleted] = useState<boolean>(false);
-  const [fogMode, setFogMode] = useState<boolean>(false);
   const [showPBModal, setShowPBModal] = useState<boolean>(false);
+  const [showSubmitModal, setShowSubmitModal] = useState<boolean>(false);
   const [proofSignature, setProofSignature] = useState<string | null>(null);
 
   const startTimeRef = useRef<number>(Date.now());
@@ -110,12 +128,14 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode 
   const [replayStep, setReplayStep] = useState<number>(0);
   const replayTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  // 切換題目或階梯時重新校準視野與狀態
   useEffect(() => {
     setPlayerPos(startPos);
     setTrail([startPos]);
     setVisitedSet(new Set([`${startPos[0]},${startPos[1]}`]));
     setBreadcrumbs(new Set());
     setLookOffset({ x: 0, y: 0 });
+    setViewMode(getDefaultViewMode(currentTier));
     setIsCompleted(false);
     setIsReplaying(false);
     setReplayStep(0);
@@ -131,7 +151,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode 
     hasRecordedRef.current = false;
 
     if (replayTimerRef.current) clearInterval(replayTimerRef.current);
-  }, [actualPuzzle?.id, startPos]);
+  }, [actualPuzzle?.id, startPos, currentTier]);
 
   useEffect(() => {
     if (isCompleted) return;
@@ -144,7 +164,23 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode 
     return () => cancelAnimationFrame(frameId);
   }, [isCompleted]);
 
-  // 1. 信標切換 (Breadcrumb Toggle)
+  // 視野模式切換循環控制器（魔王強制鎖死 3x3）
+  const handleCycleViewMode = () => {
+    if (isMaster || isCompleted || isReplaying) return;
+    if (navigator.vibrate) navigator.vibrate(10);
+
+    setViewMode((prev) => {
+      if (currentTier === 'kids') {
+        return prev === 'full' ? 3 : 'full';
+      } else if (currentTier === 'intermediate') {
+        return prev === 5 ? 'full' : 5;
+      } else {
+        return prev === 3 ? 'full' : 3;
+      }
+    });
+  };
+
+  // 信標放置
   const toggleBreadcrumb = useCallback(() => {
     if (isCompleted || isReplaying) return;
     setBreadcrumbs((prev) => {
@@ -157,7 +193,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode 
     if (navigator.vibrate) navigator.vibrate(20);
   }, [playerPos, isCompleted, isReplaying]);
 
-  // 2. 移動邏輯
+  // 玩家移動
   const movePlayer = useCallback(
     (dx: number, dy: number) => {
       if (isCompleted || isReplaying || !grid || grid.length === 0) return;
@@ -211,25 +247,32 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode 
 
           if (!hasRecordedRef.current && actualPuzzle) {
             hasRecordedRef.current = true;
+            
+            // 戰霧加權難度計算
+            const baseIrt = (actualPuzzle.metrics as any)?.irt_logit_difficulty || 0.0;
+            const viewBonus = viewMode === 3 ? 0.6 : viewMode === 5 ? 0.3 : 0.0;
+            const weightedIrt = Number((baseIrt + viewBonus).toFixed(2));
+
             recordAttempt({
               puzzleId: actualPuzzle.id,
               engineType: 'maze',
-              tier: (actualPuzzle.tier as TierKey) || 'kids',
+              tier: currentTier,
               cognitiveLoad: actualPuzzle.cognitiveLoad || {
                 spatial: 1.0,
                 numeric: 0.0,
-                workingMemory: 0.6,
+                workingMemory: viewMode !== 'full' ? 0.9 : 0.5,
                 inhibition: 0.8,
               },
               isSuccess: true,
               timeSpentSec: timeSpent,
               conflictsCount: wallHitsRef.current + backtrackCountRef.current,
               technique: 'TopologicalLookahead',
+              irtDifficulty: weightedIrt,
+              isPureClear: backtrackCountRef.current === 0 && (isMaster || viewMode !== 'full'),
             });
 
-            // 生成 Web Crypto 防偽憑證
             try {
-              const canonical = `${actualPuzzle.id}|${timeSpent}|${wallHitsRef.current}|${backtrackCountRef.current}|MAZE_VERIFIED`;
+              const canonical = `${actualPuzzle.id}|${timeSpent}|${wallHitsRef.current}|${backtrackCountRef.current}|VIEW_${viewMode}|MAZE_VERIFIED`;
               const enc = new TextEncoder();
               window.crypto.subtle.digest('SHA-256', enc.encode(canonical)).then((buf) => {
                 const hex = Array.from(new Uint8Array(buf))
@@ -250,10 +293,10 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode 
         return newPos;
       });
     },
-    [grid, endPos, isCompleted, isReplaying, visitedSet, actualPuzzle, recordAttempt, profile.personalBest.fastestTime]
+    [grid, endPos, isCompleted, isReplaying, visitedSet, actualPuzzle, currentTier, viewMode, isMaster, recordAttempt, profile.personalBest.fastestTime]
   );
 
-  // 監聽鍵盤
+  // 鍵盤移動
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (isCompleted || isReplaying) return;
@@ -267,7 +310,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode 
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [movePlayer, toggleBreadcrumb, isCompleted, isReplaying]);
 
-  // 監聽手把移動、LOOK 視角平移與動作鍵
+  // 手把移動
   useEffect(() => {
     const handleCustomMove = (e: any) => {
       if (e.detail) movePlayer(e.detail.dx, e.detail.dy);
@@ -294,7 +337,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode 
     };
   }, [movePlayer, toggleBreadcrumb]);
 
-  // 手勢滑動支援
+  // 手勢滑動
   const handleTouchStart = (e: React.TouchEvent) => {
     touchStartRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
   };
@@ -398,6 +441,10 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode 
     return { grade: 'C', color: 'text-slate-400 border-slate-600 bg-slate-900', desc: isEn ? 'Excessive Backtracking' : '過度回溯 (Drifting)' };
   }, [isCompleted, optimalSolution.length, trail.length, isEn]);
 
+  const handleNavigateTargetGame = (gameId: string) => {
+    window.dispatchEvent(new CustomEvent('logicore:navigate-game', { detail: { gameId } }));
+  };
+
   const cci = useMemo(() => getCompositeCognitiveIndex(), [getCompositeCognitiveIndex, isCompleted]);
   if (!grid || grid.length === 0) return null;
 
@@ -435,20 +482,33 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode 
           </div>
         </div>
 
+        {/* 自適應視野切換按鈕（魔王階梯鎖死） */}
         <button
-          onClick={() => setFogMode((prev) => !prev)}
+          onClick={handleCycleViewMode}
+          disabled={isMaster}
           className={`p-1 rounded border text-center transition ${
-            fogMode
-              ? 'bg-purple-950/90 border-purple-500 text-purple-300 font-bold shadow'
+            isMaster
+              ? 'bg-purple-950/80 border-purple-500 text-purple-300 cursor-not-allowed shadow-xs font-bold'
+              : viewMode !== 'full'
+              ? 'bg-indigo-950/90 border-indigo-500 text-indigo-300 font-bold shadow-xs'
               : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'
           }`}
+          title={isMaster ? (isEn ? 'Master tier locks 3x3 fog' : '魔王階梯強制鎖定 3x3 戰霧') : (isEn ? 'Cycle vision mode' : '切換視野模式')}
         >
-          <div className="text-[7px]">{isEn ? '🌫️ Vision' : '🌫️ 視野'}</div>
-          <div className="text-[8px]">{fogMode ? (isEn ? 'Fog War' : '3x3 戰霧') : (isEn ? 'Full View' : '全圖')}</div>
+          <div className="text-[7px]">👁️ {isEn ? 'Vision' : '視野'}</div>
+          <div className="text-[8px] truncate">
+            {isMaster
+              ? (isEn ? '3x3 (Lock)' : '3x3 鎖定')
+              : viewMode === 'full'
+              ? (isEn ? 'Full View' : '全見視野')
+              : viewMode === 5
+              ? (isEn ? '5x5 Wide' : '5x5 廣角')
+              : (isEn ? '3x3 Fog' : '3x3 戰霧')}
+          </div>
         </button>
       </div>
 
-      {/* 迷宮主盤面：具備 LOOK 視角前瞻平移與等比正方形格 */}
+      {/* 迷宮主盤面 */}
       <div className="relative overflow-hidden p-1 rounded-xl bg-slate-950 border-2 border-slate-750 shadow-2xl">
         <div
           onTouchStart={handleTouchStart}
@@ -479,9 +539,11 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode 
 
               const isOptimal = optimalSolution.some(([ox, oy]) => ox === cIdx && oy === rIdx);
 
+              // 視野半徑判斷：3x3 (半徑1)、5x5 (半徑2)、full (全開)
+              const sightRadius = viewMode === 3 ? 1 : viewMode === 5 ? 2 : 999;
               const inSight =
-                !fogMode ||
-                (Math.abs(rIdx - playerPos[1]) <= 2 && Math.abs(cIdx - playerPos[0]) <= 2) ||
+                viewMode === 'full' ||
+                (Math.abs(rIdx - playerPos[1]) <= sightRadius && Math.abs(cIdx - playerPos[0]) <= sightRadius) ||
                 isCompleted ||
                 isReplaying ||
                 isEnd;
@@ -541,12 +603,19 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode 
         </div>
       </div>
 
-      {/* 賽事級反思面板 (對齊數獨、摩天樓、數橋最高規格) */}
+      {/* 賽事級反思面板 */}
       {isCompleted && rankEvaluation && telemetryAnalysis && (
         <div className="mt-3 p-3 bg-slate-950/95 border border-indigo-500/60 rounded-xl text-center w-[min(90vw,48vh)] shadow-2xl animate-fade-in font-mono">
           <div className="flex items-center justify-between border-b border-slate-800 pb-1.5 mb-2">
             <div className="text-left">
-              <div className="text-[8px] text-slate-500 tracking-wider">TOPOLOGICAL MAZE RESOLVED</div>
+              <div className="text-[8px] text-slate-500 tracking-wider flex items-center gap-1">
+                <span>TOPOLOGICAL MAZE RESOLVED</span>
+                {viewMode !== 'full' && (
+                  <span className="text-[6.5px] px-1 py-0.2 bg-purple-950 border border-purple-500 text-purple-300 font-bold rounded">
+                    FOG {viewMode}x{viewMode}
+                  </span>
+                )}
+              </div>
               <div className="text-xs text-indigo-300 font-bold">✨ {rankEvaluation.desc}</div>
             </div>
             <div className="flex flex-col items-end">
@@ -597,7 +666,20 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode 
             />
           </div>
 
-          {/* 操作按鈕群：幽靈重播 + 縱向數據匯出 */}
+          {/* 互補訓練引導 */}
+          <div className="bg-indigo-950/40 p-2 rounded-lg border border-indigo-800/60 text-left mb-2 flex items-center justify-between gap-2">
+            <div className="flex-1 text-[8px] text-slate-300">
+              {isEn ? benchmarkData.recommendedFocus.reasonEn : benchmarkData.recommendedFocus.reasonZh}
+            </div>
+            <button
+              onClick={() => handleNavigateTargetGame(benchmarkData.recommendedFocus.targetGame)}
+              className="shrink-0 px-2 py-1 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[8px] rounded transition active:scale-95"
+            >
+              ➜ {isEn ? 'Train' : '立即訓練'}
+            </button>
+          </div>
+
+          {/* 操作按鈕群：幽靈重播 + 數據匯出 + 賽事提交 */}
           <div className="flex gap-1.5 mb-2">
             <button
               onClick={handleStartGhostReplay}
@@ -609,7 +691,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode 
               }`}
             >
               <span>👻</span>
-              <span>{isReplaying ? (isEn ? 'Replaying...' : '重播中...') : (isEn ? 'Ghost Replay' : '幽靈軌跡重播')}</span>
+              <span>{isReplaying ? (isEn ? 'Replaying...' : '重播中...') : (isEn ? 'Ghost Replay' : '幽靈重播')}</span>
             </button>
 
             <button
@@ -617,7 +699,15 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode 
               className="flex-1 py-1.5 bg-slate-900 hover:bg-slate-800 border border-cyan-600/50 hover:border-cyan-400 text-cyan-300 text-[8px] font-bold rounded-lg transition shadow flex items-center justify-center gap-1 active:scale-95"
             >
               <span>📊</span>
-              <span>{isEn ? 'Export Dataset' : '匯出縱向數據'}</span>
+              <span>{isEn ? 'Export Dataset' : '匯出數據'}</span>
+            </button>
+
+            <button
+              onClick={() => setShowSubmitModal(true)}
+              className="flex-1 py-1.5 bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 text-slate-950 text-[8px] font-black rounded-lg shadow transition active:scale-95 flex items-center justify-center gap-1"
+            >
+              <span>📤</span>
+              <span>{isEn ? 'Submit Result' : '賽事提交'}</span>
             </button>
           </div>
 
@@ -638,6 +728,32 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode 
 
       {showPBModal && (
         <PBCelebrationModal pb={profile.personalBest} onClose={() => setShowPBModal(false)} isEn={isEn} />
+      )}
+
+      {showSubmitModal && (
+        <TournamentSubmissionModal
+          payload={{
+            submissionId: `SUB-${actualPuzzle.id}-${Date.now().toString(36)}`,
+            tournamentId: tournamentMode ? 'WPF_MAZE_2026' : 'GLOBAL_TOPOLOGY_STAGE',
+            playerId: profile.personalBest.updatedAt ? 'CONTENDER_VERIFIED' : 'LOCAL_PLAYER_1',
+            division: 'open',
+            puzzleId: actualPuzzle.id,
+            engineType: 'maze',
+            tier: currentTier,
+            timeSpentSec: Math.round(elapsedMs / 1000),
+            conflictsCount: wallHitsRef.current + backtrackCountRef.current,
+            infractionScore: calculateInfractionScore({
+              tabSwitches: 0,
+              blurEvents: 0,
+              clipboardEvents: 0,
+              untrustedEvents: 0,
+            }),
+            environment: getEnvironmentFingerprint(),
+            timestamp: new Date().toISOString(),
+          }}
+          onClose={() => setShowSubmitModal(false)}
+          isEn={isEn}
+        />
       )}
     </div>
   );
