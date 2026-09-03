@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { PuzzleEntity, TierKey } from '../generated';
 import { useLearnerProfile } from '../hooks/useLearnerProfile';
 import { useLanguage } from '../contexts/LanguageContext';
-import { KropkiSpec, WebKropkiGenerator, SolvingStep } from '../engines/kropkiGenerator';
+import { KropkiSpec, WebKropkiGenerator, SolvingStep, KropkiDot } from '../engines/kropkiGenerator';
 import { CognitiveRadarChart } from './CognitiveRadarChart';
 import { PBCelebrationModal } from './PBCelebrationModal';
 
@@ -13,7 +13,7 @@ interface Props {
   tournamentMode?: boolean;
 }
 
-export function KropkiBoard(props: Props): React.ReactElement {
+export const KropkiBoard = (props: Props) => {
   const { puzzle, puzzleData } = props;
   const actualPuzzle = puzzleData || puzzle;
   const { lang } = useLanguage();
@@ -23,7 +23,7 @@ export function KropkiBoard(props: Props): React.ReactElement {
   const spec = (actualPuzzle?.puzzle || actualPuzzle) as unknown as KropkiSpec;
   const n = spec?.size || 4;
   const initialGrid = spec?.initialGrid || Array.from({ length: n }, () => Array(n).fill(0));
-  const dots = spec?.dots || [];
+  const dots: KropkiDot[] = spec?.dots || [];
   const solvingSteps = spec?.solvingSteps || [];
 
   const [grid, setGrid] = useState<number[][]>(() => initialGrid.map((r) => [...r]));
@@ -31,23 +31,23 @@ export function KropkiBoard(props: Props): React.ReactElement {
     Array.from({ length: n }, () => Array.from({ length: n }, () => new Set<number>()))
   );
   const [selectedCell, setSelectedCell] = useState<[number, number] | null>([0, 0]);
-  const [isCompleted, setIsCompleted] = useState<boolean>(false);
-  const [elapsedMs, setElapsedMs] = useState<number>(0);
-  const [conflictsCount, setConflictsCount] = useState<number>(0);
-  const [showPBModal, setShowPBModal] = useState<boolean>(false);
+  const [isCompleted, setIsCompleted] = useState(false);
+  const [elapsedMs, setElapsedMs] = useState(0);
+  const [conflictsCount, setConflictsCount] = useState(0);
+  const [showPBModal, setShowPBModal] = useState(false);
   const [proofSignature, setProofSignature] = useState<string | null>(null);
 
-  const [isNoteMode, setIsNoteMode] = useState<boolean>(false);
-  const [isNoGuessMode, setIsNoGuessMode] = useState<boolean>(true);
+  const [isNoteMode, setIsNoteMode] = useState(false);
+  const [isNoGuessMode, setIsNoGuessMode] = useState(true);
   const [guessWarning, setGuessWarning] = useState<string | null>(null);
 
-  const [hintLevel, setHintLevel] = useState<number>(0);
+  const [hintLevel, setHintLevel] = useState(0);
   const [activeHintStep, setActiveHintStep] = useState<SolvingStep | null>(null);
-  const [boardScale, setBoardScale] = useState<number>(1.0);
+  const [boardScale, setBoardScale] = useState(1.0);
 
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const startTimeRef = useRef<number>(Date.now());
-  const hasRecordedRef = useRef<boolean>(false);
+  const startTimeRef = useRef(Date.now());
+  const hasRecordedRef = useRef(false);
 
   useEffect(() => {
     setGrid(initialGrid.map((r) => [...r]));
@@ -71,6 +71,20 @@ export function KropkiBoard(props: Props): React.ReactElement {
     }, 100);
     return () => clearInterval(interval);
   }, [isCompleted]);
+
+  // 事先快取圓點，杜絕 JSX 內部的箭頭函式解析歧義
+  const { rightDotMap, bottomDotMap } = useMemo(() => {
+    const rMap = new Map<string, KropkiDot>();
+    const bMap = new Map<string, KropkiDot>();
+    for (const d of dots) {
+      if (d.r1 === d.r2 && d.c2 === d.c1 + 1) {
+        rMap.set(`${d.r1},${d.c1}`, d);
+      } else if (d.c1 === d.c2 && d.r2 === d.r1 + 1) {
+        bMap.set(`${d.r1},${d.c1}`, d);
+      }
+    }
+    return { rightDotMap: rMap, bottomDotMap: bMap };
+  }, [dots]);
 
   const checkCompletion = useCallback((currentGrid: number[][]) => {
     for (let r = 0; r < n; r++) {
@@ -199,7 +213,7 @@ export function KropkiBoard(props: Props): React.ReactElement {
 
         if (!hasRecordedRef.current && actualPuzzle) {
           hasRecordedRef.current = true;
-          const tierVal: TierKey = (actualPuzzle.tier as TierKey) || 'kids';
+          const tierVal = (actualPuzzle.tier as TierKey) || 'kids';
           recordAttempt({
             puzzleId: actualPuzzle.id,
             engineType: 'kropki',
@@ -298,17 +312,6 @@ export function KropkiBoard(props: Props): React.ReactElement {
     setShowPBModal(false);
   }, []);
 
-  let modalElement: React.ReactNode = null;
-  if (showPBModal) {
-    modalElement = (
-      <PBCelebrationModal
-        pb={profile.personalBest}
-        onClose={handleClosePBModal}
-        isEn={isEn}
-      />
-    );
-  }
-
   return (
     <div className="flex flex-col items-center justify-center p-2 select-none font-mono">
       <div className="w-full grid grid-cols-3 gap-1 mb-1.5 text-[9px]">
@@ -369,6 +372,7 @@ export function KropkiBoard(props: Props): React.ReactElement {
         >
           {grid.map((row, r) =>
             row.map((val, c) => {
+              const key = `${r},${c}`;
               const isSelected = selectedCell !== null && selectedCell[0] === r && selectedCell[1] === c;
               const isInitial = initialGrid[r][c] !== 0;
               const cellNotes = notes[r][c];
@@ -385,12 +389,12 @@ export function KropkiBoard(props: Props): React.ReactElement {
                 cellStyle = 'bg-slate-900/90 text-slate-100';
               }
 
-              const rightDot = c + 1 < n ? dots.find((d) => d.r1 === r && d.c1 === c && d.r2 === r && d.c2 === c + 1) : undefined;
-              const bottomDot = r + 1 < n ? dots.find((d) => d.r1 === r && d.c1 === c && d.r2 === r + 1 && d.c2 === c) : undefined;
+              const rightDot = rightDotMap.get(key);
+              const bottomDot = bottomDotMap.get(key);
 
               return (
                 <div
-                  key={`${r}-${c}`}
+                  key={key}
                   onClick={() => setSelectedCell([r, c])}
                   className={`relative flex items-center justify-center font-black text-sm sm:text-base rounded-md cursor-pointer transition ${cellStyle}`}
                 >
@@ -588,7 +592,13 @@ export function KropkiBoard(props: Props): React.ReactElement {
         </div>
       )}
 
-      {modalElement}
+      {showPBModal && (
+        <PBCelebrationModal
+          pb={profile.personalBest}
+          onClose={handleClosePBModal}
+          isEn={isEn}
+        />
+      )}
     </div>
   );
-}
+};
