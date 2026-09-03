@@ -13,16 +13,10 @@ interface Props {
   tournamentMode?: boolean;
 }
 
-// 將帶有泛型的型別定義移至最頂層，避免 TSX parser 誤判為 JSX 標籤
-type NumberSet = Set<number>;
-type NotesMatrix = NumberSet[][];
-type Coordinate = [number, number];
-
-export function KropkiBoard(props: Props) {
-  const { puzzle, puzzleData } = props;
+export const KropkiBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
   const actualPuzzle = puzzleData || puzzle;
   const { lang } = useLanguage();
-  const isEn = Boolean(lang === 'en');
+  const isEn = lang === 'en';
   const { recordAttempt, profile, getCompositeCognitiveIndex, exportLongitudinalDataset } = useLearnerProfile();
 
   const spec = (actualPuzzle?.puzzle || actualPuzzle) as unknown as KropkiSpec;
@@ -32,34 +26,31 @@ export function KropkiBoard(props: Props) {
   const solvingSteps = spec?.solvingSteps || [];
 
   const [grid, setGrid] = useState<number[][]>(() => initialGrid.map((r) => [...r]));
-  
-  // 使用頂層別名，消除組件內部的 <number> 泛型標籤歧義
-  const [notes, setNotes] = useState<NotesMatrix>(() =>
-    Array.from({ length: n }, () => Array.from({ length: n }, () => new Set()))
+  const [notes, setNotes] = useState<Set<number>[][]>(() =>
+    Array.from({ length: n }, () => Array.from({ length: n }, () => new Set<number>()))
   );
-  
-  const [selectedCell, setSelectedCell] = useState<Coordinate | null>([0, 0]);
-  const [isCompleted, setIsCompleted] = useState(false);
-  const [elapsedMs, setElapsedMs] = useState(0);
-  const [conflictsCount, setConflictsCount] = useState(0);
-  const [showPBModal, setShowPBModal] = useState(false);
+  const [selectedCell, setSelectedCell] = useState<[number, number] | null>([0, 0]);
+  const [isCompleted, setIsCompleted] = useState<boolean>(false);
+  const [elapsedMs, setElapsedMs] = useState<number>(0);
+  const [conflictsCount, setConflictsCount] = useState<number>(0);
+  const [showPBModal, setShowPBModal] = useState<boolean>(false);
   const [proofSignature, setProofSignature] = useState<string | null>(null);
 
-  const [isNoteMode, setIsNoteMode] = useState(false);
-  const [isNoGuessMode, setIsNoGuessMode] = useState(true);
+  const [isNoteMode, setIsNoteMode] = useState<boolean>(false);
+  const [isNoGuessMode, setIsNoGuessMode] = useState<boolean>(true);
   const [guessWarning, setGuessWarning] = useState<string | null>(null);
 
-  const [hintLevel, setHintLevel] = useState(0);
+  const [hintLevel, setHintLevel] = useState<number>(0);
   const [activeHintStep, setActiveHintStep] = useState<SolvingStep | null>(null);
-  const [boardScale, setBoardScale] = useState(1.0);
+  const [boardScale, setBoardScale] = useState<number>(1.0);
 
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const startTimeRef = useRef(Date.now());
-  const hasRecordedRef = useRef(false);
+  const startTimeRef = useRef<number>(Date.now());
+  const hasRecordedRef = useRef<boolean>(false);
 
   useEffect(() => {
     setGrid(initialGrid.map((r) => [...r]));
-    setNotes(Array.from({ length: n }, () => Array.from({ length: n }, () => new Set())));
+    setNotes(Array.from({ length: n }, () => Array.from({ length: n }, () => new Set<number>())));
     setSelectedCell([0, 0]);
     setIsCompleted(false);
     setElapsedMs(0);
@@ -88,8 +79,8 @@ export function KropkiBoard(props: Props) {
     }
 
     for (let i = 0; i < n; i++) {
-      const rowVals = new Set();
-      const colVals = new Set();
+      const rowVals = new Set<number>();
+      const colVals = new Set<number>();
       for (let j = 0; j < n; j++) {
         rowVals.add(currentGrid[i][j]);
         colVals.add(currentGrid[j][i]);
@@ -136,12 +127,12 @@ export function KropkiBoard(props: Props) {
       return;
     }
 
-    const firstItem = deductions.entries().next().value;
-    if (!firstItem) return;
-    const [coord, info] = firstItem;
-    const parts = coord.split(',');
-    const r = Number(parts[0]);
-    const c = Number(parts[1]);
+    const firstEntry = deductions.entries().next().value;
+    if (!firstEntry) return;
+    const [coord, info] = firstEntry;
+    const [rStr, cStr] = coord.split(',');
+    const r = parseInt(rStr, 10);
+    const c = parseInt(cStr, 10);
 
     setSelectedCell([r, c]);
 
@@ -315,7 +306,7 @@ export function KropkiBoard(props: Props) {
         </div>
         <div className="bg-slate-950 border border-slate-800 p-1.5 rounded text-center">
           <div className="text-slate-500 text-[7px]">{isEn ? 'Dimension' : '階數'}</div>
-          <div className="text-cyan-300 font-bold">{n} * {n}</div>
+          <div className="text-cyan-300 font-bold">{n} &times; {n}</div>
         </div>
         <div className="bg-slate-950 border border-slate-800 p-1.5 rounded text-center">
           <div className="text-slate-500 text-[7px]">{isEn ? 'White / Black' : '差壹 / 雙倍'}</div>
@@ -368,10 +359,10 @@ export function KropkiBoard(props: Props) {
         >
           {grid.map((row, r) =>
             row.map((val, c) => {
-              const isSelected = Boolean(selectedCell && selectedCell[0] === r && selectedCell[1] === c);
-              const isInitial = Boolean(initialGrid[r][c] !== 0);
+              const isSelected = selectedCell !== null && selectedCell[0] === r && selectedCell[1] === c;
+              const isInitial = initialGrid[r][c] !== 0;
               const cellNotes = notes[r][c];
-              const isHintTarget = Boolean(activeHintStep && activeHintStep.row === r && activeHintStep.col === c);
+              const isHintTarget = activeHintStep !== null && activeHintStep.row === r && activeHintStep.col === c;
 
               let cellStyle = 'bg-slate-950/70 text-transparent hover:bg-slate-900/50';
               if (isHintTarget && hintLevel >= 1) {
@@ -384,42 +375,8 @@ export function KropkiBoard(props: Props) {
                 cellStyle = 'bg-slate-900/90 text-slate-100';
               }
 
-              let rightDotElem = null;
-              if (c < n - 1) {
-                const rightDot = dots.find((d) => d.r1 === r && d.c1 === c && d.r2 === r && d.c2 === c + 1);
-                if (rightDot) {
-                  const borderCls = rightDot.type === 'white' ? 'bg-white border-slate-900' : 'bg-black border-slate-400';
-                  rightDotElem = (
-                    <span className={`absolute -right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 rounded-full z-20 border-2 ${borderCls}`} />
-                  );
-                }
-              }
-
-              let bottomDotElem = null;
-              if (r < n - 1) {
-                const bottomDot = dots.find((d) => d.r1 === r && d.c1 === c && d.r2 === r + 1 && d.c2 === c);
-                if (bottomDot) {
-                  const borderCls = bottomDot.type === 'white' ? 'bg-white border-slate-900' : 'bg-black border-slate-400';
-                  bottomDotElem = (
-                    <span className={`absolute left-1/2 -bottom-2 -translate-x-1/2 w-3.5 h-3.5 rounded-full z-20 border-2 ${borderCls}`} />
-                  );
-                }
-              }
-
-              let cellContent = null;
-              if (val !== 0) {
-                cellContent = <span>{val}</span>;
-              } else if (cellNotes && cellNotes.size > 0) {
-                cellContent = (
-                  <div className="absolute inset-0 p-0.5 grid grid-cols-3 gap-0 text-[7px] sm:text-[9px] text-amber-400/90 font-mono items-center justify-items-center">
-                    {Array.from({ length: n }, (_, i) => i + 1).map((num) => (
-                      <span key={num} className="leading-none">
-                        {cellNotes.has(num) ? num : ''}
-                      </span>
-                    ))}
-                  </div>
-                );
-              }
+              const rightDot = c + 1 < n ? dots.find((d) => d.r1 === r && d.c1 === c && d.r2 === r && d.c2 === c + 1) : undefined;
+              const bottomDot = r + 1 < n ? dots.find((d) => d.r1 === r && d.c1 === c && d.r2 === r + 1 && d.c2 === c) : undefined;
 
               return (
                 <div
@@ -427,9 +384,36 @@ export function KropkiBoard(props: Props) {
                   onClick={() => setSelectedCell([r, c])}
                   className={`relative flex items-center justify-center font-black text-sm sm:text-base rounded-md cursor-pointer transition ${cellStyle}`}
                 >
-                  {cellContent}
-                  {rightDotElem}
-                  {bottomDotElem}
+                  {val !== 0 && <span>{val}</span>}
+                  {val === 0 && cellNotes.size > 0 && (
+                    <div className="absolute inset-0 p-0.5 grid grid-cols-3 gap-0 text-[7px] sm:text-[9px] text-amber-400/90 font-mono items-center justify-items-center">
+                      {Array.from({ length: n }, (_, i) => i + 1).map((num) => (
+                        <span key={num} className="leading-none">
+                          {cellNotes.has(num) ? num : ''}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+
+                  {rightDot && (
+                    <span
+                      className={`absolute -right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 rounded-full z-20 border-2 ${
+                        rightDot.type === 'white'
+                          ? 'bg-white border-slate-900 shadow-[0_0_8px_rgba(255,255,255,0.9)]'
+                          : 'bg-black border-slate-400 shadow-[0_0_8px_rgba(0,0,0,0.9)]'
+                      }`}
+                    />
+                  )}
+
+                  {bottomDot && (
+                    <span
+                      className={`absolute left-1/2 -bottom-2 -translate-x-1/2 w-3.5 h-3.5 rounded-full z-20 border-2 ${
+                        bottomDot.type === 'white'
+                          ? 'bg-white border-slate-900 shadow-[0_0_8px_rgba(255,255,255,0.9)]'
+                          : 'bg-black border-slate-400 shadow-[0_0_8px_rgba(0,0,0,0.9)]'
+                      }`}
+                    />
+                  )}
                 </div>
               );
             })
@@ -611,4 +595,4 @@ export function KropkiBoard(props: Props) {
       )}
     </div>
   );
-}
+};
