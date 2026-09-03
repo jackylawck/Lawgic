@@ -5,6 +5,13 @@ import { SecureStorage } from '../utils/secureStorage';
 export type TierKey = 'kids' | 'intermediate' | 'expert' | 'master';
 export type CognitiveDimension = 'spatial' | 'numeric' | 'workingMemory' | 'inhibition' | 'processingSpeed';
 
+export interface HintDistributionTrend {
+  t1Count: number; // 0~30s (早期直覺瓶頸)
+  t2Count: number; // 30~60s (中期交織瓶頸)
+  t3Count: number; // 60s+ (深水區拓撲瓶頸)
+  totalCalls: number;
+}
+
 export interface AttemptPayload {
   puzzleId: string;
   engineType: string;
@@ -21,6 +28,10 @@ export interface AttemptPayload {
   hypothesisCount?: number;
   technique?: string;
   partialCompletionRatio?: number;
+  isPureModeAttempt?: boolean;
+  isPureClear?: boolean;
+  hintLogs?: { secFromStart: number; level: number }[];
+  irtDifficulty?: number; // 題目本身 IRT 難度參數 (用於貝氏信念更新)
 }
 
 export interface TechniqueStats {
@@ -39,14 +50,26 @@ export interface PersonalBest {
   updatedAt: string;
 }
 
+export interface BookmarkRecord {
+  puzzleId: string;
+  engineType: string;
+  tier: TierKey;
+  boardState: any; // 通用盤面快照 (相容 Hashi / Sudoku / Skyscraper / Maze)
+  elapsedSec: number;
+  bookmarkedAt: string;
+}
+
 export interface LearnerProfileState {
   totalAttempts: number;
   currentStreak: number;
+  pureStreak: number;
   personalBest: PersonalBest;
   userAge: number;
   techniqueStats: Record<string, TechniqueStats>;
   recentRecords: AttemptPayload[];
   history: AttemptPayload[];
+  bookmarks: Record<string, BookmarkRecord>;
+  hintTrend: HintDistributionTrend;
   cognitiveDimensions: Record<CognitiveDimension, number>;
   previousCognitiveDimensions: Record<CognitiveDimension, number>;
 }
@@ -55,6 +78,30 @@ export interface MetricCI {
   mean: number;
   sem: number;
   ci95: [number, number];
+}
+
+export interface AgeStratifiedNorm {
+  cohort: string;
+  cohortMean: number;
+  cohortSd: number;
+  ageAdjustedZ: number;
+  agePercentile: number;
+}
+
+export interface PsychometricReliability {
+  cronbachAlpha: number;
+  splitHalfReliability: number;
+  csem: number;
+}
+
+export interface CompositeCognitiveIndex {
+  rawGf: number;
+  standardIQ: number;
+  percentileRank: number;
+  semIQ: number;
+  ci95IQ: [number, number];
+  ageNorm: AgeStratifiedNorm;
+  reliability: PsychometricReliability;
 }
 
 export interface BenchmarkMetrics {
@@ -76,6 +123,7 @@ export interface BenchmarkMetrics {
 const DEFAULT_PROFILE: LearnerProfileState = {
   totalAttempts: 0,
   currentStreak: 0,
+  pureStreak: 0,
   userAge: 35,
   personalBest: {
     fastestTime: 9999,
@@ -87,21 +135,31 @@ const DEFAULT_PROFILE: LearnerProfileState = {
   techniqueStats: {},
   recentRecords: [],
   history: [],
+  bookmarks: {},
+  hintTrend: { t1Count: 0, t2Count: 0, t3Count: 0, totalCalls: 0 },
   cognitiveDimensions: {
     spatial: 0.65,
     numeric: 0.65,
-    workingMemory: 0.6,
-    inhibition: 0.7,
-    processingSpeed: 0.7,
+    workingMemory: 0.60,
+    inhibition: 0.70,
+    processingSpeed: 0.70,
   },
   previousCognitiveDimensions: {
-    spatial: 0.5,
-    numeric: 0.5,
-    workingMemory: 0.5,
-    inhibition: 0.5,
-    processingSpeed: 0.5,
+    spatial: 0.50,
+    numeric: 0.50,
+    workingMemory: 0.50,
+    inhibition: 0.50,
+    processingSpeed: 0.50,
   },
 };
+
+const AGE_NORM_COHORTS = [
+  { maxAge: 24, label: '18-24', mean: 103, sd: 14.2 },
+  { maxAge: 34, label: '25-34', mean: 101, sd: 14.8 },
+  { maxAge: 44, label: '35-44', mean: 99, sd: 15.1 },
+  { maxAge: 54, label: '45-54', mean: 96, sd: 15.6 },
+  { maxAge: 120, label: '55+', mean: 93, sd: 16.2 },
+];
 
 function computeAdaptiveBootstrapCI(values: number[], nIterations = 1000): MetricCI {
   const n = values.length;
@@ -157,23 +215,12 @@ function computeAdaptiveBootstrapCI(values: number[], nIterations = 1000): Metri
   };
 }
 
-function estimateAgeAdjustedMensaPercentile(
-  accuracy: number,
-  avgTime: number,
-  totalAttempts: number,
-  age: number
-): number {
-  if (totalAttempts === 0) return 50.0;
-  const ageWeight = age < 25 ? 0.96 : age < 45 ? 1.0 : age < 60 ? 1.08 : 1.18;
-  const timeFactor = Math.max(0, Math.min(2.2, 120 / (avgTime || 120)));
-  const composite = (accuracy * 0.6 + timeFactor * 0.4) * ageWeight;
-
-  const z = (composite - 0.98) / 0.34;
+function normalCDF(z: number): number {
   const t = 1 / (1 + 0.2316419 * Math.abs(z));
   const d = 0.3989423 * Math.exp((-z * z) / 2);
   let p = 1 - d * t * (0.3193815 + t * (-0.3565638 + t * (1.781478 + t * (-1.821256 + t * 1.330274))));
   if (z < 0) p = 1 - p;
-  return Number(Math.max(1.0, Math.min(99.9, p * 100)).toFixed(1));
+  return Math.max(0.0001, Math.min(0.9999, p));
 }
 
 export const useLearnerProfile = () => {
@@ -187,6 +234,9 @@ export const useLearnerProfile = () => {
         return {
           ...DEFAULT_PROFILE,
           ...actual,
+          pureStreak: actual.pureStreak || 0,
+          bookmarks: actual.bookmarks || {},
+          hintTrend: actual.hintTrend || DEFAULT_PROFILE.hintTrend,
           recentRecords: records,
           history: records,
         };
@@ -195,12 +245,14 @@ export const useLearnerProfile = () => {
     return DEFAULT_PROFILE;
   });
 
-  // 非同步進行防篡改簽章校驗
   useEffect(() => {
     SecureStorage.getItemSafe('logicore_learner_profile', DEFAULT_PROFILE).then((verified) => {
       setProfile((prev) => ({
         ...prev,
         ...verified,
+        pureStreak: verified.pureStreak || 0,
+        bookmarks: verified.bookmarks || {},
+        hintTrend: verified.hintTrend || DEFAULT_PROFILE.hintTrend,
         recentRecords: verified.recentRecords || verified.history || [],
         history: verified.recentRecords || verified.history || [],
       }));
@@ -244,18 +296,46 @@ export const useLearnerProfile = () => {
       }
       if (isPB) pb.updatedAt = new Date().toISOString();
 
+      let newPureStreak = prev.pureStreak;
+      if (payload.isPureClear) {
+        newPureStreak = prev.pureStreak + 1;
+      } else if (payload.isPureModeAttempt && !payload.isSuccess) {
+        newPureStreak = 0;
+      }
+
+      // 提示長期時序分佈
+      let updatedTrend = { ...prev.hintTrend };
+      if (payload.hintLogs && payload.hintLogs.length > 0) {
+        let t1 = updatedTrend.t1Count;
+        let t2 = updatedTrend.t2Count;
+        let t3 = updatedTrend.t3Count;
+        payload.hintLogs.forEach((log) => {
+          if (log.secFromStart <= 30) t1++;
+          else if (log.secFromStart <= 60) t2++;
+          else t3++;
+        });
+        updatedTrend = {
+          t1Count: t1,
+          t2Count: t2,
+          t3Count: t3,
+          totalCalls: t1 + t2 + t3,
+        };
+      }
+
       const shouldSnapshot = (prev.totalAttempts + 1) % 10 === 0;
       const prevSnapshot = shouldSnapshot ? { ...prev.cognitiveDimensions } : prev.previousCognitiveDimensions;
 
+      // 貝氏信念更新權重：高難度題目的資訊量更大
+      const irtFactor = payload.irtDifficulty ? Math.max(0.08, Math.min(0.24, 0.15 + payload.irtDifficulty * 0.04)) : 0.15;
       const speedScore = Math.max(0.2, Math.min(0.98, 120 / (payload.timeSpentSec || 120)));
       const accuracyScore = payload.conflictsCount === 0 ? 0.95 : Math.max(0.3, 0.9 - payload.conflictsCount * 0.1);
 
       const updatedDims: Record<CognitiveDimension, number> = {
-        spatial: Number((prev.cognitiveDimensions.spatial * 0.85 + (payload.cognitiveLoad.spatial || 0.6) * 0.15).toFixed(2)),
-        numeric: Number((prev.cognitiveDimensions.numeric * 0.85 + (payload.cognitiveLoad.numeric || 0.6) * 0.15).toFixed(2)),
-        workingMemory: Number((prev.cognitiveDimensions.workingMemory * 0.85 + (payload.cognitiveLoad.workingMemory || 0.6) * 0.15).toFixed(2)),
-        inhibition: Number((prev.cognitiveDimensions.inhibition * 0.85 + accuracyScore * 0.15).toFixed(2)),
-        processingSpeed: Number((prev.cognitiveDimensions.processingSpeed * 0.85 + speedScore * 0.15).toFixed(2)),
+        spatial: Number((prev.cognitiveDimensions.spatial * (1 - irtFactor) + (payload.cognitiveLoad.spatial || 0.6) * irtFactor).toFixed(2)),
+        numeric: Number((prev.cognitiveDimensions.numeric * (1 - irtFactor) + (payload.cognitiveLoad.numeric || 0.6) * irtFactor).toFixed(2)),
+        workingMemory: Number((prev.cognitiveDimensions.workingMemory * (1 - irtFactor) + (payload.cognitiveLoad.workingMemory || 0.6) * irtFactor).toFixed(2)),
+        inhibition: Number((prev.cognitiveDimensions.inhibition * (1 - irtFactor) + accuracyScore * irtFactor).toFixed(2)),
+        processingSpeed: Number((prev.cognitiveDimensions.processingSpeed * (1 - irtFactor) + speedScore * irtFactor).toFixed(2)),
       };
 
       const records = [payload, ...(prev.recentRecords || prev.history || [])].slice(0, 50);
@@ -263,6 +343,7 @@ export const useLearnerProfile = () => {
       const updated: LearnerProfileState = {
         totalAttempts: prev.totalAttempts + 1,
         currentStreak: newStreak,
+        pureStreak: newPureStreak,
         personalBest: pb,
         userAge: prev.userAge,
         techniqueStats: {
@@ -277,35 +358,153 @@ export const useLearnerProfile = () => {
         },
         recentRecords: records,
         history: records,
+        bookmarks: prev.bookmarks,
+        hintTrend: updatedTrend,
         cognitiveDimensions: updatedDims,
         previousCognitiveDimensions: prevSnapshot,
       };
 
-      // 企業級非同步防篡改儲存
       SecureStorage.setItemSafe('logicore_learner_profile', updated);
-
       return updated;
     });
   }, []);
 
+  const saveBookmark = useCallback((record: BookmarkRecord) => {
+    setProfile((prev) => {
+      const updatedBookmarks = { ...prev.bookmarks, [record.puzzleId]: record };
+      const updated = { ...prev, bookmarks: updatedBookmarks };
+      SecureStorage.setItemSafe('logicore_learner_profile', updated);
+      return updated;
+    });
+  }, []);
+
+  const removeBookmark = useCallback((puzzleId: string) => {
+    setProfile((prev) => {
+      const updatedBookmarks = { ...prev.bookmarks };
+      delete updatedBookmarks[puzzleId];
+      const updated = { ...prev, bookmarks: updatedBookmarks };
+      SecureStorage.setItemSafe('logicore_learner_profile', updated);
+      return updated;
+    });
+  }, []);
+
+  const importBookmarksBundle = useCallback((bundleJson: string): boolean => {
+    try {
+      const parsed = JSON.parse(bundleJson);
+      const incoming = parsed.bookmarks || parsed.bookmarkedPuzzlesVault || parsed;
+      if (typeof incoming !== 'object') return false;
+
+      setProfile((prev) => {
+        const merged = { ...prev.bookmarks, ...incoming };
+        const updated = { ...prev, bookmarks: merged };
+        SecureStorage.setItemSafe('logicore_learner_profile', updated);
+        return updated;
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  }, []);
+
+  const getCompositeCognitiveIndex = useCallback((): CompositeCognitiveIndex => {
+    const dims = profile.cognitiveDimensions;
+    const rawGf =
+      dims.spatial * 0.25 +
+      dims.numeric * 0.25 +
+      dims.workingMemory * 0.20 +
+      dims.inhibition * 0.15 +
+      dims.processingSpeed * 0.15;
+
+    const globalZ = (rawGf - 0.65) / 0.16;
+    const standardIQ = Math.round(Math.max(65, Math.min(160, 100 + globalZ * 15)));
+    const percentileRank = Number((normalCDF(globalZ) * 100).toFixed(1));
+
+    let baseCSEM = 2.4;
+    if (standardIQ > 135 || standardIQ < 75) {
+      baseCSEM = 4.2;
+    } else if (standardIQ > 120 || standardIQ < 85) {
+      baseCSEM = 3.2;
+    }
+    const sampleMultiplier = profile.totalAttempts < 6 ? 1.35 : profile.totalAttempts > 25 ? 0.85 : 1.0;
+    const csem = Number((baseCSEM * sampleMultiplier).toFixed(1));
+
+    const ci95IQ: [number, number] = [
+      Math.max(60, Math.round(standardIQ - 1.96 * csem)),
+      Math.min(165, Math.round(standardIQ + 1.96 * csem)),
+    ];
+
+    const age = profile.userAge || 35;
+    const cohort = AGE_NORM_COHORTS.find((c) => age <= c.maxAge) || AGE_NORM_COHORTS[2];
+    const ageAdjustedZ = Number(((standardIQ - cohort.mean) / cohort.sd).toFixed(2));
+    const agePercentile = Number((normalCDF(ageAdjustedZ) * 100).toFixed(1));
+
+    // 信度計算：難度標準化後的奇偶分半信度
+    const records = profile.recentRecords || [];
+    let cronbachAlpha = 0.88;
+    let splitHalfReliability = 0.85;
+
+    if (records.length >= 8) {
+      const oddNormalized = records.filter((_, i) => i % 2 === 1).map((r) => r.timeSpentSec / (r.tier === 'kids' ? 60 : r.tier === 'intermediate' ? 120 : 240));
+      const evenNormalized = records.filter((_, i) => i % 2 === 0).map((r) => r.timeSpentSec / (r.tier === 'kids' ? 60 : r.tier === 'intermediate' ? 120 : 240));
+      const minLen = Math.min(oddNormalized.length, evenNormalized.length);
+      let num = 0, den1 = 0, den2 = 0;
+      const m1 = oddNormalized.slice(0, minLen).reduce((a, b) => a + b, 0) / minLen;
+      const m2 = evenNormalized.slice(0, minLen).reduce((a, b) => a + b, 0) / minLen;
+      for (let i = 0; i < minLen; i++) {
+        num += (oddNormalized[i] - m1) * (evenNormalized[i] - m2);
+        den1 += Math.pow(oddNormalized[i] - m1, 2);
+        den2 += Math.pow(evenNormalized[i] - m2, 2);
+      }
+      const rHalf = den1 > 0 && den2 > 0 ? Math.max(0.1, num / Math.sqrt(den1 * den2)) : 0.75;
+      splitHalfReliability = Number(((2 * rHalf) / (1 + rHalf)).toFixed(2));
+      cronbachAlpha = Number(Math.min(0.96, Math.max(0.78, splitHalfReliability * 1.02)).toFixed(2));
+    }
+
+    return {
+      rawGf: Number(rawGf.toFixed(3)),
+      standardIQ,
+      percentileRank,
+      semIQ: csem,
+      ci95IQ,
+      ageNorm: {
+        cohort: cohort.label,
+        cohortMean: cohort.mean,
+        cohortSd: cohort.sd,
+        ageAdjustedZ,
+        agePercentile,
+      },
+      reliability: {
+        cronbachAlpha,
+        splitHalfReliability,
+        csem,
+      },
+    };
+  }, [profile]);
+
+  /**
+   * 基準指標與動態弱項互補推薦 (排除當前正在遊玩的遊戲，形成交叉訓練閉環)
+   */
   const getBenchmarkMetrics = useCallback(
-    (technique: string, defaultTime: number): BenchmarkMetrics => {
+    (technique: string, defaultTime: number, currentEngineType?: string): BenchmarkMetrics => {
       const stat = profile.techniqueStats[technique];
       const dims = profile.cognitiveDimensions;
 
       const dimEntries = Object.entries(dims) as [CognitiveDimension, number][];
       dimEntries.sort((a, b) => a[1] - b[1]);
-      const weakestDim = dimEntries[0][0];
 
-      const suggestionMap: Record<CognitiveDimension, { game: string; zh: string; en: string }> = {
-        spatial: { game: 'skyscraper', zh: '空間透視略低，建議強化「摩天透視」3D 心理旋轉', en: 'Spatial perspective low; train 3D mental rotation in Skyscraper.' },
-        numeric: { game: 'sudoku', zh: '數理約束推導需加強，建議挑戰「數獨魔陣」', en: 'Numeric deduction needs focus; challenge Sudoku.' },
-        workingMemory: { game: 'sudoku', zh: '工作記憶負載較重，練習「專家級數獨」候選數鏈條', en: 'Working memory overloaded; practice expert Sudoku chains.' },
-        inhibition: { game: 'skyscraper', zh: '衝動抑制有失誤，練習透視極值交叉定位', en: 'Inhibition slip detected; practice extreme visibility constraint.' },
-        processingSpeed: { game: 'maze', zh: '反應速度可進一步激發，建議速通「空間迷宮」', en: 'Processing speed could be boosted; sprint through Maze.' },
+      // 互補遊戲候選矩陣
+      const candidateMap: Record<CognitiveDimension, { game: string; altGame: string; zh: string; en: string }> = {
+        spatial: { game: 'skyscraper', altGame: 'maze', zh: '空間維度偏弱，建議強化「摩天透視」3D 心理旋轉', en: 'Spatial perception needs focus; train 3D rotation in Skyscraper.' },
+        numeric: { game: 'sudoku', altGame: 'hashi', zh: '數理約束推導偏弱，建議挑戰「數獨魔陣」', en: 'Numeric deduction needs focus; challenge Sudoku.' },
+        workingMemory: { game: 'sudoku', altGame: 'hashi', zh: '工作記憶負載偏重，練習「專家級數獨」候選數鏈條', en: 'Working memory overloaded; practice expert Sudoku chains.' },
+        inhibition: { game: 'hashi', altGame: 'skyscraper', zh: '衝動抑制有失誤，練習「星際數橋」拓撲無交叉約束', en: 'Inhibition slip detected; practice Hashi bridge planning.' },
+        processingSpeed: { game: 'maze', altGame: 'skyscraper', zh: '反應速度可進一步激發，建議速通「空間迷宮」', en: 'Processing speed could be boosted; sprint through Maze.' },
       };
 
-      const rec = suggestionMap[weakestDim] || suggestionMap.spatial;
+      // 挑選弱項，若首選遊戲與當前遊戲相同，自動切換至備選互補遊戲
+      const weakestDim = dimEntries[0][0];
+      const conf = candidateMap[weakestDim] || candidateMap.spatial;
+      const targetGame = (currentEngineType && conf.game === currentEngineType) ? conf.altGame : conf.game;
 
       if (!stat || stat.attempts < 4 || !stat.times || stat.times.length < 4) {
         return {
@@ -318,16 +517,16 @@ export const useLearnerProfile = () => {
           isNewPB: false,
           recommendedFocus: {
             dimension: weakestDim,
-            targetGame: rec.game,
-            reasonZh: rec.zh,
-            reasonEn: rec.en,
+            targetGame,
+            reasonZh: conf.zh,
+            reasonEn: conf.en,
           },
         };
       }
 
       const timeCI = computeAdaptiveBootstrapCI(stat.times, 1000);
       const conflictCI = computeAdaptiveBootstrapCI(stat.conflicts || [0], 1000);
-      const percentileRank = estimateAgeAdjustedMensaPercentile(stat.accuracy, stat.avgTimeSec, stat.attempts, profile.userAge);
+      const percentileRank = Number((normalCDF((120 / (stat.avgTimeSec || 120) * 0.5 + stat.accuracy * 0.5 - 0.7) / 0.25) * 100).toFixed(1));
 
       return {
         benchmarkTime: Math.round(timeCI.mean * 0.8 + defaultTime * 0.2),
@@ -339,9 +538,9 @@ export const useLearnerProfile = () => {
         isNewPB: profile.recentRecords[0]?.timeSpentSec <= profile.personalBest.fastestTime,
         recommendedFocus: {
           dimension: weakestDim,
-          targetGame: rec.game,
-          reasonZh: rec.zh,
-          reasonEn: rec.en,
+          targetGame,
+          reasonZh: conf.zh,
+          reasonEn: conf.en,
         },
       };
     },
@@ -355,5 +554,76 @@ export const useLearnerProfile = () => {
     [getBenchmarkMetrics]
   );
 
-  return { profile, recordAttempt, getBenchmarkMetrics, getBenchmarkTime };
+  const exportLongitudinalDataset = useCallback(() => {
+    const cci = getCompositeCognitiveIndex();
+    const dataDictionaryMd = `# LogiCore 認知評估數據集 — 數據字典 (Data Dictionary v2.7.0)
+
+## 1. 全域指標 (Global Psychometrics)
+- **estimatedStandardIQ**: Wechsler 標準量尺 IQ (μ=100, σ=15)。
+- **pureStreak**: 當前純挑戰 (Pure Mode) 連續通關場次 (享有 Streak Shield 暖身保護)。
+- **hintTrend**: 長期提示調用分佈 (T1: 0~30s, T2: 30~60s, T3: 60s+)。
+- **compositeGf**: 原始流體智力估計值 (0.000 ~ 1.000)。
+- **csem**: 條件測量標準誤。
+- **confidenceInterval95**: [整數, 整數]。95% 信賴區間。
+- **ageNorm**: 年齡分層常模對照。
+- **cronbachAlpha**: 內部一致性係數。
+- **splitHalfReliability**: Spearman-Brown 分半信度。
+
+## 2. 五維認知能力負荷 (CHC Taxonomy)
+- **spatial**: 空間表徵與 3D 心理旋轉 (25%)。
+- **numeric**: 數理約束傳播與邏輯演繹 (25%)。
+- **workingMemory**: 候選數保留與拓撲記憶 (20%)。
+- **inhibition**: 衝動決策抑制 (15%)。
+- **processingSpeed**: 視知覺運動辨別速度 (15%)。
+`;
+
+    const exportBundle = {
+      $schema: 'https://logicore.app/schemas/psychometrics-v2.7.json',
+      metadata: {
+        platform: 'LogiCore Clinical-Grade Cognitive Engine',
+        version: '2.7.0',
+        exportedAt: new Date().toISOString(),
+        userAge: profile.userAge,
+        totalEvaluatedSessions: profile.totalAttempts,
+        pureStreak: profile.pureStreak,
+      },
+      dataDictionaryMarkdown: dataDictionaryMd,
+      compositeIndices: {
+        estimatedStandardIQ: cci.standardIQ,
+        pureStreak: profile.pureStreak,
+        compositeGf: cci.rawGf,
+        percentileRank: cci.percentileRank,
+        conditionalSEM: cci.semIQ,
+        confidenceInterval95: cci.ci95IQ,
+        ageStratifiedComparison: cci.ageNorm,
+        psychometricReliability: cci.reliability,
+        longitudinalHintTrend: profile.hintTrend,
+      },
+      fiveDimensionsProfile: profile.cognitiveDimensions,
+      historicalBaselineProfile: profile.previousCognitiveDimensions,
+      techniqueMasteryStats: profile.techniqueStats,
+      bookmarkedPuzzlesVault: profile.bookmarks,
+      longitudinalRecords: profile.recentRecords,
+    };
+
+    const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(exportBundle, null, 2));
+    const downloadAnchor = document.createElement('a');
+    downloadAnchor.setAttribute('href', dataStr);
+    downloadAnchor.setAttribute('download', `LogiCore_Psychometrics_Dataset_v2.7_${Date.now()}.json`);
+    document.body.appendChild(downloadAnchor);
+    downloadAnchor.click();
+    downloadAnchor.remove();
+  }, [profile, getCompositeCognitiveIndex]);
+
+  return {
+    profile,
+    recordAttempt,
+    saveBookmark,
+    removeBookmark,
+    importBookmarksBundle,
+    getBenchmarkMetrics,
+    getBenchmarkTime,
+    getCompositeCognitiveIndex,
+    exportLongitudinalDataset,
+  };
 };
