@@ -8,6 +8,7 @@ import { CognitiveRadarChart } from './CognitiveRadarChart';
 import { PBCelebrationModal } from './PBCelebrationModal';
 import { TournamentSubmissionModal } from './TournamentSubmissionModal';
 import { getEnvironmentFingerprint, calculateInfractionScore } from '../utils/tournamentSecurity';
+import { SudokuHintStep } from '../engines/sudokuGenerator';
 
 interface Props {
   puzzleData?: PuzzleEntity;
@@ -51,7 +52,7 @@ export const SudokuBoard: React.FC<Props> = ({
   const standardTimeLimit = timeLimitMap[currentTier] || 480;
 
   const benchmarkData = useMemo(() => {
-    return getBenchmarkMetrics(highestTech, theoryTime);
+    return getBenchmarkMetrics(highestTech, theoryTime, 'sudoku');
   }, [getBenchmarkMetrics, highestTech, theoryTime]);
 
   const initialGrid = useMemo(() => {
@@ -67,12 +68,23 @@ export const SudokuBoard: React.FC<Props> = ({
     return Array(81).fill(0);
   }, [actualPuzzle]);
 
+  const flatSolution = useMemo(() => {
+    const sol = actualPuzzle?.solution;
+    if (!sol || !Array.isArray(sol)) return [];
+    return Array.isArray(sol[0]) ? sol.flat() : sol;
+  }, [actualPuzzle]);
+
+  const hints: SudokuHintStep[] = useMemo(() => {
+    return (actualPuzzle?.metrics as any)?.hints || (actualPuzzle?.puzzle as any)?.hints || [];
+  }, [actualPuzzle]);
+
   const [grid, setGrid] = useState<number[]>(initialGrid);
   const [candidates, setCandidates] = useState<Record<number, Set<number>>>({});
   const [isNoteMode, setIsNoteMode] = useState<boolean>(false);
   const [selectedCell, setSelectedCell] = useState<number | null>(null);
   const [conflictCell, setConflictCell] = useState<number | null>(null);
   const [isCompleted, setIsCompleted] = useState<boolean>(false);
+  const [isResigned, setIsResigned] = useState<boolean>(false);
   const [isFailedAssessment, setIsFailedAssessment] = useState<boolean>(false);
   const [isTimedOut, setIsTimedOut] = useState<boolean>(false);
   const [elapsedSec, setElapsedSec] = useState<number>(0);
@@ -82,6 +94,10 @@ export const SudokuBoard: React.FC<Props> = ({
   const [violationAlert, setViolationAlert] = useState<string | null>(null);
   const [bookmarkToast, setBookmarkToast] = useState<string | null>(null);
 
+  // 提示狀態
+  const [hintLevel, setHintLevel] = useState<number>(0);
+  const [activeHintText, setActiveHintText] = useState<string | null>(null);
+
   const tabSwitchesRef = useRef<number>(0);
   const blurEventsRef = useRef<number>(0);
   const startTimeRef = useRef<number>(Date.now());
@@ -90,7 +106,7 @@ export const SudokuBoard: React.FC<Props> = ({
 
   // 防作弊監聽
   useEffect(() => {
-    if (!isAssessmentMode || isCompleted || isTimedOut || isFailedAssessment) return;
+    if (!isAssessmentMode || isCompleted || isTimedOut || isFailedAssessment || isResigned) return;
 
     const handleVisibility = () => {
       if (document.hidden) {
@@ -111,13 +127,13 @@ export const SudokuBoard: React.FC<Props> = ({
       document.removeEventListener('visibilitychange', handleVisibility);
       window.removeEventListener('blur', handleBlur);
     };
-  }, [isAssessmentMode, isCompleted, isTimedOut, isFailedAssessment, isEn]);
+  }, [isAssessmentMode, isCompleted, isTimedOut, isFailedAssessment, isResigned, isEn]);
 
-  // 初始化與書籤恢復
+  // 初始化與書籤恢復（更新為 boardState）
   useEffect(() => {
     const bookmark = profile.bookmarks[actualPuzzle?.id || ''];
-    if (bookmark) {
-      setGrid(bookmark.savedBridges.length > 0 ? (bookmark.savedBridges as any) : initialGrid);
+    if (bookmark && bookmark.boardState) {
+      setGrid(Array.isArray(bookmark.boardState) && bookmark.boardState.length > 0 ? bookmark.boardState : initialGrid);
       setElapsedSec(bookmark.elapsedSec);
       setBookmarkToast(isEn ? 'Restored bookmarked progress' : '已自動恢復上次暫存進度');
       setTimeout(() => setBookmarkToast(null), 2500);
@@ -131,10 +147,13 @@ export const SudokuBoard: React.FC<Props> = ({
     setSelectedCell(null);
     setConflictCell(null);
     setIsCompleted(false);
+    setIsResigned(false);
     setIsFailedAssessment(false);
     setIsTimedOut(false);
     setProofSignature(null);
     setViolationAlert(null);
+    setHintLevel(0);
+    setActiveHintText(null);
     tabSwitchesRef.current = 0;
     blurEventsRef.current = 0;
     startTimeRef.current = Date.now() - (bookmark?.elapsedSec ? bookmark.elapsedSec * 1000 : 0);
@@ -144,7 +163,7 @@ export const SudokuBoard: React.FC<Props> = ({
 
   // 計時與超時判定
   useEffect(() => {
-    if (isCompleted || isTimedOut || isFailedAssessment) return;
+    if (isCompleted || isTimedOut || isFailedAssessment || isResigned) return;
     const timer = setInterval(() => {
       const currentElapsed = Math.floor((Date.now() - startTimeRef.current) / 1000);
       setElapsedSec(currentElapsed);
@@ -153,7 +172,7 @@ export const SudokuBoard: React.FC<Props> = ({
         setIsTimedOut(true);
         if (!hasRecordedRef.current) {
           hasRecordedRef.current = true;
-          const sol = (actualPuzzle?.solution as any)?.flat() || [];
+          const sol = flatSolution;
           const filledCount = grid.filter((v) => v !== 0).length;
           const correctFilled = grid.filter((v, i) => v !== 0 && v === sol[i]).length;
           const partialRatio = filledCount > 0 ? Number((correctFilled / 81).toFixed(2)) : 0;
@@ -195,6 +214,7 @@ export const SudokuBoard: React.FC<Props> = ({
     isCompleted,
     isTimedOut,
     isFailedAssessment,
+    isResigned,
     isAssessmentMode,
     standardTimeLimit,
     actualPuzzle,
@@ -202,16 +222,16 @@ export const SudokuBoard: React.FC<Props> = ({
     highestTech,
     recordAttempt,
     grid,
+    flatSolution,
   ]);
 
   // 勝利判定
   const checkVictory = useCallback(
     async (currentGrid: number[]) => {
-      const sol = actualPuzzle?.solution;
-      if (!sol || !Array.isArray(sol)) return;
-      const flatSol = Array.isArray(sol[0]) ? sol.flat() : sol;
+      const flatSol = flatSolution;
+      if (flatSol.length !== 81) return;
 
-      const isPerfectMatch = flatSol.length === 81 && currentGrid.every((v, i) => v === flatSol[i]);
+      const isPerfectMatch = currentGrid.every((v, i) => v === flatSol[i]);
 
       if (isPerfectMatch) {
         setIsCompleted(true);
@@ -235,7 +255,7 @@ export const SudokuBoard: React.FC<Props> = ({
             conflictsCount: conflictCountRef.current,
             technique: highestTech,
             partialCompletionRatio: 1.0,
-            isPureClear: conflictCountRef.current === 0,
+            isPureClear: conflictCountRef.current === 0 && hintLevel === 0,
           });
 
           try {
@@ -301,35 +321,84 @@ export const SudokuBoard: React.FC<Props> = ({
         }
       }
     },
-    [actualPuzzle, recordAttempt, removeBookmark, currentTier, highestTech, isAssessmentMode, benchmarkData.isNewPB]
+    [actualPuzzle, recordAttempt, removeBookmark, currentTier, highestTech, isAssessmentMode, benchmarkData.isNewPB, flatSolution, hintLevel]
   );
 
-  // 暫存此局進度
+  // 暫存此局進度（更新為 boardState）
   const handleBookmarkPuzzle = useCallback(() => {
-    if (isCompleted || isTimedOut || isFailedAssessment || !actualPuzzle) return;
+    if (isCompleted || isTimedOut || isFailedAssessment || isResigned || !actualPuzzle) return;
     saveBookmark({
       puzzleId: actualPuzzle.id,
       engineType: 'sudoku',
       tier: currentTier,
-      savedBridges: grid as any,
+      boardState: grid,
       elapsedSec,
       bookmarkedAt: new Date().toISOString(),
     });
     setBookmarkToast(isEn ? '📌 Progress bookmarked for later' : '📌 已暫存此局進度，可隨時接續');
     setTimeout(() => setBookmarkToast(null), 2500);
     if (navigator.vibrate) navigator.vibrate([25, 40]);
-  }, [isCompleted, isTimedOut, isFailedAssessment, actualPuzzle, currentTier, grid, elapsedSec, saveBookmark, isEn]);
+  }, [isCompleted, isTimedOut, isFailedAssessment, isResigned, actualPuzzle, currentTier, grid, elapsedSec, saveBookmark, isEn]);
+
+  // 優雅投降並覆盤
+  const handleGracefulResign = useCallback(() => {
+    if (isCompleted || isTimedOut || isFailedAssessment || isResigned || !flatSolution.length) return;
+    if (navigator.vibrate) navigator.vibrate([40, 60, 40]);
+
+    setIsResigned(true);
+    hasRecordedRef.current = true;
+    removeBookmark(actualPuzzle?.id || '');
+
+    setGrid([...flatSolution]);
+
+    const timeSpent = Math.max(1, Math.round((Date.now() - startTimeRef.current) / 1000));
+    recordAttempt({
+      puzzleId: actualPuzzle?.id || 'sudoku',
+      engineType: 'sudoku',
+      tier: currentTier,
+      cognitiveLoad: actualPuzzle?.cognitiveLoad || {
+        spatial: 0.3,
+        numeric: 0.7,
+        workingMemory: 0.8,
+        inhibition: 0.6,
+      },
+      isSuccess: false,
+      timeSpentSec: timeSpent,
+      conflictsCount: conflictCountRef.current,
+      technique: highestTech,
+      partialCompletionRatio: 0.5,
+      isPureClear: false,
+    });
+  }, [isCompleted, isTimedOut, isFailedAssessment, isResigned, flatSolution, actualPuzzle, currentTier, conflictCountRef, highestTech, recordAttempt, removeBookmark]);
+
+  // 提示階梯觸發
+  const triggerHintLadder = () => {
+    if (hints.length === 0 || isCompleted || isTimedOut || isFailedAssessment || isResigned) return;
+
+    const nextLevel = Math.min(3, hintLevel + 1);
+    const hintData = hints.find((h) => h.level === nextLevel) || hints[hints.length - 1];
+
+    setHintLevel(nextLevel);
+    setActiveHintText(isEn ? hintData.messageEn : hintData.messageZh);
+
+    if (hintData.row !== undefined && hintData.col !== undefined) {
+      const idx = hintData.row * 9 + hintData.col;
+      setSelectedCell(idx);
+    }
+
+    if (navigator.vibrate) navigator.vibrate(25);
+  };
 
   const handleCellClick = (index: number) => {
-    if (initialGrid[index] !== 0 || isCompleted || isTimedOut || isFailedAssessment) return;
+    if (initialGrid[index] !== 0 || isCompleted || isTimedOut || isFailedAssessment || isResigned) return;
     setSelectedCell(index);
     if (navigator.vibrate) navigator.vibrate(10);
   };
 
   const handleNumberInput = (num: number) => {
-    if (selectedCell === null || initialGrid[selectedCell] !== 0 || isCompleted || isTimedOut || isFailedAssessment) return;
+    if (selectedCell === null || initialGrid[selectedCell] !== 0 || isCompleted || isTimedOut || isFailedAssessment || isResigned) return;
 
-    // 筆記模式：切換候選數標記
+    // 筆記模式
     if (isNoteMode && num !== 0) {
       setCandidates((prev) => {
         const cellCandidates = new Set(prev[selectedCell] || []);
@@ -345,8 +414,7 @@ export const SudokuBoard: React.FC<Props> = ({
     }
 
     // 正式填入數值
-    const sol = actualPuzzle?.solution;
-    const flatSol = sol ? (Array.isArray(sol[0]) ? sol.flat() : sol) : [];
+    const flatSol = flatSolution;
     const expectedValue = flatSol[selectedCell];
 
     if (!isAssessmentMode) {
@@ -367,7 +435,6 @@ export const SudokuBoard: React.FC<Props> = ({
     nextGrid[selectedCell] = num;
     setGrid(nextGrid);
 
-    // 清除該格候選數
     if (num !== 0) {
       setCandidates((prev) => {
         const updated = { ...prev };
@@ -376,12 +443,22 @@ export const SudokuBoard: React.FC<Props> = ({
       });
     }
 
+    // 驗證第三階手動確認
+    const r = Math.floor(selectedCell / 9);
+    const c = selectedCell % 9;
+    const currentHint = hints.find((h) => h.level === 3);
+    if (hintLevel === 3 && currentHint && currentHint.row === r && currentHint.col === c && num === currentHint.targetNum) {
+      setHintLevel(0);
+      setActiveHintText(isEn ? '✨ Strategic step confirmed!' : '✨ 必然推理步已由您手動確認！');
+      setTimeout(() => setActiveHintText(null), 3000);
+    }
+
     checkVictory(nextGrid);
   };
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (isCompleted || isTimedOut || isFailedAssessment || selectedCell === null) return;
+      if (isCompleted || isTimedOut || isFailedAssessment || isResigned || selectedCell === null) return;
 
       if (e.key === 'n' || e.key === 'N') {
         setIsNoteMode((prev) => !prev);
@@ -398,7 +475,7 @@ export const SudokuBoard: React.FC<Props> = ({
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedCell, isCompleted, isTimedOut, isFailedAssessment, grid, isNoteMode]);
+  }, [selectedCell, isCompleted, isTimedOut, isFailedAssessment, isResigned, grid, isNoteMode]);
 
   const userStat = profile.techniqueStats?.[highestTech];
   const solvingPath: string[] = metrics.solving_path || ['Standard Derivation'];
@@ -453,13 +530,33 @@ export const SudokuBoard: React.FC<Props> = ({
         </div>
 
         <div className="flex items-center gap-1.5">
-          {!isCompleted && !isTimedOut && !isFailedAssessment && (
+          {!isCompleted && !isTimedOut && !isFailedAssessment && !isResigned && (
             <button
               onClick={handleBookmarkPuzzle}
               className="px-1.5 py-0.5 bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-400 text-[7px] rounded transition"
               title={isEn ? 'Bookmark progress' : '暫存此局進度'}
             >
               📌 {isEn ? 'Save' : '暫存'}
+            </button>
+          )}
+
+          {!isCompleted && !isTimedOut && !isFailedAssessment && !isResigned && (
+            <button
+              onClick={handleGracefulResign}
+              className="px-1.5 py-0.5 bg-slate-900 hover:bg-rose-950/60 border border-slate-700 hover:border-rose-700 text-slate-400 hover:text-rose-300 text-[7px] rounded transition"
+              title={isEn ? 'Resign & Reveal Solution' : '優雅投降並覆盤官方解答'}
+            >
+              🕊️ {isEn ? 'Resign' : '投降'}
+            </button>
+          )}
+
+          {!isCompleted && !isTimedOut && !isFailedAssessment && !isResigned && hints.length > 0 && (
+            <button
+              onClick={triggerHintLadder}
+              className="px-2 py-0.5 bg-amber-950 hover:bg-amber-900 border border-amber-500 text-amber-300 text-[7px] font-bold rounded flex items-center gap-1 transition shadow active:scale-95"
+            >
+              <span>💡</span>
+              <span>{hintLevel === 0 ? (isEn ? 'Hint 1' : '提示一') : hintLevel === 1 ? (isEn ? 'Hint 2' : '提示二') : (isEn ? 'Hint 3' : '提示三')}</span>
             </button>
           )}
 
@@ -481,8 +578,23 @@ export const SudokuBoard: React.FC<Props> = ({
         </div>
       </div>
 
+      {/* 提示訊息橫條 */}
+      {activeHintText && (
+        <div className="w-[min(90vw,46vh)] bg-amber-950/90 border border-amber-500 text-amber-200 text-[7.5px] px-2 py-1.5 rounded-lg mb-1 animate-fade-in flex items-start justify-between gap-1 shadow-lg">
+          <div className="flex items-start gap-1">
+            <span className="text-amber-400 font-bold">L{hintLevel}</span>
+            <span className="leading-snug">{activeHintText}</span>
+          </div>
+          <button onClick={() => setActiveHintText(null)} className="text-amber-400 shrink-0 font-bold ml-1">✕</button>
+        </div>
+      )}
+
       {/* 自適應盤面 */}
-      <div className="grid grid-cols-9 gap-[1px] bg-slate-750 border-2 border-slate-700 p-1 rounded-xl shadow-2xl w-[min(90vw,46vh)] h-[min(90vw,46vh)] mx-auto">
+      <div
+        className={`grid grid-cols-9 gap-[1px] border-2 p-1 rounded-xl shadow-2xl w-[min(90vw,46vh)] h-[min(90vw,46vh)] mx-auto transition-colors ${
+          isResigned ? 'bg-rose-950/20 border-rose-900/60' : 'bg-slate-750 border-slate-700'
+        }`}
+      >
         {grid.map((val, idx) => {
           const isGiven = initialGrid[idx] !== 0;
           const isSelected = selectedCell === idx;
@@ -499,13 +611,18 @@ export const SudokuBoard: React.FC<Props> = ({
           const borderBottom = (row + 1) % 3 === 0 && row !== 8 ? 'border-b-2 border-b-slate-600' : '';
 
           const cellCandidates = candidates[idx];
+          const isHintTarget = hintLevel >= 1 && hints[hintLevel - 1]?.row === row && hints[hintLevel - 1]?.col === col;
 
           return (
             <button
               key={idx}
               onClick={() => handleCellClick(idx)}
               className={`w-full h-full flex items-center justify-center text-xs sm:text-base font-bold transition-colors rounded-xs relative ${borderRight} ${borderBottom} ${
-                isConflict
+                isResigned
+                  ? 'bg-rose-950/80 border-rose-600 text-rose-200'
+                  : isHintTarget
+                  ? 'bg-amber-600 border-amber-300 text-white ring-2 ring-amber-400 animate-pulse z-20'
+                  : isConflict
                   ? 'bg-rose-600 text-white animate-pulse'
                   : isSelected
                   ? 'bg-indigo-600 text-white ring-2 ring-indigo-300 z-10'
@@ -544,7 +661,7 @@ export const SudokuBoard: React.FC<Props> = ({
       </div>
 
       {/* 數字鍵盤 + 筆記模式切換 */}
-      {!isCompleted && !isTimedOut && !isFailedAssessment && (
+      {!isCompleted && !isTimedOut && !isFailedAssessment && !isResigned && (
         <div className="flex flex-col gap-1.5 mt-2.5 w-[min(90vw,46vh)]">
           <div className="grid grid-cols-10 gap-1">
             {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((num) => (
@@ -607,7 +724,7 @@ export const SudokuBoard: React.FC<Props> = ({
       )}
 
       {/* 臨床測量級心理計量學通關反思面板 */}
-      {isCompleted && (
+      {(isCompleted || isResigned) && (
         <div className="mt-3 p-3 bg-slate-950/95 border border-indigo-500/60 rounded-xl text-center w-[min(90vw,46vh)] shadow-2xl animate-fade-in font-mono">
           <div className="flex items-center justify-between border-b border-slate-800 pb-1.5 mb-2">
             <div className="text-left">
@@ -618,7 +735,11 @@ export const SudokuBoard: React.FC<Props> = ({
                 </span>
               </div>
               <div className="text-xs text-indigo-300 font-bold">
-                {elapsedSec <= benchmarkData.benchmarkTime ? '⚡ High-Efficiency Pace' : '🔍 Deep Exploration'}
+                {isResigned
+                  ? '🕊️ Resigned (Solution Master Analysis)'
+                  : elapsedSec <= benchmarkData.benchmarkTime
+                  ? '⚡ High-Efficiency Pace'
+                  : '🔍 Deep Exploration'}
               </div>
             </div>
 
