@@ -1,5 +1,5 @@
-// web-frontend/src/engines/tentsVariants.ts (新增 Interchange Codec)
-import { PuzzleEntity, TierKey } from '../generated';
+// web-frontend/src/engines/tentsVariants.ts
+import { PuzzleEntity } from '../generated';
 
 export interface CellCoord {
   r: number;
@@ -17,9 +17,9 @@ export interface ITentsRuleStrategy {
 }
 
 export class StandardTentsStrategy implements ITentsRuleStrategy {
-  readonly variantName = 'standard';
-  readonly displayNameZh = '經典正交帳篷';
-  readonly displayNameEn = 'Classic Orthogonal';
+  readonly variantName: 'standard' | 'diagonal' = 'standard';
+  readonly displayNameZh: string = '經典正交帳篷';
+  readonly displayNameEn: string = 'Classic Orthogonal';
 
   getAvailableCampNeighbors(tree: CellCoord, rows: number, cols: number): CellCoord[] {
     return [
@@ -64,9 +64,9 @@ export class StandardTentsStrategy implements ITentsRuleStrategy {
 }
 
 export class DiagonalTentsStrategy extends StandardTentsStrategy {
-  override readonly variantName = 'diagonal';
-  override readonly displayNameZh = '全向對角帳篷';
-  override readonly displayNameEn = 'Diagonal Allowed';
+  override readonly variantName: 'standard' | 'diagonal' = 'diagonal';
+  override readonly displayNameZh: string = '全向對角帳篷';
+  override readonly displayNameEn: string = 'Diagonal Allowed';
 
   override getAvailableCampNeighbors(tree: CellCoord, rows: number, cols: number): CellCoord[] {
     const coords: CellCoord[] = [];
@@ -84,14 +84,15 @@ export class DiagonalTentsStrategy extends StandardTentsStrategy {
   }
 }
 
-// 國際謎題交換協議 (Puzzle Interchange Codec)
 export class TentsInterchangeCodec {
   public static exportToText(puzzle: PuzzleEntity): string {
     const spec = (puzzle.puzzle || puzzle) as any;
     const variant = spec.variant || 'standard';
-    const treeStr = (spec.trees || []).map((t: CellCoord) => `${t.r},${t.c}`).join(';');
-    const rowStr = (spec.rowCounts || []).join(',');
-    const colStr = (spec.colCounts || []).join(',');
+    const treeStr = (spec.trees || [])
+      .map((t: any) => (Array.isArray(t) ? `${t[0]},${t[1]}` : `${t.r},${t.c}`))
+      .join(';');
+    const rowStr = (spec.rowCounts || spec.rowClues || []).join(',');
+    const colStr = (spec.colCounts || spec.colClues || []).join(',');
     return `TENTS:${spec.rows}x${spec.cols}:${variant}:T[${treeStr}]:R[${rowStr}]:C[${colStr}]`;
   }
 
