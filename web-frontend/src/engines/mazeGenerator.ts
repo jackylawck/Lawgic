@@ -5,41 +5,39 @@ export type StrategyPersona = 'Macro-Planner' | 'Wall-Follower' | 'Intuitive-Exp
 
 export class WebMazeGenerator {
   static generate(tier: TierKey, personaBias?: StrategyPersona): PuzzleEntity {
-    // 嚴格奇數尺寸階梯
+    // 嚴格奇數網格尺寸階梯 (保證牆壁與通道的嚴格交替幾何結構)
     const sizeMap: Record<TierKey, number> = {
       kids: 11,
-      intermediate: 15,
-      expert: 21,
-      master: 27,
+      intermediate: 17,
+      expert: 23,
+      master: 29,
     };
 
-    const size = sizeMap[tier] || 15;
+    const size = sizeMap[tier] || 17;
     const width = size;
     const height = size;
 
-    // 1. 初始化全實心牆面 (1: 牆, 0: 通路)
+    // 1. 初始化實心牆面 (1: 牆, 0: 通路)
     const grid: number[][] = Array.from({ length: height }, () => Array(width).fill(1));
 
-    // 座標定義：startX = 1 (列/X), startY = 1 (行/Y)
-    const startX = 1;
-    const startY = 1;
-    const endX = width - 2;
-    const endY = height - 2;
+    // 2. 深度遞迴隨機回溯樹生成 (DFS Spanning Tree)
+    const rootX = 1;
+    const rootY = 1;
+    grid[rootY][rootX] = 0;
+    const stack: [number, number][] = [[rootX, rootY]];
 
-    // 2. 深度遞迴回溯生成主拓撲樹
-    grid[startY][startX] = 0;
-    const stack: [number, number][] = [[startX, startY]];
+    const dirs: [number, number][] = [
+      [0, -2],
+      [0, 2],
+      [-2, 0],
+      [2, 0],
+    ];
 
     while (stack.length > 0) {
       const [cx, cy] = stack[stack.length - 1];
       const neighbors: [number, number, number, number][] = [];
 
-      for (const [dx, dy] of [
-        [0, -2],
-        [0, 2],
-        [-2, 0],
-        [2, 0],
-      ]) {
+      for (const [dx, dy] of dirs) {
         const nx = cx + dx;
         const ny = cy + dy;
         if (nx > 0 && nx < width - 1 && ny > 0 && ny < height - 1 && grid[ny][nx] === 1) {
@@ -48,7 +46,12 @@ export class WebMazeGenerator {
       }
 
       if (neighbors.length > 0) {
-        const [mx, my, nx, ny] = neighbors[Math.floor(Math.random() * neighbors.length)];
+        // 依照玩家特質施加方向慣性偏置
+        let chosenIdx = Math.floor(Math.random() * neighbors.length);
+        if (personaBias === 'Macro-Planner' && neighbors.length > 1) {
+          chosenIdx = 0; // 偏好長直道生成
+        }
+        const [mx, my, nx, ny] = neighbors[chosenIdx];
         grid[my][mx] = 0;
         grid[ny][nx] = 0;
         stack.push([nx, ny]);
@@ -57,78 +60,59 @@ export class WebMazeGenerator {
       }
     }
 
-    // 3. 確保起點與終點實體格子必定為通路 (0)
-    grid[startY][startX] = 0;
-    grid[endY][endX] = 0;
+    // 3. 圖論樹直徑搜尋：尋找拓撲距離最長之雙端葉節點作為起訖點
+    const { start, end } = this._findTopologicalDiameterEndpoints(grid, width, height);
 
-    // 保證終點連通性：若終點為死胡同，強制打通相鄰內牆
-    if (grid[endY - 1][endX] === 1 && grid[endY][endX - 1] === 1) {
-      grid[endY - 1][endX] = 0;
-    }
+    // 4. 受控欺騙性死胡同注入 (嚴格不破壞唯一最優解)
+    let distractorCount = tier === 'kids' ? 0 : tier === 'intermediate' ? 3 : tier === 'expert' ? 6 : 10;
+    if (personaBias === 'Intuitive-Explorer') distractorCount = Math.round(distractorCount * 1.5);
+    this._injectControlledBlindAlleys(grid, width, height, start, end, distractorCount);
 
-    const start: [number, number] = [startX, startY];
-    const end: [number, number] = [endX, endY];
+    // 5. 最優解計算 (BFS Shortest & Unique Path)
+    const solution = this._bfs(grid, width, height, start, end);
 
-    // 4. 策略閉環動態調整 (Closed-Loop Adaptation)
-    let loopCount = tier === 'kids' ? 0 : tier === 'intermediate' ? 2 : tier === 'expert' ? 5 : 8;
-    let distractorCount = tier === 'kids' ? 0 : tier === 'intermediate' ? 4 : tier === 'expert' ? 8 : 16;
-
-    if (personaBias === 'Intuitive-Explorer') {
-      distractorCount = Math.round(distractorCount * 1.5);
-    } else if (personaBias === 'Wall-Follower') {
-      loopCount = Math.round(loopCount * 1.6);
-    } else if (personaBias === 'Macro-Planner') {
-      distractorCount += 2;
-      loopCount += 2;
-    }
-
-    this._injectDeceptiveLongLoops(grid, width, height, start, end, loopCount);
-    this._injectAdvancedDistractors(grid, width, height, distractorCount);
-
-    // 重新計算並驗證數學理論最優解
-    let solution = this._bfs(grid, width, height, start, end);
-    if (solution.length <= 2) {
-      grid[endY][endX - 1] = 0;
-      grid[endY - 1][endX] = 0;
-      solution = this._bfs(grid, width, height, start, end);
-    }
-
+    // 6. 人類工作記憶與直覺尋路模擬 (FOV=3, Memory Decay=0.7)
     const limitedHumanPath = this._simulateHumanPathLimited(grid, width, height, start, end, 3, 0.7);
     const baselineWallFollow = this._simulateHumanPath(grid, width, height, start, end);
     const cognitiveGap = Math.max(0, limitedHumanPath.length - solution.length);
 
+    // 7. 心理計量學指標精算
     const turnCount = this._countTurns(solution);
     const realDeadEndDepth = this._computeRealDeadEndDepth(grid, width, height);
     const pathEntropy = this._computePathEntropy(grid, width, height, solution);
     const tortuosity = this._computeTortuosity(solution);
 
-    const visualNoiseScore =
-      tier === 'kids' ? 0.15 : tier === 'intermediate' ? 0.45 : tier === 'expert' ? 0.75 : 0.95;
-
+    // 認知負荷建模 (CHC Gv 空間與 Gs 處理速度)
     const spatialLoad = Math.min(
       1.0,
-      0.25 + (tortuosity / 2.5) * 0.45 + (turnCount / Math.max(8, width * 1.3)) * 0.30
+      0.30 + (tortuosity / 2.5) * 0.40 + (turnCount / Math.max(8, width * 1.2)) * 0.30
     );
     const workingMemoryLoad = Math.min(
       1.0,
-      0.20 + (pathEntropy / 3.2) * 0.40 + (realDeadEndDepth / 8.0) * 0.40
+      0.25 + (pathEntropy / 3.0) * 0.45 + (realDeadEndDepth / 7.0) * 0.30
     );
     const inhibitionLoad = Math.min(
       1.0,
-      0.20 + (realDeadEndDepth / 7.0) * 0.45 + (tier === 'master' ? 0.35 : 0.15)
+      0.25 + (realDeadEndDepth / 6.0) * 0.45 + (tier === 'master' ? 0.30 : 0.15)
     );
 
-    // 動態合成 IRT Logit 難度 (-2.8 ~ +2.8)
+    // 嚴謹 IRT Logit 難度 (-2.5 ~ +2.5)
     const normalizedSteps = limitedHumanPath.length / (width * height);
-    const rawDifficulty = (pathEntropy * 0.35) + (realDeadEndDepth * 0.25) + (normalizedSteps * 1.2);
-    const irtLogitDifficulty = Number(Math.max(-2.5, Math.min(2.5, (rawDifficulty - 2.0) * 1.3)).toFixed(2));
+    const rawDifficulty = pathEntropy * 0.35 + realDeadEndDepth * 0.25 + normalizedSteps * 1.1;
+    const irtLogitDifficulty = Number(Math.max(-2.5, Math.min(2.5, (rawDifficulty - 1.8) * 1.25)).toFixed(2));
 
-    // Wechsler 級空間尋路期望時間 (Processing Speed Gs)
     const estimatedTimeSec = Math.round(
-      15 + limitedHumanPath.length * 0.6 + turnCount * 1.2 + (tier === 'master' ? 40 : 0)
+      12 + limitedHumanPath.length * 0.55 + turnCount * 0.8 + (tier === 'master' ? 35 : 0)
     );
 
-    const id = `maze_${tier}_gen_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+    // 生成結構化推導技巧鏈條 (Solving Path)
+    const solvingPath = [
+      `Topological Spanning Diameter (${solution.length} steps)`,
+      `Decision Entropy Junctions (Entropy: ${pathEntropy.toFixed(1)})`,
+      `Inhibition Filter (${Math.round(realDeadEndDepth)} avg dead-end depth)`,
+    ];
+
+    const id = `maze_${tier}_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
 
     return {
       id,
@@ -139,12 +123,13 @@ export class WebMazeGenerator {
         width,
         height,
         size,
-        start: [startX, startY],
-        end: [endX, endY],
-        goal: [endX, endY],
+        start,
+        end,
+        goal: end,
         grid,
-        visualNoise: visualNoiseScore,
+        visualNoise: tier === 'kids' ? 0.15 : tier === 'intermediate' ? 0.45 : tier === 'expert' ? 0.75 : 0.95,
         adaptedFor: personaBias || 'standard',
+        solving_path: solvingPath,
       },
       solution,
       metrics: {
@@ -158,6 +143,7 @@ export class WebMazeGenerator {
         cognitive_gap: cognitiveGap,
         irt_logit_difficulty: irtLogitDifficulty,
         estimated_time_sec: estimatedTimeSec,
+        solving_path: solvingPath,
       } as any,
       cognitiveLoad: {
         spatial: Number(spatialLoad.toFixed(2)),
@@ -165,8 +151,124 @@ export class WebMazeGenerator {
         workingMemory: Number(workingMemoryLoad.toFixed(2)),
         inhibition: Number(inhibitionLoad.toFixed(2)),
       },
-      checksum: `gen_${id}`,
+      checksum: `maze_${id}`,
     };
+  }
+
+  /**
+   * 圖論樹直徑搜尋演算法：雙重 BFS 獲取整座迷宮拓撲最遠的雙端點
+   */
+  private static _findTopologicalDiameterEndpoints(
+    grid: number[][],
+    width: number,
+    height: number
+  ): { start: [number, number]; end: [number, number] } {
+    // 尋找第一個通道點
+    let firstNode: [number, number] = [1, 1];
+    outer: for (let y = 1; y < height - 1; y++) {
+      for (let x = 1; x < width - 1; x++) {
+        if (grid[y][x] === 0) {
+          firstNode = [x, y];
+          break outer;
+        }
+      }
+    }
+
+    // 第一次 BFS：找到距離 firstNode 最遠的葉節點 A
+    const furthestA = this._bfsFurthestNode(grid, width, height, firstNode);
+    // 第二次 BFS：找到距離 A 最遠的葉節點 B，形成最大拓撲直徑
+    const furthestB = this._bfsFurthestNode(grid, width, height, furthestA);
+
+    return { start: furthestA, end: furthestB };
+  }
+
+  private static _bfsFurthestNode(
+    grid: number[][],
+    width: number,
+    height: number,
+    origin: [number, number]
+  ): [number, number] {
+    const queue: [number, number][] = [origin];
+    const visited = new Set<string>([`${origin[0]},${origin[1]}`]);
+    let furthest: [number, number] = origin;
+    let head = 0;
+
+    const dirs = [
+      [0, 1],
+      [0, -1],
+      [1, 0],
+      [-1, 0],
+    ];
+
+    while (head < queue.length) {
+      const [cx, cy] = queue[head++];
+      furthest = [cx, cy];
+
+      for (const [dx, dy] of dirs) {
+        const nx = cx + dx;
+        const ny = cy + dy;
+        if (nx > 0 && nx < width - 1 && ny > 0 && ny < height - 1 && grid[ny][nx] === 0) {
+          const key = `${nx},${ny}`;
+          if (!visited.has(key)) {
+            visited.add(key);
+            queue.push([nx, ny]);
+          }
+        }
+      }
+    }
+    return furthest;
+  }
+
+  /**
+   * 受控深層盲巷注入 (嚴格保持唯一最優解不變)
+   */
+  private static _injectControlledBlindAlleys(
+    grid: number[][],
+    width: number,
+    height: number,
+    start: [number, number],
+    end: [number, number],
+    count: number
+  ): void {
+    const mainSolution = new Set(
+      this._bfs(grid, width, height, start, end).map(([x, y]) => `${x},${y}`)
+    );
+
+    let added = 0;
+    for (let attempt = 0; attempt < count * 30 && added < count; attempt++) {
+      const rx = 1 + 2 * Math.floor(Math.random() * ((width - 3) / 2));
+      const ry = 1 + 2 * Math.floor(Math.random() * ((height - 3) / 2));
+
+      // 挑選在主路徑上但有實心外側牆的分岔點
+      if (!mainSolution.has(`${rx},${ry}`)) continue;
+
+      for (const [dx, dy] of [
+        [0, 1],
+        [0, -1],
+        [1, 0],
+        [-1, 0],
+      ]) {
+        const wallX = rx + dx;
+        const wallY = ry + dy;
+        const blindX = rx + dx * 2;
+        const blindY = ry + dy * 2;
+
+        if (
+          blindX > 0 &&
+          blindX < width - 1 &&
+          blindY > 0 &&
+          blindY < height - 1 &&
+          grid[wallY][wallX] === 1 &&
+          grid[blindY][blindX] === 1
+        ) {
+          // 打開盲巷入口與內部一格，不打通對向
+          grid[wallY][wallX] = 0;
+          grid[blindY][blindX] = 0;
+          added++;
+          break;
+        }
+      }
+    }
   }
 
   private static _bfs(
@@ -180,16 +282,18 @@ export class WebMazeGenerator {
     const visited = new Set<string>([`${start[0]},${start[1]}`]);
     let head = 0;
 
+    const dirs = [
+      [0, 1],
+      [0, -1],
+      [1, 0],
+      [-1, 0],
+    ];
+
     while (head < queue.length) {
       const [cx, cy, path] = queue[head++];
       if (cx === end[0] && cy === end[1]) return path;
 
-      for (const [dx, dy] of [
-        [0, 1],
-        [0, -1],
-        [1, 0],
-        [-1, 0],
-      ]) {
+      for (const [dx, dy] of dirs) {
         const nx = cx + dx;
         const ny = cy + dy;
         if (nx >= 0 && nx < width && ny >= 0 && ny < height && grid[ny][nx] === 0) {
@@ -202,129 +306,6 @@ export class WebMazeGenerator {
       }
     }
     return [start, end];
-  }
-
-  private static _injectDeceptiveLongLoops(
-    grid: number[][],
-    width: number,
-    height: number,
-    start: [number, number],
-    end: [number, number],
-    count: number
-  ): void {
-    let added = 0;
-    const originalShortest = this._bfs(grid, width, height, start, end).length;
-
-    for (let attempt = 0; attempt < count * 60 && added < count; attempt++) {
-      const r1 = 2 + Math.floor(Math.random() * (width - 4));
-      const c1 = 2 + Math.floor(Math.random() * (height - 4));
-      if (grid[c1][r1] !== 1) continue;
-
-      let bestPair: [number, number] | null = null;
-      let bestDist = 0;
-
-      for (let i = 0; i < 25; i++) {
-        const r2 = 2 + Math.floor(Math.random() * (width - 4));
-        const c2 = 2 + Math.floor(Math.random() * (height - 4));
-        if (grid[c2][r2] !== 1) continue;
-
-        const dist = Math.abs(r1 - r2) + Math.abs(c1 - c2);
-        if (dist > 8 && dist > bestDist) {
-          const open1 = [[0, 1], [0, -1], [1, 0], [-1, 0]].filter(
-            ([dx, dy]) => grid[c1 + dy]?.[r1 + dx] === 0
-          ).length;
-          const open2 = [[0, 1], [0, -1], [1, 0], [-1, 0]].filter(
-            ([dx, dy]) => grid[c2 + dy]?.[r2 + dx] === 0
-          ).length;
-          if (open1 >= 1 && open2 >= 1) {
-            bestPair = [r2, c2];
-            bestDist = dist;
-          }
-        }
-      }
-
-      if (bestPair) {
-        const testGrid = grid.map((row) => [...row]);
-        testGrid[c1][r1] = 0;
-        testGrid[bestPair[1]][bestPair[0]] = 0;
-
-        const newShortest = this._bfs(testGrid, width, height, start, end).length;
-        if (newShortest <= originalShortest * 0.85 && newShortest >= originalShortest * 0.4) {
-          grid[c1][r1] = 0;
-          grid[bestPair[1]][bestPair[0]] = 0;
-          added++;
-        }
-      }
-    }
-  }
-
-  private static _injectAdvancedDistractors(
-    grid: number[][],
-    width: number,
-    height: number,
-    count: number
-  ): void {
-    let added = 0;
-    for (let attempt = 0; attempt < count * 40 && added < count; attempt++) {
-      const r = 2 + Math.floor(Math.random() * (width - 4));
-      const c = 2 + Math.floor(Math.random() * (height - 4));
-      if (grid[c][r] !== 1) continue;
-
-      const openNeighbors = [[0, 1], [0, -1], [1, 0], [-1, 0]].filter(
-        ([dx, dy]) => grid[c + dy]?.[r + dx] === 0
-      );
-      if (openNeighbors.length !== 1) continue;
-
-      let [dx, dy] = openNeighbors[0];
-      let cx = r;
-      let cy = c;
-      const pattern = Math.random();
-      const steps = 3 + Math.floor(Math.random() * 3);
-
-      for (let step = 0; step < steps; step++) {
-        const nx = cx + dx;
-        const ny = cy + dy;
-        if (nx <= 0 || nx >= width - 1 || ny <= 0 || ny >= height - 1) break;
-        if (grid[ny][nx] === 0) break;
-
-        grid[ny][nx] = 0;
-        cx = nx;
-        cy = ny;
-
-        if (pattern < 0.33 && step % 2 === 1 && step < steps - 1) {
-          const turns = [[0, 1], [0, -1], [1, 0], [-1, 0]]
-            .filter(([tdx, tdy]) => !(tdx === -dx && tdy === -dy))
-            .filter(([tdx, tdy]) => {
-              const tnx = cx + tdx;
-              const tny = cy + tdy;
-              return tnx > 0 && tnx < width - 1 && tny > 0 && tny < height - 1 && grid[tny][tnx] === 1;
-            });
-          if (turns.length > 0) {
-            const chosen = turns[Math.floor(Math.random() * turns.length)];
-            dx = chosen[0];
-            dy = chosen[1];
-          }
-        } else if (pattern >= 0.33 && pattern < 0.66 && step > 0 && Math.random() < 0.35) {
-          const rightTurn: [number, number][] = [
-            [0, 1],
-            [1, 0],
-            [0, -1],
-            [-1, 0],
-          ];
-          const idx = rightTurn.findIndex(([tdx, tdy]) => tdx === dx && tdy === dy);
-          if (idx !== -1) {
-            const next = rightTurn[(idx + 1) % 4];
-            const tnx = cx + next[0];
-            const tny = cy + next[1];
-            if (tnx > 0 && tnx < width - 1 && tny > 0 && tny < height - 1 && grid[tny][tnx] === 1) {
-              dx = next[0];
-              dy = next[1];
-            }
-          }
-        }
-      }
-      added++;
-    }
   }
 
   private static _simulateHumanPathLimited(
@@ -350,7 +331,7 @@ export class WebMazeGenerator {
     let dirIdx = 0;
     let step = 0;
 
-    while (step < width * height * 5 && !(cx === end[0] && cy === end[1])) {
+    while (step < width * height * 4 && !(cx === end[0] && cy === end[1])) {
       step++;
       let bestDir: [number, number] | null = null;
       let bestScore = -Infinity;
@@ -363,8 +344,8 @@ export class WebMazeGenerator {
         if (nx < 0 || nx >= width || ny < 0 || ny >= height || grid[ny][nx] !== 0) continue;
 
         const distToEnd = Math.abs(nx - end[0]) + Math.abs(ny - end[1]);
-        const revisitPenalty = visited.has(`${nx},${ny}`) ? 2.2 : 0;
-        const forwardBias = dx === dirs[dirIdx][0] && dy === dirs[dirIdx][1] ? 0.4 : 0;
+        const revisitPenalty = visited.has(`${nx},${ny}`) ? 2.4 : 0;
+        const forwardBias = dx === dirs[dirIdx][0] && dy === dirs[dirIdx][1] ? 0.35 : 0;
         const score = -distToEnd - revisitPenalty + forwardBias;
 
         if (score > bestScore) {
@@ -381,7 +362,7 @@ export class WebMazeGenerator {
         visited.set(`${cx},${cy}`, step);
 
         for (const [key, val] of visited) {
-          if (step - val > 10) visited.set(key, val * memoryDecay);
+          if (step - val > 12) visited.set(key, val * memoryDecay);
         }
         dirIdx = dirs.findIndex(([dxx, dyy]) => dxx === dx && dyy === dy);
       } else {
@@ -451,9 +432,6 @@ export class WebMazeGenerator {
     for (let y = 1; y < height - 1; y++) {
       for (let x = 1; x < width - 1; x++) {
         if (grid[y][x] !== 0) continue;
-        if (x === 1 && y === 1) continue;
-        if (x === width - 2 && y === height - 2) continue;
-
         const neighbors = [[0, 1], [0, -1], [1, 0], [-1, 0]].filter(
           ([dx, dy]) => grid[y + dy]?.[x + dx] === 0
         );
