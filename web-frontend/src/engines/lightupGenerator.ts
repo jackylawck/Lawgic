@@ -1,7 +1,6 @@
 // web-frontend/src/engines/lightupGenerator.ts
 import { PuzzleEntity, TierKey } from '../generated';
 
-// 支援傳奇級難度擴充
 export type ExtendedTierKey = TierKey | 'legendary';
 
 export interface LightUpCoord {
@@ -10,20 +9,20 @@ export interface LightUpCoord {
 }
 
 export type LightUpDeductionType =
-  | 'zero_black_cross'     // 0 黑塊周圍四向禁絕
-  | 'clue_forced_light'    // 黑塊缺額強制放燈
-  | 'clue_saturated_dot'   // 黑塊滿額周邊封閉
-  | 'adjacent_clue_xor'    // 相鄰 1-2 / 1-3 組合排斥推導
-  | 'diagonal_exclusion'   // 對角線雙燈泡互斥推導
-  | 'isolated_illuminance' // 孤立未照亮格唯一光源收斂
-  | 'ray_no_clash';        // 射線延伸防衝突
+  | 'zero_black_cross'
+  | 'clue_forced_light'
+  | 'clue_saturated_dot'
+  | 'adjacent_clue_xor'
+  | 'diagonal_exclusion'
+  | 'isolated_illuminance'
+  | 'ray_no_clash';
 
 export interface LightUpStep {
   step: number;
   type: LightUpDeductionType;
   r: number;
   c: number;
-  state: 1 | 2; // 1 = 放置燈泡 💡, 2 = 標記防護點 •
+  state: 1 | 2;
   rationale: string;
   humanReadable: {
     zh: string;
@@ -221,7 +220,6 @@ export class WebLightUpGenerator {
 
     const isBlock = (r: number, c: number) => currentBoard[r][c] === 2;
 
-    // 定理 1: 0 周圍禁絕
     for (const b of blackBlocks) {
       if (b.clue === 0) {
         const orth = [[-1, 0], [1, 0], [0, -1], [0, 1]];
@@ -243,7 +241,6 @@ export class WebLightUpGenerator {
       }
     }
 
-    // 定理 2: 射線互不相照
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         if (currentBoard[r][c] === 1) {
@@ -265,7 +262,6 @@ export class WebLightUpGenerator {
       }
     }
 
-    // 定理 3: 黑塊容量飽和與缺額必放
     for (const b of blackBlocks) {
       if (b.clue !== null && b.clue > 0) {
         const orth = [[-1, 0], [1, 0], [0, -1], [0, 1]];
@@ -309,7 +305,6 @@ export class WebLightUpGenerator {
       }
     }
 
-    // 定理 4: 相鄰 1-2 / 1-3 XOR 定式
     for (const b1 of blackBlocks) {
       if (b1.clue === 1) {
         for (const b2 of blackBlocks) {
@@ -340,7 +335,6 @@ export class WebLightUpGenerator {
       }
     }
 
-    // 定理 5: 對角線互斥定式 (Diagonal Exclusion)
     for (const b of blackBlocks) {
       if (b.clue === 1) {
         const orth = [
@@ -373,7 +367,6 @@ export class WebLightUpGenerator {
       }
     }
 
-    // 定理 6: 孤立未照亮白格唯一光源收斂
     const isCellLit = Array.from({ length: rows }, () => Array(cols).fill(false));
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
@@ -492,7 +485,7 @@ export class WebLightUpGenerator {
 
       return {
         id: puzzleId,
-        category: 'spatial_logic',
+        category: 'spatial_logic' as any,
         engine_type: 'lightup',
         tier: (tier === 'legendary' ? 'master' : tier) as TierKey,
         checksum: `LIGHTUP_${rows}x${cols}_${tier.toUpperCase()}_${Date.now().toString(36)}`,
@@ -530,7 +523,7 @@ export class WebLightUpGenerator {
     ];
     return {
       id: `lightup_${tier}_fallback_${Date.now()}`,
-      category: 'spatial_logic',
+      category: 'spatial_logic' as any,
       engine_type: 'lightup',
       tier: (tier === 'legendary' ? 'master' : tier) as TierKey,
       checksum: `LIGHTUP_FALLBACK_${rows}x${cols}`,
