@@ -407,6 +407,8 @@ export class WebKropkiGenerator {
 
       return {
         id: puzzleId,
+        category: 'numeric_logic',
+        engine_type: 'kropki',
         tier,
         checksum: `KROPKI_${n}x${n}_CERTIFIED_${Date.now().toString(36)}`,
         puzzle: {
@@ -439,6 +441,8 @@ export class WebKropkiGenerator {
     const fallbackDots = this.extractDotsStrict(fallback, n);
     return {
       id: `kropki_${tier}_fallback_${Date.now()}`,
+      category: 'numeric_logic',
+      engine_type: 'kropki',
       tier,
       checksum: `KROPKI_FALLBACK_${n}x${n}`,
       puzzle: {
