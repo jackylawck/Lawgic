@@ -6,10 +6,11 @@ import { PuzzleRenderer } from './registry/RendererRegistry';
 import { PUZZLE_CATALOG, PuzzleEntity } from './generated';
 import { LangSwitcher } from './components/LangSwitcher';
 import { VirtualGamepad } from './components/VirtualGamepad';
-import { TierKey } from './hooks/useLearnerProfile';
+import { useLearnerProfile, TierKey } from './hooks/useLearnerProfile';
 import { WebMazeGenerator } from './engines/mazeGenerator';
 import { WebSudokuGenerator } from './engines/sudokuGenerator';
 import { WebSkyscraperGenerator } from './engines/skyscraperGenerator';
+import { WebHashiGenerator } from './engines/hashiGenerator';
 
 interface PuzzleMeta {
   id: string;
@@ -43,11 +44,11 @@ const TIER_NAMES: Record<TierKey, { zh: string; en: string }> = {
 };
 
 const EngineFallbackUI: React.FC<{ resetErrorBoundary: () => void }> = ({ resetErrorBoundary }) => (
-  <div className="flex flex-col items-center justify-center p-6 bg-red-950/40 border border-red-800 text-center my-4 font-mono">
+  <div className="flex flex-col items-center justify-center p-6 bg-red-950/40 border border-red-800 text-center my-4 font-mono rounded-xl">
     <p className="text-red-300 text-xs">載入異常 / Render Error</p>
     <button
       onClick={resetErrorBoundary}
-      className="mt-3 px-3 py-1 bg-red-900/60 hover:bg-red-800 text-red-100 text-[10px] border border-red-700 rounded"
+      className="mt-3 px-3 py-1 bg-red-900/60 hover:bg-red-800 text-red-100 text-[10px] border border-red-700 rounded transition"
     >
       重試 / Retry
     </button>
@@ -57,27 +58,29 @@ const EngineFallbackUI: React.FC<{ resetErrorBoundary: () => void }> = ({ resetE
 const MainDashboard: React.FC = () => {
   const { lang } = useLanguage();
   const isEn = lang === 'en';
+  const { profile, getCompositeCognitiveIndex } = useLearnerProfile();
 
   const [selectedType, setSelectedType] = useState<string>('maze');
   const [currentLevel, setCurrentLevel] = useState<TierKey>('kids');
   const [puzzleIndex, setPuzzleIndex] = useState<number>(0);
+  const [tournamentMode, setTournamentMode] = useState<boolean>(false);
   const [elapsed, setElapsed] = useState<number>(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // 1. 🚀 首屏秒開：預載迷宮、數獨、摩天透視各階梯題目
+  // 1. 首屏秒開：預載四大核心引擎各階題目
   const [dynamicPuzzles, setDynamicPuzzles] = useState<Record<string, PuzzleEntity[]>>(() => {
     const initialMazes: PuzzleEntity[] = [];
     const initialSudokus: PuzzleEntity[] = [];
     const initialSkyscrapers: PuzzleEntity[] = [];
+    const initialHashis: PuzzleEntity[] = [];
     const tiers: TierKey[] = ['kids', 'intermediate', 'expert', 'master'];
 
     tiers.forEach((tier) => {
       // 迷宮
-      for (let i = 0; i < 3; i++) {
-        const m = WebMazeGenerator.generate(tier);
-        m.id = `maze_${tier}_init_${i + 1}`;
-        initialMazes.push(m);
-      }
+      const m = WebMazeGenerator.generate(tier);
+      m.id = `maze_${tier}_init_1`;
+      initialMazes.push(m);
+
       // 數獨
       const s = WebSudokuGenerator.generate(tier);
       s.id = `sudoku_${tier}_init_1`;
@@ -87,72 +90,63 @@ const MainDashboard: React.FC = () => {
       const sky = WebSkyscraperGenerator.generate(tier);
       sky.id = `skyscraper_${tier}_init_1`;
       initialSkyscrapers.push(sky);
+
+      // 星際數橋
+      const h = WebHashiGenerator.generate(tier);
+      h.id = `hashi_${tier}_init_1`;
+      initialHashis.push(h);
     });
 
     return {
       maze: initialMazes,
       sudoku: initialSudokus,
       skyscraper: initialSkyscrapers,
+      hashi: initialHashis,
     };
   });
 
-  // 2. ⚡ 背景非同步時間切片填充：漸進補充三款遊戲題目至題庫
+  // 2. 背景非同步切片填充：四大遊戲漸進補充至池中
   useEffect(() => {
     let isMounted = true;
     const tiers: TierKey[] = ['kids', 'intermediate', 'expert', 'master'];
 
     const fillPoolAsync = async () => {
-      // (A) 迷宮快速切片 (讓出 4ms)
       for (const tier of tiers) {
-        for (let i = 0; i < 15; i++) {
+        for (let i = 0; i < 6; i++) {
           if (!isMounted) return;
           const newMaze = WebMazeGenerator.generate(tier);
-          newMaze.id = `maze_${tier}_bg_${i + 4}`;
+          newMaze.id = `maze_${tier}_bg_${i + 2}`;
+
+          const newSky = WebSkyscraperGenerator.generate(tier);
+          newSky.id = `skyscraper_${tier}_bg_${i + 2}`;
+
+          const newSudoku = WebSudokuGenerator.generate(tier);
+          newSudoku.id = `sudoku_${tier}_bg_${i + 2}`;
+
+          const newHashi = WebHashiGenerator.generate(tier);
+          newHashi.id = `hashi_${tier}_bg_${i + 2}`;
+
           setDynamicPuzzles((prev) => ({
             ...prev,
             maze: [...(prev.maze || []), newMaze],
-          }));
-          await new Promise((resolve) => setTimeout(resolve, 4));
-        }
-      }
-
-      // (B) 摩天透視切片 (讓出 10ms)
-      for (const tier of tiers) {
-        for (let i = 0; i < 15; i++) {
-          if (!isMounted) return;
-          const newSky = WebSkyscraperGenerator.generate(tier);
-          newSky.id = `skyscraper_${tier}_bg_${i + 2}`;
-          setDynamicPuzzles((prev) => ({
-            ...prev,
             skyscraper: [...(prev.skyscraper || []), newSky],
-          }));
-          await new Promise((resolve) => setTimeout(resolve, 10));
-        }
-      }
-
-      // (C) 數獨背景非同步 (讓出 16ms 確保 60fps)
-      for (const tier of tiers) {
-        for (let i = 0; i < 15; i++) {
-          if (!isMounted) return;
-          const newSudoku = WebSudokuGenerator.generate(tier);
-          newSudoku.id = `sudoku_${tier}_bg_${i + 2}`;
-          setDynamicPuzzles((prev) => ({
-            ...prev,
             sudoku: [...(prev.sudoku || []), newSudoku],
+            hashi: [...(prev.hashi || []), newHashi],
           }));
-          await new Promise((resolve) => setTimeout(resolve, 16));
+
+          await new Promise((resolve) => setTimeout(resolve, 15));
         }
       }
     };
 
-    const timer = setTimeout(fillPoolAsync, 300);
+    const timer = setTimeout(fillPoolAsync, 200);
     return () => {
       isMounted = false;
       clearTimeout(timer);
     };
   }, []);
 
-  // 3. 🎯 監聽來自各遊戲面板「弱點教練引導」發出的全域跳轉事件
+  // 3. 弱點推薦導引全域跳轉監聽
   useEffect(() => {
     const handleNav = (e: any) => {
       if (e.detail?.gameId) {
@@ -197,35 +191,26 @@ const MainDashboard: React.FC = () => {
     setPuzzleIndex((prev) => (prev + 1) % (activeList.length || 1));
   }, [activeList.length]);
 
-  // 現場生成：隨時無限追加並切換至第 1 題
+  // 現場無限生成
   const handleLiveGenerate = useCallback(() => {
     if (navigator.vibrate) navigator.vibrate(20);
 
-    if (selectedType === 'maze') {
-      const newPuzzle = WebMazeGenerator.generate(currentLevel);
+    let newPuzzle: PuzzleEntity | null = null;
+    if (selectedType === 'maze') newPuzzle = WebMazeGenerator.generate(currentLevel);
+    else if (selectedType === 'sudoku') newPuzzle = WebSudokuGenerator.generate(currentLevel);
+    else if (selectedType === 'skyscraper') newPuzzle = WebSkyscraperGenerator.generate(currentLevel);
+    else if (selectedType === 'hashi') newPuzzle = WebHashiGenerator.generate(currentLevel);
+
+    if (newPuzzle) {
       setDynamicPuzzles((prev) => ({
         ...prev,
-        maze: [newPuzzle, ...(prev['maze'] || [])],
-      }));
-      setPuzzleIndex(0);
-    } else if (selectedType === 'sudoku') {
-      const newPuzzle = WebSudokuGenerator.generate(currentLevel);
-      setDynamicPuzzles((prev) => ({
-        ...prev,
-        sudoku: [newPuzzle, ...(prev['sudoku'] || [])],
-      }));
-      setPuzzleIndex(0);
-    } else if (selectedType === 'skyscraper') {
-      const newPuzzle = WebSkyscraperGenerator.generate(currentLevel);
-      setDynamicPuzzles((prev) => ({
-        ...prev,
-        skyscraper: [newPuzzle, ...(prev['skyscraper'] || [])],
+        [selectedType]: [newPuzzle!, ...(prev[selectedType] || [])],
       }));
       setPuzzleIndex(0);
     }
   }, [selectedType, currentLevel]);
 
-  // 頂級玩家專屬：多階跳級挑戰函式
+  // 跳級挑戰
   const handleTierJump = useCallback(
     (steps: number = 1) => {
       if (navigator.vibrate) navigator.vibrate([20, 30, 20]);
@@ -250,18 +235,28 @@ const MainDashboard: React.FC = () => {
     };
   }, [activePuzzle?.id]);
 
+  // 全域快捷鍵流 ( [ 與 ] 快速換題 )
+  useEffect(() => {
+    const handleGlobalKey = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (e.key === '[' || e.key === 'PageUp') { e.preventDefault(); handlePrevPuzzle(); }
+      if (e.key === ']' || e.key === 'PageDown') { e.preventDefault(); handleNextPuzzle(); }
+    };
+    window.addEventListener('keydown', handleGlobalKey);
+    return () => window.removeEventListener('keydown', handleGlobalKey);
+  }, [handlePrevPuzzle, handleNextPuzzle]);
+
+  // 虛擬手把事件接管：MOVE, LOOK, ACTION
   const lastMoveTimeRef = useRef<number>(0);
   const handleJoystickMove = useCallback((x: number, y: number) => {
     const now = Date.now();
-    if (now - lastMoveTimeRef.current < 160) return;
+    if (now - lastMoveTimeRef.current < 150) return;
 
     const threshold = 0.45;
     let dx = 0;
     let dy = 0;
-
     if (x > threshold) dx = 1;
-    else if (x < -threshold) dx = -1;
-
+    else if (x < -threshold) dy = -1;
     if (y > threshold) dy = 1;
     else if (y < -threshold) dy = -1;
 
@@ -271,14 +266,44 @@ const MainDashboard: React.FC = () => {
     }
   }, []);
 
+  const handleJoystickLook = useCallback((x: number, y: number) => {
+    window.dispatchEvent(new CustomEvent('logicore:joystick-look', { detail: { x, y } }));
+  }, []);
+
+  const handleJoystickAction = useCallback(() => {
+    window.dispatchEvent(new CustomEvent('logicore:joystick-action'));
+  }, []);
+
+  const cci = useMemo(() => getCompositeCognitiveIndex(), [getCompositeCognitiveIndex]);
+
   return (
     <main className="min-h-screen bg-[#090d14] text-slate-200 flex flex-col items-center py-2 px-2 font-mono selection:bg-indigo-600">
-      {/* 頂部整合工具列：遊戲摺疊選單 + 難度摺疊選單 + 語言切換 */}
+      {/* 頂部全域狀態橫條 (Wechsler IQ, 連勝, 賽事模式) */}
+      <div className="w-full max-w-sm sm:max-w-md flex items-center justify-between px-1 mb-1 text-[8px] text-slate-500">
+        <div className="flex items-center gap-1.5">
+          <span className="font-bold text-cyan-400">IQ {cci.standardIQ}</span>
+          <span>(±{cci.semIQ})</span>
+          {profile.pureStreak >= 2 && (
+            <span className="text-amber-300 font-bold">💎 ×{profile.pureStreak}</span>
+          )}
+        </div>
+        <button
+          onClick={() => setTournamentMode((prev) => !prev)}
+          className={`px-1.5 py-0.2 rounded border transition text-[7px] font-bold ${
+            tournamentMode
+              ? 'bg-amber-950 border-amber-500 text-amber-300 shadow-xs'
+              : 'bg-slate-900 border-slate-800 text-slate-500 hover:text-slate-300'
+          }`}
+        >
+          {tournamentMode ? '🏆 TOURNAMENT SANCTIONED' : '○ TOURNAMENT OFF'}
+        </button>
+      </div>
+
+      {/* 導航工具列：遊戲選單 + 難度選單 + 語言切換 */}
       <header className="w-full max-w-sm sm:max-w-md flex items-center justify-between gap-1.5 mb-2 pb-1.5 border-b border-slate-800">
         <span className="text-xs font-black tracking-widest text-indigo-400 shrink-0">LOGICORE</span>
 
         <div className="flex items-center gap-1.5 flex-1 min-w-0">
-          {/* 遊戲摺疊清單 */}
           <select
             value={selectedType}
             onChange={(e) => {
@@ -297,7 +322,6 @@ const MainDashboard: React.FC = () => {
             })}
           </select>
 
-          {/* 難度摺疊清單 */}
           <select
             value={currentLevel}
             onChange={(e) => {
@@ -320,22 +344,26 @@ const MainDashboard: React.FC = () => {
         <LangSwitcher />
       </header>
 
-      {/* 核心盤面 */}
+      {/* 核心盤面渲染 */}
       {activePuzzle ? (
         <section className="flex flex-col items-center w-full max-w-sm sm:max-w-md">
           <div className="w-full p-1 bg-slate-900/60 border border-slate-800 rounded-xl shadow-2xl">
             <ErrorBoundary FallbackComponent={EngineFallbackUI} resetKeys={[selectedType, currentLevel, puzzleIndex]}>
-              <PuzzleRenderer key={`${selectedType}-${currentLevel}-${puzzleIndex}-${activePuzzle.checksum}`} puzzle={activePuzzle} />
+              <PuzzleRenderer
+                key={`${selectedType}-${currentLevel}-${puzzleIndex}-${activePuzzle.checksum}`}
+                puzzle={activePuzzle}
+                tournamentMode={tournamentMode}
+              />
             </ErrorBoundary>
           </div>
 
-          {/* 迷宮專屬虛擬手把 */}
+          {/* 迷宮專屬虛擬手把 (連動 MOVE, LOOK, ACTION 全通道) */}
           {isSpatialExplorationType && (
             <VirtualGamepad
               onMove={handleJoystickMove}
-              onRotate={() => {}}
-              onAction={() => {}}
-              actionLabel={isEn ? 'STEP' : '動作'}
+              onRotate={handleJoystickLook}
+              onAction={handleJoystickAction}
+              actionLabel={isEn ? 'MARK' : '標記'}
             />
           )}
 
@@ -362,7 +390,7 @@ const MainDashboard: React.FC = () => {
             </button>
           </div>
 
-          {/* 頂級玩家專屬：一鍵升階挑戰與跳級通道 */}
+          {/* 升階跳級挑戰通道 */}
           {currentLevel !== 'master' && (
             <div className="flex gap-1.5 mt-1.5 w-full">
               <button
