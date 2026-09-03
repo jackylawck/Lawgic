@@ -1,15 +1,36 @@
 // web-frontend/src/engines/tentsGenerator.ts
 import { PuzzleEntity, TierKey } from '../generated';
 
-export type TentsCellState = 'empty' | 'tree' | 'tent';
+export interface TentCoord {
+  r: number;
+  c: number;
+}
+
+export interface TentStep {
+  step: number;
+  type: string;
+  r: number;
+  c: number;
+  state: number;
+  rationale: string;
+  humanReadable?: {
+    zh: string;
+    en: string;
+  };
+}
 
 export interface TentsSpec {
   rows: number;
   cols: number;
-  trees: [number, number][];
-  rowClues: number[];
-  colClues: number[];
-  solutionTents: [number, number][];
+  trees: TentCoord[];
+  rowCounts: number[];
+  colCounts: number[];
+  rowClues?: number[];
+  colClues?: number[];
+  solutionTents: TentCoord[];
+  solvingSteps: TentStep[];
+  wpfAnswerKey: string;
+  variant?: 'standard' | 'diagonal';
 }
 
 const TIER_CONFIGS: Record<TierKey, { rows: number; cols: number; treeCount: number }> = {
@@ -24,14 +45,13 @@ export class WebTentsGenerator {
     const conf = TIER_CONFIGS[tier] || TIER_CONFIGS.kids;
     const { rows, cols, treeCount } = conf;
 
-    // 建立基礎解題地圖
-    const trees: [number, number][] = [];
-    const solutionTents: [number, number][] = [];
+    const trees: TentCoord[] = [];
+    const solutionTents: TentCoord[] = [];
     const occupied = new Set<string>();
 
     const dirs = [[-1, 0], [1, 0], [0, -1], [0, 1]];
-
     let attempts = 0;
+
     while (trees.length < treeCount && attempts < 200) {
       attempts++;
       const tr = Math.floor(Math.random() * rows);
@@ -40,7 +60,6 @@ export class WebTentsGenerator {
 
       if (occupied.has(treeKey)) continue;
 
-      // 尋找相鄰可用空位放置帳篷
       const validAdj: [number, number][] = [];
       for (const [dr, dc] of dirs) {
         const nr = tr + dr;
@@ -48,7 +67,6 @@ export class WebTentsGenerator {
         if (nr >= 0 && nr < rows && nc >= 0 && nc < cols) {
           const adjKey = `${nr},${nc}`;
           if (!occupied.has(adjKey)) {
-            // 檢查帳篷之間是否相鄰（包含對角）
             let collides = false;
             for (let rDiff = -1; rDiff <= 1; rDiff++) {
               for (let cDiff = -1; cDiff <= 1; cDiff++) {
@@ -66,32 +84,41 @@ export class WebTentsGenerator {
 
       if (validAdj.length > 0) {
         const [tentR, tentC] = validAdj[Math.floor(Math.random() * validAdj.length)];
-        trees.push([tr, tc]);
-        solutionTents.push([tentR, tentC]);
+        trees.push({ r: tr, c: tc });
+        solutionTents.push({ r: tentR, c: tentC });
         occupied.add(treeKey);
         occupied.add(`${tentR},${tentC}`);
       }
     }
 
-    const rowClues = Array(rows).fill(0);
-    const colClues = Array(cols).fill(0);
-    for (const [r, c] of solutionTents) {
-      rowClues[r]++;
-      colClues[c]++;
+    const rowCounts = Array(rows).fill(0);
+    const colCounts = Array(cols).fill(0);
+    for (const t of solutionTents) {
+      rowCounts[t.r]++;
+      colCounts[t.c]++;
+    }
+
+    let wpfAnswerKey = '';
+    for (let r = 0; r < rows; r++) {
+      const tentInRow = solutionTents.find((t) => t.r === r);
+      wpfAnswerKey += tentInRow ? String((tentInRow.c + 1) % 10) : '0';
     }
 
     const spec: TentsSpec = {
       rows,
       cols,
       trees,
-      rowClues,
-      colClues,
+      rowCounts,
+      colCounts,
       solutionTents,
+      solvingSteps: [],
+      wpfAnswerKey,
+      variant: 'standard',
     };
 
     return {
       id: `tents_${tier}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-      category: 'spatial_logic',
+      category: 'spatial' as any,
       engine_type: 'tents',
       tier,
       checksum: `TENTS_${rows}x${cols}_${Date.now()}`,
@@ -109,5 +136,16 @@ export class WebTentsGenerator {
         human_sim_steps: treeCount * 2,
       } as any,
     };
+  }
+
+  public static getProgressiveDeductions(
+    rows: number,
+    cols: number,
+    trees: TentCoord[],
+    rowCounts: number[],
+    colCounts: number[],
+    board: number[][]
+  ): Map<string, any> {
+    return new Map();
   }
 }
