@@ -109,8 +109,11 @@ export const KropkiBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
     setNotes((prev) => {
       const next = prev.map((row) => row.map((s) => new Set(s)));
       const targetSet = next[r][c];
-      if (targetSet.has(num)) targetSet.delete(num);
-      else targetSet.add(num);
+      if (targetSet.has(num)) {
+        targetSet.delete(num);
+      } else {
+        targetSet.add(num);
+      }
       return next;
     });
   }, [isCompleted, selectedCell, initialGrid, grid]);
@@ -124,8 +127,12 @@ export const KropkiBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
       return;
     }
 
-    const [coord, info] = deductions.entries().next().value;
-    const [r, c] = coord.split(',').map(Number);
+    const firstItem = deductions.entries().next().value;
+    if (!firstItem) return;
+    const [coord, info] = firstItem;
+    const parts = coord.split(',');
+    const r = Number(parts[0]);
+    const c = Number(parts[1]);
 
     setSelectedCell([r, c]);
 
@@ -261,8 +268,11 @@ export const KropkiBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
 
       const parsed = parseInt(e.key, 10);
       if (!isNaN(parsed) && parsed >= 1 && parsed <= n) {
-        if (e.shiftKey) toggleNote(parsed);
-        else handleInputNumber(parsed);
+        if (e.shiftKey) {
+          toggleNote(parsed);
+        } else {
+          handleInputNumber(parsed);
+        }
       } else if (e.key === 'Backspace' || e.key === 'Delete') {
         handleInputNumber(0);
       }
@@ -285,58 +295,6 @@ export const KropkiBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
   const handleClosePBModal = useCallback(() => {
     setShowPBModal(false);
   }, []);
-
-  // 輔助函式：乾淨渲染單元格內部內容，不使用巢狀三元運算子
-  const renderCellContent = (val: number, cellNotes: Set<number>) => {
-    if (val !== 0) {
-      return <span>{val}</span>;
-    }
-    if (cellNotes.size > 0) {
-      return (
-        <div className="absolute inset-0 p-0.5 grid grid-cols-3 gap-0 text-[7px] sm:text-[9px] text-amber-400/90 font-mono items-center justify-items-center">
-          {Array.from({ length: n }, (_, i) => i + 1).map((num) => {
-            const hasNum = cellNotes.has(num);
-            return (
-              <span key={num} className="leading-none">
-                {hasNum ? num : ''}
-              </span>
-            );
-          })}
-        </div>
-      );
-    }
-    return null;
-  };
-
-  // 輔助函式：乾淨渲染右圓點
-  const renderRightDot = (r: number, c: number) => {
-    if (c >= n - 1) return null;
-    const dot = dots.find((d) => d.r1 === r && d.c1 === c && d.r2 === r && d.c2 === c + 1);
-    if (!dot) return null;
-    const dotClass = dot.type === 'white'
-      ? 'bg-white border-slate-900 shadow-[0_0_8px_rgba(255,255,255,0.9)]'
-      : 'bg-black border-slate-400 shadow-[0_0_8px_rgba(0,0,0,0.9)]';
-    return (
-      <span
-        className={`absolute -right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 rounded-full z-20 border-2 ${dotClass}`}
-      />
-    );
-  };
-
-  // 輔助函式：乾淨渲染下圓點
-  const renderBottomDot = (r: number, c: number) => {
-    if (r >= n - 1) return null;
-    const dot = dots.find((d) => d.r1 === r && d.c1 === c && d.r2 === r + 1 && d.c2 === c);
-    if (!dot) return null;
-    const dotClass = dot.type === 'white'
-      ? 'bg-white border-slate-900 shadow-[0_0_8px_rgba(255,255,255,0.9)]'
-      : 'bg-black border-slate-400 shadow-[0_0_8px_rgba(0,0,0,0.9)]';
-    return (
-      <span
-        className={`absolute left-1/2 -bottom-2 -translate-x-1/2 w-3.5 h-3.5 rounded-full z-20 border-2 ${dotClass}`}
-      />
-    );
-  };
 
   return (
     <div className="flex flex-col items-center justify-center p-2 select-none font-mono">
@@ -401,10 +359,10 @@ export const KropkiBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
         >
           {grid.map((row, r) =>
             row.map((val, c) => {
-              const isSelected = selectedCell?.[0] === r && selectedCell?.[1] === c;
+              const isSelected = Boolean(selectedCell && selectedCell[0] === r && selectedCell[1] === c);
               const isInitial = initialGrid[r][c] !== 0;
               const cellNotes = notes[r][c];
-              const isHintTarget = activeHintStep?.row === r && activeHintStep?.col === c;
+              const isHintTarget = Boolean(activeHintStep && activeHintStep.row === r && activeHintStep.col === c);
 
               let cellStyle = 'bg-slate-950/70 text-transparent hover:bg-slate-900/50';
               if (isHintTarget && hintLevel >= 1) {
@@ -417,15 +375,52 @@ export const KropkiBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
                 cellStyle = 'bg-slate-900/90 text-slate-100';
               }
 
+              let rightDotElem = null;
+              if (c < n - 1) {
+                const rightDot = dots.find((d) => d.r1 === r && d.c1 === c && d.r2 === r && d.c2 === c + 1);
+                if (rightDot) {
+                  const borderCls = rightDot.type === 'white' ? 'bg-white border-slate-900' : 'bg-black border-slate-400';
+                  rightDotElem = (
+                    <span className={`absolute -right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 rounded-full z-20 border-2 ${borderCls}`} />
+                  );
+                }
+              }
+
+              let bottomDotElem = null;
+              if (r < n - 1) {
+                const bottomDot = dots.find((d) => d.r1 === r && d.c1 === c && d.r2 === r + 1 && d.c2 === c);
+                if (bottomDot) {
+                  const borderCls = bottomDot.type === 'white' ? 'bg-white border-slate-900' : 'bg-black border-slate-400';
+                  bottomDotElem = (
+                    <span className={`absolute left-1/2 -bottom-2 -translate-x-1/2 w-3.5 h-3.5 rounded-full z-20 border-2 ${borderCls}`} />
+                  );
+                }
+              }
+
+              let cellContent = null;
+              if (val !== 0) {
+                cellContent = <span>{val}</span>;
+              } else if (cellNotes.size > 0) {
+                cellContent = (
+                  <div className="absolute inset-0 p-0.5 grid grid-cols-3 gap-0 text-[7px] sm:text-[9px] text-amber-400/90 font-mono items-center justify-items-center">
+                    {Array.from({ length: n }, (_, i) => i + 1).map((num) => (
+                      <span key={num} className="leading-none">
+                        {cellNotes.has(num) ? num : ''}
+                      </span>
+                    ))}
+                  </div>
+                );
+              }
+
               return (
                 <div
                   key={`${r}-${c}`}
                   onClick={() => setSelectedCell([r, c])}
                   className={`relative flex items-center justify-center font-black text-sm sm:text-base rounded-md cursor-pointer transition ${cellStyle}`}
                 >
-                  {renderCellContent(val, cellNotes)}
-                  {renderRightDot(r, c)}
-                  {renderBottomDot(r, c)}
+                  {cellContent}
+                  {rightDotElem}
+                  {bottomDotElem}
                 </div>
               );
             })
@@ -598,14 +593,14 @@ export const KropkiBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
         </div>
       )}
 
-      {/* 獨立安全彈窗掛載 */}
-      {showPBModal ? (
+      {/* 獨立彈窗掛載 */}
+      {showPBModal && (
         <PBCelebrationModal
           pb={profile.personalBest}
           onClose={handleClosePBModal}
           isEn={isEn}
         />
-      ) : null}
+      )}
     </div>
   );
 };
