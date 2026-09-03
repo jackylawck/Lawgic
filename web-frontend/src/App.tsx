@@ -65,9 +65,10 @@ const MainDashboard: React.FC = () => {
   const [puzzleIndex, setPuzzleIndex] = useState<number>(0);
   const [tournamentMode, setTournamentMode] = useState<boolean>(false);
   const [elapsed, setElapsed] = useState<number>(0);
+  const [toastMsg, setToastMsg] = useState<string | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // 1. 首屏秒開：預載四大核心引擎各階題目
+  // 1. 首屏秒開：同步產生核心四大引擎各階第 1 題
   const [dynamicPuzzles, setDynamicPuzzles] = useState<Record<string, PuzzleEntity[]>>(() => {
     const initialMazes: PuzzleEntity[] = [];
     const initialSudokus: PuzzleEntity[] = [];
@@ -76,22 +77,18 @@ const MainDashboard: React.FC = () => {
     const tiers: TierKey[] = ['kids', 'intermediate', 'expert', 'master'];
 
     tiers.forEach((tier) => {
-      // 迷宮
       const m = WebMazeGenerator.generate(tier);
       m.id = `maze_${tier}_init_1`;
       initialMazes.push(m);
 
-      // 數獨
       const s = WebSudokuGenerator.generate(tier);
       s.id = `sudoku_${tier}_init_1`;
       initialSudokus.push(s);
 
-      // 摩天透視
       const sky = WebSkyscraperGenerator.generate(tier);
       sky.id = `skyscraper_${tier}_init_1`;
       initialSkyscrapers.push(sky);
 
-      // 星際數橋
       const h = WebHashiGenerator.generate(tier);
       h.id = `hashi_${tier}_init_1`;
       initialHashis.push(h);
@@ -105,7 +102,7 @@ const MainDashboard: React.FC = () => {
     };
   });
 
-  // 2. 背景非同步切片填充：四大遊戲漸進補充至池中
+  // 2. 背景非同步時間切片填充：平滑填補題庫至充裕儲備
   useEffect(() => {
     let isMounted = true;
     const tiers: TierKey[] = ['kids', 'intermediate', 'expert', 'master'];
@@ -146,7 +143,7 @@ const MainDashboard: React.FC = () => {
     };
   }, []);
 
-  // 3. 弱點推薦導引全域跳轉監聽
+  // 3. 跨遊戲弱點跳轉監聽
   useEffect(() => {
     const handleNav = (e: any) => {
       if (e.detail?.gameId) {
@@ -157,6 +154,14 @@ const MainDashboard: React.FC = () => {
     window.addEventListener('logicore:navigate-game', handleNav);
     return () => window.removeEventListener('logicore:navigate-game', handleNav);
   }, []);
+
+  // 4. 動態同步網頁標題 (Lawgic 羅輯)
+  useEffect(() => {
+    const activeGame = ALL_GAMES.find((g) => g.id === selectedType);
+    const gameName = activeGame ? (isEn ? activeGame.nameEn : activeGame.nameZh) : 'Cognitive Arena';
+    const tierName = isEn ? TIER_NAMES[currentLevel].en : TIER_NAMES[currentLevel].zh;
+    document.title = `${gameName} [${tierName}] | Lawgic 羅輯`;
+  }, [selectedType, currentLevel, isEn]);
 
   const isSpatialExplorationType = selectedType === 'maze';
 
@@ -191,7 +196,7 @@ const MainDashboard: React.FC = () => {
     setPuzzleIndex((prev) => (prev + 1) % (activeList.length || 1));
   }, [activeList.length]);
 
-  // 現場無限生成
+  // 現場無限演算法生成
   const handleLiveGenerate = useCallback(() => {
     if (navigator.vibrate) navigator.vibrate(20);
 
@@ -207,10 +212,12 @@ const MainDashboard: React.FC = () => {
         [selectedType]: [newPuzzle!, ...(prev[selectedType] || [])],
       }));
       setPuzzleIndex(0);
+      setToastMsg(isEn ? '⚡ Dynamic puzzle synthesized' : '⚡ 演算法已即時合成全新題目');
+      setTimeout(() => setToastMsg(null), 2000);
     }
-  }, [selectedType, currentLevel]);
+  }, [selectedType, currentLevel, isEn]);
 
-  // 跳級挑戰
+  // 階梯晉級跳躍
   const handleTierJump = useCallback(
     (steps: number = 1) => {
       if (navigator.vibrate) navigator.vibrate([20, 30, 20]);
@@ -235,7 +242,7 @@ const MainDashboard: React.FC = () => {
     };
   }, [activePuzzle?.id]);
 
-  // 全域快捷鍵流 ( [ 與 ] 快速換題 )
+  // 全域鍵盤切題監聽
   useEffect(() => {
     const handleGlobalKey = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
@@ -246,7 +253,7 @@ const MainDashboard: React.FC = () => {
     return () => window.removeEventListener('keydown', handleGlobalKey);
   }, [handlePrevPuzzle, handleNextPuzzle]);
 
-  // 虛擬手把事件接管：MOVE, LOOK, ACTION
+  // 虛擬手把通道管理
   const lastMoveTimeRef = useRef<number>(0);
   const handleJoystickMove = useCallback((x: number, y: number) => {
     const now = Date.now();
@@ -278,6 +285,13 @@ const MainDashboard: React.FC = () => {
 
   return (
     <main className="min-h-screen bg-[#090d14] text-slate-200 flex flex-col items-center py-2 px-2 font-mono selection:bg-indigo-600">
+      {/* 臨時合成通知 */}
+      {toastMsg && (
+        <div className="fixed top-2 z-50 px-3 py-1.5 bg-cyan-600 border border-cyan-400 text-white font-bold text-xs rounded-full shadow-2xl animate-fade-in">
+          {toastMsg}
+        </div>
+      )}
+
       {/* 頂部全域狀態橫條 (Wechsler IQ, 連勝, 賽事模式) */}
       <div className="w-full max-w-sm sm:max-w-md flex items-center justify-between px-1 mb-1 text-[8px] text-slate-500">
         <div className="flex items-center gap-1.5">
@@ -299,9 +313,13 @@ const MainDashboard: React.FC = () => {
         </button>
       </div>
 
-      {/* 導航工具列：遊戲選單 + 難度選單 + 語言切換 */}
+      {/* 頂部品牌與整合選單 */}
       <header className="w-full max-w-sm sm:max-w-md flex items-center justify-between gap-1.5 mb-2 pb-1.5 border-b border-slate-800">
-        <span className="text-xs font-black tracking-widest text-indigo-400 shrink-0">LOGICORE</span>
+        {/* 正式升級品牌：Lawgic 羅輯 */}
+        <div className="flex flex-col shrink-0 leading-tight">
+          <span className="text-xs font-black tracking-widest text-indigo-400">LAWGIC</span>
+          <span className="text-[6.5px] font-bold text-slate-500 tracking-wider">羅輯・認知評估</span>
+        </div>
 
         <div className="flex items-center gap-1.5 flex-1 min-w-0">
           <select
@@ -344,7 +362,7 @@ const MainDashboard: React.FC = () => {
         <LangSwitcher />
       </header>
 
-      {/* 核心盤面渲染 */}
+      {/* 核心盤面呈現 */}
       {activePuzzle ? (
         <section className="flex flex-col items-center w-full max-w-sm sm:max-w-md">
           <div className="w-full p-1 bg-slate-900/60 border border-slate-800 rounded-xl shadow-2xl">
@@ -357,7 +375,7 @@ const MainDashboard: React.FC = () => {
             </ErrorBoundary>
           </div>
 
-          {/* 迷宮專屬虛擬手把 (連動 MOVE, LOOK, ACTION 全通道) */}
+          {/* 迷宮專屬虛擬手把 */}
           {isSpatialExplorationType && (
             <VirtualGamepad
               onMove={handleJoystickMove}
@@ -367,7 +385,7 @@ const MainDashboard: React.FC = () => {
             />
           )}
 
-          {/* 操作導覽列 */}
+          {/* 操作導航列 */}
           <div className="mt-2 grid grid-cols-3 gap-1.5 w-full">
             <button
               onClick={handlePrevPuzzle}
