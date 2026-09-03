@@ -10,18 +10,18 @@ export interface SlitherEdge {
 }
 
 export type SlitherDeductionType =
-  | 'zero_cross'            // 0 的周圍 4 邊必然標叉
-  | 'adjacent_threes'       // 相鄰 3-3 外側與共用邊定式
-  | 'diagonal_30'           // 對角 3-0 拐角排斥定式
-  | 'degree_extension'      // 頂點度數為 1 時的必然延伸 (無死胡同)
-  | 'degree_saturation'     // 頂點度數已達 2，其餘未定邊必標叉
-  | 'premature_avoidance'   // 提前封閉防護 (避免未完成大環前形成孤立子環)
-  | 'clue_completion';      // 格子線索滿額或排除封閉
+  | 'zero_cross'
+  | 'adjacent_threes'
+  | 'diagonal_30'
+  | 'degree_extension'
+  | 'degree_saturation'
+  | 'premature_avoidance'
+  | 'clue_completion';
 
-export type HumanSolvingStyle = 
-  | 'pure_logic'       // 🧠 純邏輯推導型 (100% 定式直覺)
-  | 'strategic_macro'  // 📐 拓撲宏觀型 (擅長全局環路避死)
-  | 'heuristic_trail'; // 🔍 積極探索型 (大膽求證、靈動破局)
+export type HumanSolvingStyle =
+  | 'pure_logic'
+  | 'strategic_macro'
+  | 'heuristic_trail';
 
 export interface SlitherStep {
   step: number;
@@ -70,13 +70,12 @@ const TIER_SPECS: Record<TierKey, TierConfig> = {
 };
 
 export class WebSlitherlinkGenerator {
-  // 1. 強制 180° 對稱性生長：隨機單一自迴避封閉大環
   private static generateValidLoopSymmetric(rows: number, cols: number): {
     hEdges: boolean[][];
     vEdges: boolean[][];
   } {
     const inside: boolean[][] = Array.from({ length: rows }, () => Array(cols).fill(false));
-    
+
     const midR = Math.floor(rows / 2);
     const midC = Math.floor(cols / 2);
     inside[midR][midC] = true;
@@ -133,7 +132,6 @@ export class WebSlitherlinkGenerator {
     return { hEdges, vEdges };
   }
 
-  // 2. 嚴格單一環路驗證：徹底杜絕多環 (Multiple Loops Detection)
   public static isStrictSingleLoop(
     hEdges: boolean[][],
     vEdges: boolean[][],
@@ -210,7 +208,6 @@ export class WebSlitherlinkGenerator {
     return visitedEdges === totalEdges;
   }
 
-  // 3. 提取線索
   private static extractClues(
     rows: number,
     cols: number,
@@ -231,7 +228,6 @@ export class WebSlitherlinkGenerator {
     return clues;
   }
 
-  // 4. 計算拓撲熵 (Topological Entropy)
   private static computeTopologicalEntropy(
     hEdges: boolean[][],
     vEdges: boolean[][],
@@ -263,7 +259,6 @@ export class WebSlitherlinkGenerator {
     return Number(((turnRatio * 0.7) + (density * 0.3)).toFixed(3));
   }
 
-  // 5. 檢測局部端點連通性，防止提前閉合 (Premature Loop Avoidance)
   private static wouldCausePrematureLoop(
     er: number,
     ec: number,
@@ -307,7 +302,6 @@ export class WebSlitherlinkGenerator {
     return false;
   }
 
-  // 6. 即時必然定式分析器 (供 No-Guess Mode 與 Hint Ladder 共同使用)
   public static getStrictDeductions(
     rows: number,
     cols: number,
@@ -321,7 +315,6 @@ export class WebSlitherlinkGenerator {
       { edge: SlitherEdge; state: 1 | 2; type: SlitherDeductionType; rationale: string; humanReadable: { zh: string; en: string } }
     >();
 
-    // 定理 1: 0 的四周必然標叉
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         if (clues[r][c] === 0) {
@@ -332,10 +325,10 @@ export class WebSlitherlinkGenerator {
                 edge: { type, r: er, c: ec },
                 state: 2,
                 type: 'zero_cross',
-                rationale: `線索 0 周圍禁絕一切線段`,
+                rationale: '線索 0 周圍禁絕一切線段',
                 humanReadable: {
-                  zh: `因為 0 的四周不能有任何線段，所以這條邊必須標記叉號 (×)。`,
-                  en: `Zero clues forbid any surrounding lines; mark with a cross (×).`,
+                  zh: '因為 0 的四周不能有任何線段，所以這條邊必須標記叉號 (×)。',
+                  en: 'Zero clues forbid any surrounding lines; mark with a cross (×).',
                 },
               });
             }
@@ -348,7 +341,6 @@ export class WebSlitherlinkGenerator {
       }
     }
 
-    // 定理 2: 水平與垂直相鄰雙 3 定式
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         if (c + 1 < cols && clues[r][c] === 3 && clues[r][c + 1] === 3) {
@@ -363,10 +355,10 @@ export class WebSlitherlinkGenerator {
                 edge: { type: t, r: er, c: ec },
                 state: 1,
                 type: 'adjacent_threes',
-                rationale: `相鄰雙 3 必然形成三重平行走線定式`,
+                rationale: '相鄰雙 3 必然形成三重平行走線定式',
                 humanReadable: {
-                  zh: `兩個相鄰的 3 形成經典定式：外側與共用邊必須連線，否則無法同時滿足 3 條邊。`,
-                  en: `Adjacent 3-3 pattern forces the outer tracks and common edge to connect.`,
+                  zh: '兩個相鄰的 3 形成經典定式：外側與共用邊必須連線，否則無法同時滿足 3 條邊。',
+                  en: 'Adjacent 3-3 pattern forces the outer tracks and common edge to connect.',
                 },
               });
             }
@@ -384,10 +376,10 @@ export class WebSlitherlinkGenerator {
                 edge: { type: t, r: er, c: ec },
                 state: 1,
                 type: 'adjacent_threes',
-                rationale: `垂直相鄰雙 3 外側與共用邊連線定式`,
+                rationale: '垂直相鄰雙 3 外側與共用邊連線定式',
                 humanReadable: {
-                  zh: `垂直相鄰的兩個 3：外側軌道與共用橫邊必須通線。`,
-                  en: `Vertical adjacent 3-3 requires outer boundaries and common edge to be drawn.`,
+                  zh: '垂直相鄰的兩個 3：外側軌道與共用橫邊必須通線。',
+                  en: 'Vertical adjacent 3-3 requires outer boundaries and common edge to be drawn.',
                 },
               });
             }
@@ -396,7 +388,6 @@ export class WebSlitherlinkGenerator {
       }
     }
 
-    // 定理 3: 對角 3 與 0 複合定式
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         if (clues[r][c] === 3) {
@@ -429,10 +420,10 @@ export class WebSlitherlinkGenerator {
                     edge: { type: t, r: er, c: ec },
                     state: 1,
                     type: 'diagonal_30',
-                    rationale: `對角 3 與 0 複合排斥定式，外側遠端邊必然連線`,
+                    rationale: '對角 3 與 0 複合排斥定式，外側遠端邊必然連線',
                     humanReadable: {
-                      zh: `線索 3 與線索 0 對角相望時，遠離 0 的兩條外側邊必須連線！`,
-                      en: `Diagonal 3-0 pattern forces the outer edges opposite to the 0 to connect!`,
+                      zh: '線索 3 與線索 0 對角相望時，遠離 0 的兩條外側邊必須連線！',
+                      en: 'Diagonal 3-0 pattern forces the outer edges opposite to the 0 to connect!',
                     },
                   });
                 }
@@ -443,7 +434,6 @@ export class WebSlitherlinkGenerator {
       }
     }
 
-    // 定理 4: 頂點度數守恆 (0 或 2)
     for (let r = 0; r <= rows; r++) {
       for (let c = 0; c <= cols; c++) {
         const edges: { type: EdgeType; er: number; ec: number; val: number }[] = [];
@@ -460,10 +450,10 @@ export class WebSlitherlinkGenerator {
                 edge: { type: e.type, r: e.er, c: e.ec },
                 state: 2,
                 type: 'degree_saturation',
-                rationale: `頂點度數已滿 (2)，其餘邊標叉防分支`,
+                rationale: '頂點度數已滿 (2)，其餘邊標叉防分支',
                 humanReadable: {
-                  zh: `這個交叉點已經有兩條線進出，為防止產生三分叉，其餘方向必須標記叉號 (×)。`,
-                  en: `Vertex already has 2 connecting lines; remaining paths must be crossed out.`,
+                  zh: '這個交叉點已經有兩條線進出，為防止產生三分叉，其餘方向必須標記叉號 (×)。',
+                  en: 'Vertex already has 2 connecting lines; remaining paths must be crossed out.',
                 },
               });
             }
@@ -476,10 +466,10 @@ export class WebSlitherlinkGenerator {
               edge: { type: target.type, r: target.er, c: target.ec },
               state: 1,
               type: 'degree_extension',
-              rationale: `頂點禁止死胡同，線路必須延伸`,
+              rationale: '頂點禁止死胡同，線路必須延伸',
               humanReadable: {
-                zh: `環路不能有斷頭死胡同，這條線必須繼續向前延伸。`,
-                en: `A loop cannot be a dead end; it must continue through the only open edge.`,
+                zh: '環路不能有斷頭死胡同，這條線必須繼續向前延伸。',
+                en: 'A loop cannot be a dead end; it must continue through the only open edge.',
               },
             });
           }
@@ -487,7 +477,6 @@ export class WebSlitherlinkGenerator {
       }
     }
 
-    // 定理 5: 線索數值約束與提前閉合防護
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         const clue = clues[r][c];
@@ -534,10 +523,10 @@ export class WebSlitherlinkGenerator {
                   edge: { type: op.type, r: op.er, c: op.ec },
                   state: 2,
                   type: 'premature_avoidance',
-                  rationale: `防護性標叉：避免未遍歷全域前閉合孤立小圈`,
+                  rationale: '防護性標叉：避免未遍歷全域前閉合孤立小圈',
                   humanReadable: {
-                    zh: `如果在這裡連線，會提前封閉成一個孤立的小圈！必須標記叉號 (×) 迫使大環前進。`,
-                    en: `Connecting here would close a small sub-loop prematurely; cross it out to preserve the single loop.`,
+                    zh: '如果在這裡連線，會提前封閉成一個孤立的小圈！必須標記叉號 (×) 迫使大環前進。',
+                    en: 'Connecting here would close a small sub-loop prematurely; cross it out to preserve the single loop.',
                   },
                 });
               } else {
@@ -561,7 +550,6 @@ export class WebSlitherlinkGenerator {
     return deductions;
   }
 
-  // 7. 人類解題行為模擬器 (Human Solver Simulation)
   private static simulateHumanSolving(
     rows: number,
     cols: number,
@@ -656,7 +644,6 @@ export class WebSlitherlinkGenerator {
     };
   }
 
-  // 主生成接口
   public static generate(tier: TierKey = 'kids'): PuzzleEntity {
     const config = TIER_SPECS[tier] || TIER_SPECS.kids;
     const { rows, cols, clueRemovalRate, minForcedChain, baseIrt } = config;
@@ -717,6 +704,8 @@ export class WebSlitherlinkGenerator {
 
       return {
         id: puzzleId,
+        category: 'loop_logic',
+        engine_type: 'slitherlink',
         tier,
         checksum: `SLITHER_${rows}x${cols}_CERTIFIED_${Date.now().toString(36)}`,
         puzzle: {
@@ -756,6 +745,8 @@ export class WebSlitherlinkGenerator {
     const fallbackClues = this.extractClues(rows, cols, fallback.hEdges, fallback.vEdges);
     return {
       id: `slither_${tier}_fallback_${Date.now()}`,
+      category: 'loop_logic',
+      engine_type: 'slitherlink',
       tier,
       checksum: `SLITHER_FALLBACK_${rows}x${cols}`,
       puzzle: {
