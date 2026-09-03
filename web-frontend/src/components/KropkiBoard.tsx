@@ -286,6 +286,18 @@ export const KropkiBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
     setShowPBModal(false);
   }, []);
 
+  // 將彈窗抽離至純 JS 變數，完全杜絕 JSX 內部語法解析歧義
+  let pbModalElement: React.ReactNode = null;
+  if (showPBModal) {
+    pbModalElement = (
+      <PBCelebrationModal
+        pb={profile.personalBest}
+        onClose={handleClosePBModal}
+        isEn={isEn}
+      />
+    );
+  }
+
   return (
     <div className="flex flex-col items-center justify-center p-2 select-none font-mono">
       {/* 頂部數據列 */}
@@ -577,10 +589,8 @@ export const KropkiBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
         </div>
       )}
 
-      {/* 獨立安全三元運算式渲染 Modal，杜絕 && ( 解析歧義 */}
-      {showPBModal ? (
-        <PBCelebrationModal pb={profile.personalBest} onClose={handleClosePBModal} isEn={isEn} />
-      ) : null}
+      {/* 透過純 JS 變數渲染，完全阻絕行內 JSX 解析歧義 */}
+      {pbModalElement}
     </div>
   );
 };
