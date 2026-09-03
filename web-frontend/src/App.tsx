@@ -68,16 +68,20 @@ const EngineFallbackUI: React.FC<{ resetErrorBoundary: () => void }> = ({ resetE
 
 function generateEnginePuzzle(gameId: string, tier: ExtendedTierKey): PuzzleEntity | null {
   const t: TierKey = tier === 'legendary' ? 'master' : (tier as TierKey);
-  switch (gameId) {
-    case 'maze': return WebMazeGenerator.generate(t);
-    case 'sudoku': return WebSudokuGenerator.generate(t);
-    case 'skyscraper': return WebSkyscraperGenerator.generate(t);
-    case 'hashi': return WebHashiGenerator.generate(t);
-    case 'kropki': return WebKropkiGenerator.generate(t);
-    case 'slitherlink': return WebSlitherlinkGenerator.generate(t);
-    case 'tents': return WebTentsGenerator.generate(t);
-    case 'lightup': return WebLightUpGenerator.generate(t);
-    default: return null;
+  try {
+    switch (gameId) {
+      case 'maze': return WebMazeGenerator.generate(t);
+      case 'sudoku': return WebSudokuGenerator.generate(t);
+      case 'skyscraper': return WebSkyscraperGenerator.generate(t);
+      case 'hashi': return WebHashiGenerator.generate(t);
+      case 'kropki': return WebKropkiGenerator.generate(t);
+      case 'slitherlink': return WebSlitherlinkGenerator.generate(t);
+      case 'tents': return WebTentsGenerator.generate(t);
+      case 'lightup': return WebLightUpGenerator.generate(t);
+      default: return null;
+    }
+  } catch {
+    return null;
   }
 }
 
@@ -150,9 +154,10 @@ const MainDashboard: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    const handleNav = (e: any) => {
-      if (e.detail?.gameId) {
-        setSelectedType(e.detail.gameId);
+    const handleNav = (e: Event) => {
+      const customEvent = e as CustomEvent<{ gameId?: string }>;
+      if (customEvent.detail?.gameId) {
+        setSelectedType(customEvent.detail.gameId);
         setPuzzleIndex(0);
       }
     };
