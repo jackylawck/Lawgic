@@ -7,6 +7,8 @@ import { HashiIsland, HashiHintStep, HashiBridge } from '../engines/hashiGenerat
 import { MetricErrorBar } from './MetricErrorBar';
 import { CognitiveRadarChart } from './CognitiveRadarChart';
 import { PBCelebrationModal } from './PBCelebrationModal';
+import { TournamentSubmissionModal } from './TournamentSubmissionModal';
+import { getEnvironmentFingerprint, calculateInfractionScore } from '../utils/tournamentSecurity';
 
 interface Props {
   puzzleData?: PuzzleEntity;
@@ -51,7 +53,7 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
   const theoryTime = metrics.estimated_time_sec || 120;
   const standardTimeLimit = currentTier === 'kids' ? 180 : currentTier === 'intermediate' ? 300 : 480;
 
-  // 自適應冷卻
+  // 自適應冷卻時間
   const calculatedBaseCooldown = useMemo(() => {
     const tierMap: Record<TierKey, number> = {
       kids: 15,
@@ -66,7 +68,7 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
   }, [currentTier, profile.techniqueStats]);
 
   const benchmarkData = useMemo(() => {
-    return getBenchmarkMetrics('GraphTopologyInference', theoryTime);
+    return getBenchmarkMetrics('GraphTopologyInference', theoryTime, 'hashi');
   }, [getBenchmarkMetrics, theoryTime]);
 
   const [bridges, setBridges] = useState<Map<string, number>>(new Map());
@@ -76,6 +78,7 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
   const [isTimedOut, setIsTimedOut] = useState<boolean>(false);
   const [elapsedSec, setElapsedSec] = useState<number>(0);
   const [showPBModal, setShowPBModal] = useState<boolean>(false);
+  const [showSubmitModal, setShowSubmitModal] = useState<boolean>(false);
   const [proofSignature, setProofSignature] = useState<string | null>(null);
   const [bookmarkToast, setBookmarkToast] = useState<string | null>(null);
 
@@ -94,10 +97,11 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
     return id1 < id2 ? `${id1}_${id2}` : `${id2}_${id1}`;
   };
 
+  // 初始化與書籤恢復（修正 boardState 屬性名）
   useEffect(() => {
     const bookmark = profile.bookmarks[actualPuzzle?.id || ''];
-    if (bookmark) {
-      setBridges(new Map(bookmark.savedBridges));
+    if (bookmark && bookmark.boardState) {
+      setBridges(new Map(bookmark.boardState));
       setElapsedSec(bookmark.elapsedSec);
       setBookmarkToast(isEn ? 'Restored bookmarked progress' : '已自動恢復上次暫存進度');
       setTimeout(() => setBookmarkToast(null), 2500);
@@ -120,12 +124,12 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
     hintUsageLogRef.current = [];
   }, [actualPuzzle?.id, calculatedBaseCooldown, profile.bookmarks, isEn]);
 
+  // 計時與超時判定
   useEffect(() => {
     if (isCompleted || isTimedOut || isResigned) return;
     const timer = setInterval(() => {
       const cur = Math.floor((Date.now() - startTimeRef.current) / 1000);
       setElapsedSec(cur);
-
       setHintCooldown((prev) => (prev > 0 ? prev - 1 : 0));
 
       if (isAssessmentMode && cur >= standardTimeLimit) {
@@ -198,6 +202,7 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
     return compCount;
   }, [islands, bridges]);
 
+  // 勝利驗證
   const checkVictory = useCallback(
     async (nextBridges: Map<string, number>) => {
       const counts: Record<number, number> = {};
@@ -255,13 +260,14 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
     [islands, connectedComponentsCount, actualPuzzle, currentTier, recordAttempt, removeBookmark, benchmarkData.isNewPB, isPureMode, profile.pureStreak]
   );
 
+  // 暫存此局進度
   const handleBookmarkPuzzle = useCallback(() => {
     if (isCompleted || isTimedOut || isResigned || !actualPuzzle) return;
     saveBookmark({
       puzzleId: actualPuzzle.id,
       engineType: 'hashi',
       tier: currentTier,
-      savedBridges: Array.from(bridges.entries()),
+      boardState: Array.from(bridges.entries()),
       elapsedSec,
       bookmarkedAt: new Date().toISOString(),
     });
@@ -270,6 +276,7 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
     if (navigator.vibrate) navigator.vibrate([25, 40]);
   }, [isCompleted, isTimedOut, isResigned, actualPuzzle, currentTier, bridges, elapsedSec, saveBookmark, isEn]);
 
+  // 優雅投降並覆盤官方解答
   const handleGracefulResign = useCallback(() => {
     if (isCompleted || isTimedOut || isResigned) return;
     if (navigator.vibrate) navigator.vibrate([40, 60, 40]);
@@ -397,17 +404,24 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
     if (navigator.vibrate) navigator.vibrate(30);
   };
 
+  const handleNavigateTargetGame = (gameId: string) => {
+    window.dispatchEvent(new CustomEvent('logicore:navigate-game', { detail: { gameId } }));
+  };
+
   const cci = useMemo(() => getCompositeCognitiveIndex(), [getCompositeCognitiveIndex, isCompleted]);
   const remainingTime = Math.max(0, standardTimeLimit - elapsedSec);
 
   const highlightedTargetId = currentHintStep?.targetIslandId;
   const highlightedNeighborId = currentHintStep?.neighborIslandId;
 
-  // 提示長期趨勢計算
   const trendTotal = profile.hintTrend.totalCalls || 1;
   const t1Pct = Math.round((profile.hintTrend.t1Count / trendTotal) * 100);
   const t2Pct = Math.round((profile.hintTrend.t2Count / trendTotal) * 100);
   const t3Pct = Math.round((profile.hintTrend.t3Count / trendTotal) * 100);
+
+  // 獨立閉環警示判定
+  const allCountsMet = islands.length > 0 && islands.every((isl) => (currentIslandCounts[isl.id] || 0) === isl.expectedCount);
+  const hasIsolatedCycleWarning = allCountsMet && connectedComponentsCount > 1;
 
   return (
     <div className="flex flex-col items-center w-full select-none py-1 font-mono">
@@ -418,7 +432,7 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
         </div>
       )}
 
-      {/* 頂部施測、純挑戰模式、PURE STREAK、HUD */}
+      {/* 頂部 HUD 與狀態控制條 */}
       <div className="w-[min(90vw,46vh)] flex items-center justify-between text-[8px] text-slate-500 mb-1 px-1">
         <div className="flex items-center gap-1.5">
           <button
@@ -448,7 +462,6 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
             <span>{isEn ? 'PURE' : '純挑戰'}</span>
           </button>
 
-          {/* 💎 PURE STREAK 連勝徽章 (附帶 Streak Shield 提示) */}
           {profile.pureStreak >= 2 && (
             <span
               className="px-1.5 py-0.2 bg-gradient-to-r from-amber-950 to-purple-950 border border-amber-500 text-amber-300 rounded text-[6.5px] font-bold flex items-center gap-0.5 animate-pulse"
@@ -523,6 +536,13 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
         </div>
       </div>
 
+      {/* 獨立閉環結構提醒 */}
+      {hasIsolatedCycleWarning && (
+        <div className="w-[min(90vw,46vh)] bg-rose-950/90 border border-rose-500 text-rose-200 text-[7.5px] px-2 py-1 rounded-lg mb-1 animate-pulse text-center font-bold">
+          ⚠️ {isEn ? 'All island numbers met, but network is split into multiple isolated cycles! Global spanning tree required.' : '所有島嶼數字已滿足，但形成多個獨立孤島閉環！必須全圖單一樹狀連通。'}
+        </div>
+      )}
+
       {/* 提示訊息橫條 */}
       {!isPureMode && activeHintText && (
         <div className="w-[min(90vw,46vh)] bg-amber-950/90 border border-amber-500 text-amber-200 text-[7.5px] px-2 py-1.5 rounded-lg mb-1 animate-fade-in flex items-start justify-between gap-1 shadow-lg">
@@ -568,18 +588,17 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
               const islB = islands.find((i) => i.id === highlightedNeighborId);
               if (!islA || !islB) return null;
               return (
-                <g className="animate-pulse">
-                  <line
-                    x1={islA.x + 0.5}
-                    y1={islA.y + 0.5}
-                    x2={islB.x + 0.5}
-                    y2={islB.y + 0.5}
-                    stroke="#10b981"
-                    strokeWidth="0.16"
-                    strokeDasharray="0.25 0.15"
-                    strokeLinecap="round"
-                  />
-                </g>
+                <line
+                  x1={islA.x + 0.5}
+                  y1={islA.y + 0.5}
+                  x2={islB.x + 0.5}
+                  y2={islB.y + 0.5}
+                  stroke="#10b981"
+                  strokeWidth="0.16"
+                  strokeDasharray="0.25 0.15"
+                  strokeLinecap="round"
+                  className="animate-pulse"
+                />
               );
             })()
           )}
@@ -685,7 +704,7 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
 
       {/* 賽事級反思面板 */}
       {(isCompleted || isResigned) && (
-        <div className="mt-3 p-3 bg-slate-950/95 border border-indigo-500/60 rounded-xl text-center w-[min(90vw,46vh)] shadow-2xl animate-fade-in">
+        <div className="mt-3 p-3 bg-slate-950/95 border border-indigo-500/60 rounded-xl text-center w-[min(90vw,46vh)] shadow-2xl animate-fade-in font-mono">
           <div className="flex items-center justify-between border-b border-slate-800 pb-1.5 mb-2">
             <div className="text-left">
               <div className="text-[8px] text-slate-500 tracking-wider flex items-center gap-1">
@@ -752,7 +771,7 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
             </div>
           </div>
 
-          {/* 📈 長期提示時段趨勢分析 HUD */}
+          {/* 長期提示時段趨勢 HUD */}
           {profile.hintTrend.totalCalls > 0 && (
             <div className="bg-slate-900/80 border border-slate-800 rounded-lg p-2 mb-2 text-left text-[7px]">
               <div className="flex justify-between items-center text-slate-400 font-bold mb-1 uppercase tracking-wider">
@@ -772,7 +791,7 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
             </div>
           )}
 
-          {/* 該局提示調用時間軸 */}
+          {/* 該局提示時序 */}
           {hintUsageLogRef.current.length > 0 && (
             <div className="bg-slate-900/80 border border-slate-800 rounded-lg p-2 mb-2 text-left text-[7px]">
               <div className="text-slate-500 font-bold mb-1 uppercase tracking-wider">
@@ -791,6 +810,7 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
             </div>
           )}
 
+          {/* 心理計量信賴區間誤差棒 */}
           <div className="mb-2">
             <MetricErrorBar
               actualVal={elapsedSec}
@@ -802,6 +822,7 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
             />
           </div>
 
+          {/* 五維認知能力雷達 */}
           <div className="bg-slate-900/40 p-2 rounded-lg border border-slate-800 flex flex-col items-center mb-2">
             <CognitiveRadarChart
               dimensions={profile.cognitiveDimensions}
@@ -810,16 +831,39 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
             />
           </div>
 
-          <div className="flex gap-1.5 mb-2">
+          {/* 交叉弱點引導 */}
+          <div className="bg-indigo-950/40 p-2 rounded-lg border border-indigo-800/60 text-left mb-2 flex items-center justify-between gap-2">
+            <div className="flex-1 text-[8px] text-slate-300">
+              {isEn ? benchmarkData.recommendedFocus.reasonEn : benchmarkData.recommendedFocus.reasonZh}
+            </div>
             <button
-              onClick={exportLongitudinalDataset}
-              className="w-full py-1.5 bg-slate-900 hover:bg-slate-800 border border-cyan-600/50 hover:border-cyan-400 text-cyan-300 text-[8px] font-bold rounded-lg transition shadow flex items-center justify-center gap-1 active:scale-95"
+              onClick={() => handleNavigateTargetGame(benchmarkData.recommendedFocus.targetGame)}
+              className="shrink-0 px-2 py-1 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[8px] rounded transition active:scale-95"
             >
-              <span>📊</span>
-              <span>{isEn ? 'Export Dataset & Vault (JSON)' : '匯出個人縱向數據集與書籤庫 (JSON)'}</span>
+              ➜ {isEn ? 'Train' : '立即訓練'}
             </button>
           </div>
 
+          {/* 操作按鈕群：縱向數據匯出 + 官方賽事提交 */}
+          <div className="flex gap-1.5 mb-2">
+            <button
+              onClick={exportLongitudinalDataset}
+              className="flex-1 py-1.5 bg-slate-900 hover:bg-slate-800 border border-cyan-600/50 hover:border-cyan-400 text-cyan-300 text-[8px] font-bold rounded-lg transition shadow flex items-center justify-center gap-1 active:scale-95"
+            >
+              <span>📊</span>
+              <span>{isEn ? 'Export Dataset' : '匯出縱向數據'}</span>
+            </button>
+
+            <button
+              onClick={() => setShowSubmitModal(true)}
+              className="flex-1 py-1.5 bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 text-slate-950 text-[8px] font-black rounded-lg shadow transition active:scale-95 flex items-center justify-center gap-1"
+            >
+              <span>📤</span>
+              <span>{isEn ? 'Submit Result' : '官方賽事提交'}</span>
+            </button>
+          </div>
+
+          {/* 本地 Web Crypto SHA-256 存證指紋 */}
           {proofSignature && (
             <div className="p-1.5 bg-slate-900 border border-slate-800 rounded text-left">
               <div className="text-[7px] text-slate-500 font-bold uppercase flex justify-between">
@@ -838,6 +882,32 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
 
       {showPBModal && (
         <PBCelebrationModal pb={profile.personalBest} onClose={() => setShowPBModal(false)} isEn={isEn} />
+      )}
+
+      {showSubmitModal && (
+        <TournamentSubmissionModal
+          payload={{
+            submissionId: `SUB-${actualPuzzle.id}-${Date.now().toString(36)}`,
+            tournamentId: tournamentMode ? 'WPF_HASHI_2026' : 'GLOBAL_TOPOLOGY_STAGE',
+            playerId: profile.personalBest.updatedAt ? 'CONTENDER_VERIFIED' : 'LOCAL_PLAYER_1',
+            division: 'open',
+            puzzleId: actualPuzzle.id,
+            engineType: 'hashi',
+            tier: currentTier,
+            timeSpentSec: elapsedSec,
+            conflictsCount: conflictCountRef.current,
+            infractionScore: calculateInfractionScore({
+              tabSwitches: 0,
+              blurEvents: 0,
+              clipboardEvents: 0,
+              untrustedEvents: 0,
+            }),
+            environment: getEnvironmentFingerprint(),
+            timestamp: new Date().toISOString(),
+          }}
+          onClose={() => setShowSubmitModal(false)}
+          isEn={isEn}
+        />
       )}
     </div>
   );
