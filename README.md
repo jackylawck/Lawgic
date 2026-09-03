@@ -18,6 +18,16 @@
 
 ---
 
+## 📖 關於本專案 / About This Project
+
+> **這是一個為了給兒子伴隨成長而親手打造的遊戲專案。**  
+> 誠邀所有同好一同體驗、參與與交流，願我們都能重拾思維頓悟的純粹樂趣！
+>
+> *A personal project handcrafted to accompany my son as he grows up.*  
+> *Warmly inviting all puzzle enthusiasts to play, explore, and share the pure joy of logical insight!*
+
+---
+
 ## 繁體中文介紹
 
 ### 平台簡介
@@ -91,11 +101,3 @@ npm run dev
 
 # 進行生產環境構建與型別檢查 / Production build & type-check
 npm run build
-
-```
-
----
-
-## 授權條款 / License
-
-This project is open-sourced under the [MIT License](https://www.google.com/search?q=LICENSE).
