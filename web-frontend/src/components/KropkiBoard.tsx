@@ -44,7 +44,7 @@ export const KropkiBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
   const [activeHintStep, setActiveHintStep] = useState<SolvingStep | null>(null);
   const [boardScale, setBoardScale] = useState<number>(1.0);
 
-  const longPressTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const startTimeRef = useRef<number>(Date.now());
   const hasRecordedRef = useRef<boolean>(false);
 
@@ -577,9 +577,10 @@ export const KropkiBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
         </div>
       )}
 
-      {showPBModal && (
+      {/* 獨立安全三元運算式渲染 Modal，杜絕 && ( 解析歧義 */}
+      {showPBModal ? (
         <PBCelebrationModal pb={profile.personalBest} onClose={handleClosePBModal} isEn={isEn} />
-      )}
+      ) : null}
     </div>
   );
 };
