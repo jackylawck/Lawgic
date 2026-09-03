@@ -121,7 +121,6 @@ export const KropkiBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
   const handleRequestHint = useCallback(() => {
     if (isCompleted) return;
 
-    // 尋找當前盤面下的第一個必然推導
     const deductions = WebKropkiGenerator.getStrictDeductions(grid, dots, n);
     if (deductions.size === 0) {
       setGuessWarning(isEn ? 'Current grid requires global cross-check!' : '目前需要全局交叉比對！');
