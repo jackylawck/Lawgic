@@ -27,7 +27,6 @@ interface PuzzleMeta {
   icon: string;
 }
 
-// 8 款完整實裝引擎置頂，其餘保留在未來擴充清單
 const ALL_GAMES: PuzzleMeta[] = [
   { id: 'maze', nameZh: '空間迷宮', nameEn: 'Maze', icon: '🌀' },
   { id: 'sudoku', nameZh: '數獨魔陣', nameEn: 'Sudoku', icon: '🔢' },
@@ -67,9 +66,8 @@ const EngineFallbackUI: React.FC<{ resetErrorBoundary: () => void }> = ({ resetE
   </div>
 );
 
-// 統一單題生成輔助函式
 function generateEnginePuzzle(gameId: string, tier: ExtendedTierKey): PuzzleEntity | null {
-  const t = tier === 'legendary' ? 'master' : (tier as TierKey);
+  const t: TierKey = tier === 'legendary' ? 'master' : (tier as TierKey);
   switch (gameId) {
     case 'maze': return WebMazeGenerator.generate(t);
     case 'sudoku': return WebSudokuGenerator.generate(t);
@@ -78,7 +76,7 @@ function generateEnginePuzzle(gameId: string, tier: ExtendedTierKey): PuzzleEnti
     case 'kropki': return WebKropkiGenerator.generate(t);
     case 'slitherlink': return WebSlitherlinkGenerator.generate(t);
     case 'tents': return WebTentsGenerator.generate(t);
-    case 'lightup': return WebLightUpGenerator.generate(tier as any);
+    case 'lightup': return WebLightUpGenerator.generate(t);
     default: return null;
   }
 }
@@ -96,7 +94,6 @@ const MainDashboard: React.FC = () => {
   const [toastMsg, setToastMsg] = useState<string | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // 1. 首屏同步產生：8 大主力引擎各階第 1 題
   const [dynamicPuzzles, setDynamicPuzzles] = useState<Record<string, PuzzleEntity[]>>(() => {
     const initialPool: Record<string, PuzzleEntity[]> = {
       maze: [],
@@ -124,7 +121,6 @@ const MainDashboard: React.FC = () => {
     return initialPool;
   });
 
-  // 2. 背景非同步切片預載：將 8 大引擎題庫擴充
   useEffect(() => {
     let isMounted = true;
     const activeEngines = ['maze', 'sudoku', 'skyscraper', 'hashi', 'kropki', 'slitherlink', 'tents', 'lightup'];
@@ -153,7 +149,6 @@ const MainDashboard: React.FC = () => {
     };
   }, []);
 
-  // 3. 跨遊戲弱點跳轉監聽
   useEffect(() => {
     const handleNav = (e: any) => {
       if (e.detail?.gameId) {
@@ -165,7 +160,6 @@ const MainDashboard: React.FC = () => {
     return () => window.removeEventListener('logicore:navigate-game', handleNav);
   }, []);
 
-  // 4. 動態同步網頁標題
   useEffect(() => {
     const activeGame = ALL_GAMES.find((g) => g.id === selectedType);
     const gameName = activeGame ? (isEn ? activeGame.nameEn : activeGame.nameZh) : 'Cognitive Arena';
@@ -208,7 +202,6 @@ const MainDashboard: React.FC = () => {
     setPuzzleIndex((prev) => (prev + 1) % (activeList.length || 1));
   }, [activeList.length]);
 
-  // 現場即時演算法合成：支援全部 8 大引擎
   const handleLiveGenerate = useCallback(() => {
     if (navigator.vibrate) navigator.vibrate(20);
 
@@ -225,7 +218,6 @@ const MainDashboard: React.FC = () => {
     }
   }, [selectedType, currentLevel, isEn]);
 
-  // 階梯晉級跳躍
   const handleTierJump = useCallback(
     (steps: number = 1) => {
       if (navigator.vibrate) navigator.vibrate([20, 30, 20]);
@@ -250,7 +242,6 @@ const MainDashboard: React.FC = () => {
     };
   }, [activePuzzle?.id]);
 
-  // 全域鍵盤切題監聽
   useEffect(() => {
     const handleGlobalKey = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
@@ -261,7 +252,6 @@ const MainDashboard: React.FC = () => {
     return () => window.removeEventListener('keydown', handleGlobalKey);
   }, [handlePrevPuzzle, handleNextPuzzle]);
 
-  // 虛擬手把通道管理
   const lastMoveTimeRef = useRef<number>(0);
   const handleJoystickMove = useCallback((x: number, y: number) => {
     const now = Date.now();
@@ -293,14 +283,12 @@ const MainDashboard: React.FC = () => {
 
   return (
     <main className="min-h-screen bg-[#090d14] text-slate-200 flex flex-col items-center py-2 px-2 font-mono selection:bg-indigo-600">
-      {/* 臨時合成通知 */}
       {toastMsg && (
         <div className="fixed top-2 z-50 px-3 py-1.5 bg-cyan-600 border border-cyan-400 text-white font-bold text-xs rounded-full shadow-2xl animate-fade-in">
           {toastMsg}
         </div>
       )}
 
-      {/* 頂部全域狀態橫條 */}
       <div className="w-full max-w-sm sm:max-w-md flex items-center justify-between px-1 mb-1 text-[8px] text-slate-500">
         <div className="flex items-center gap-1.5">
           <span className="font-bold text-cyan-400">IQ {cci.standardIQ}</span>
@@ -321,7 +309,6 @@ const MainDashboard: React.FC = () => {
         </button>
       </div>
 
-      {/* 頂部品牌與整合選單 */}
       <header className="w-full max-w-sm sm:max-w-md flex items-center justify-between gap-1.5 mb-2 pb-1.5 border-b border-slate-800">
         <div className="flex flex-col shrink-0 leading-tight">
           <span className="text-xs font-black tracking-widest text-indigo-400">LAWGIC</span>
@@ -369,7 +356,6 @@ const MainDashboard: React.FC = () => {
         <LangSwitcher />
       </header>
 
-      {/* 核心盤面呈現 */}
       {activePuzzle ? (
         <section className="flex flex-col items-center w-full max-w-sm sm:max-w-md">
           <div className="w-full p-1 bg-slate-900/60 border border-slate-800 rounded-xl shadow-2xl">
@@ -382,7 +368,6 @@ const MainDashboard: React.FC = () => {
             </ErrorBoundary>
           </div>
 
-          {/* 迷宮專屬虛擬手把 */}
           {isSpatialExplorationType && (
             <VirtualGamepad
               onMove={handleJoystickMove}
@@ -392,7 +377,6 @@ const MainDashboard: React.FC = () => {
             />
           )}
 
-          {/* 操作導航列 */}
           <div className="mt-2 grid grid-cols-3 gap-1.5 w-full">
             <button
               onClick={handlePrevPuzzle}
@@ -415,7 +399,6 @@ const MainDashboard: React.FC = () => {
             </button>
           </div>
 
-          {/* 升階跳級挑戰通道 */}
           {currentLevel !== 'legendary' && (
             <div className="flex gap-1.5 mt-1.5 w-full">
               <button
@@ -437,7 +420,6 @@ const MainDashboard: React.FC = () => {
             </div>
           )}
 
-          {/* 底部時間與關卡進度 */}
           <div className="mt-2 flex items-center justify-between w-full px-1 text-[9px] text-slate-500 border-t border-slate-800/80 pt-1.5">
             <div>
               ⏱️ {String(Math.floor(elapsed / 60)).padStart(2, '0')}:{String(elapsed % 60).padStart(2, '0')}
