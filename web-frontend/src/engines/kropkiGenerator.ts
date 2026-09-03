@@ -1,11 +1,11 @@
 // web-frontend/src/engines/kropkiGenerator.ts
 import { PuzzleEntity, TierKey } from '../generated';
 
-export type DeductionType = 
-  | 'dot_forced_white'   // ⚪ 白點差值強制收斂 (±1)
-  | 'dot_forced_black'   // ⚫ 黑點倍數強制收斂 (2x)
-  | 'naked_single'       // 📐 行列唯餘排除 (Naked Single)
-  | 'hypothesis';        // 🎲 試誤假設 (Branching)
+export type DeductionType =
+  | 'dot_forced_white'
+  | 'dot_forced_black'
+  | 'naked_single'
+  | 'hypothesis';
 
 export interface KropkiDot {
   r1: number;
@@ -31,9 +31,9 @@ export interface KropkiSpec {
   solution: number[][];
   solvingSteps: SolvingStep[];
   inferenceDepth: number;
-  maxForcedChain: number;      // 連續必然推理最大長度
-  isSymmetric180: boolean;     // 180° 中心旋轉對稱
-  pureDeductionRate: number;   // 純邏輯推導佔比 (1.0 代表 100% 無需試誤)
+  maxForcedChain: number;
+  isSymmetric180: boolean;
+  pureDeductionRate: number;
 }
 
 interface TierConfig {
@@ -246,7 +246,6 @@ export class WebKropkiGenerator {
     return solutions;
   }
 
-  // 實時推導合法必然候選列表（供 No-Guess Mode 運行時判定）
   public static getStrictDeductions(
     currentGrid: number[][],
     dots: KropkiDot[],
@@ -254,7 +253,6 @@ export class WebKropkiGenerator {
   ): Map<string, { value: number; type: DeductionType; rationale: string }> {
     const deductions = new Map<string, { value: number; type: DeductionType; rationale: string }>();
 
-    // 1. 圓點約束推導
     for (const d of dots) {
       const v1 = currentGrid[d.r1][d.c1];
       const v2 = currentGrid[d.r2][d.c2];
@@ -284,13 +282,12 @@ export class WebKropkiGenerator {
           deductions.set(`${tr},${tc}`, {
             value: legalVals[0],
             type: d.type === 'white' ? 'dot_forced_white' : 'dot_forced_black',
-            rationale: `由相鄰 ${d.type === 'white' ? '⚪差壹白點' : '⚫雙倍黑點'} 直接收斂唯一值`,
+            rationale: d.type === 'white' ? 'White Dot Diff (+/-1) forced single value' : 'Black Dot Double (2x) forced single value',
           });
         }
       }
     }
 
-    // 2. 行列唯餘排除 (Naked Single)
     for (let r = 0; r < n; r++) {
       for (let c = 0; c < n; c++) {
         if (currentGrid[r][c] === 0 && !deductions.has(`${r},${c}`)) {
@@ -308,7 +305,7 @@ export class WebKropkiGenerator {
             deductions.set(`${r},${c}`, {
               value: rem[0],
               type: 'naked_single',
-              rationale: '行列唯餘排除確認',
+              rationale: 'Row/Col Naked Single elimination',
             });
           }
         }
@@ -318,7 +315,6 @@ export class WebKropkiGenerator {
     return deductions;
   }
 
-  // 靜態全推導過程分析
   private static traceSolvingProcess(
     initialGrid: number[][],
     dots: KropkiDot[],
@@ -336,7 +332,6 @@ export class WebKropkiGenerator {
       const deductions = this.getStrictDeductions(grid, dots, n);
 
       if (deductions.size > 0) {
-        // 取出第一個強制推導步
         const [coord, info] = deductions.entries().next().value;
         const [r, c] = coord.split(',').map(Number);
 
@@ -402,7 +397,6 @@ export class WebKropkiGenerator {
 
       const { depth, steps, maxForcedChain, pureRate } = this.traceSolvingProcess(initialGrid, allDots, n);
 
-      // Master 級硬核驗證：必須保證 100% 純邏輯多米諾骨牌，且強制鏈長度達標
       if (tier === 'master' && (pureRate < 0.95 || maxForcedChain < config.minForcedChain)) {
         continue;
       }
@@ -441,7 +435,6 @@ export class WebKropkiGenerator {
       };
     }
 
-    // 兜底降級防護
     const fallback = this.generateLatinSquare(n);
     const fallbackDots = this.extractDotsStrict(fallback, n);
     return {
