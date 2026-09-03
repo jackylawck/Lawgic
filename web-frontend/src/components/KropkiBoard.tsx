@@ -13,11 +13,16 @@ interface Props {
   tournamentMode?: boolean;
 }
 
+// 將帶有泛型的型別定義移至最頂層，避免 TSX parser 誤判為 JSX 標籤
+type NumberSet = Set<number>;
+type NotesMatrix = NumberSet[][];
+type Coordinate = [number, number];
+
 export function KropkiBoard(props: Props) {
   const { puzzle, puzzleData } = props;
   const actualPuzzle = puzzleData || puzzle;
   const { lang } = useLanguage();
-  const isEn = lang === 'en';
+  const isEn = Boolean(lang === 'en');
   const { recordAttempt, profile, getCompositeCognitiveIndex, exportLongitudinalDataset } = useLearnerProfile();
 
   const spec = (actualPuzzle?.puzzle || actualPuzzle) as unknown as KropkiSpec;
@@ -27,31 +32,34 @@ export function KropkiBoard(props: Props) {
   const solvingSteps = spec?.solvingSteps || [];
 
   const [grid, setGrid] = useState<number[][]>(() => initialGrid.map((r) => [...r]));
-  const [notes, setNotes] = useState<Set<number>[][]>(() =>
-    Array.from({ length: n }, () => Array.from({ length: n }, () => new Set<number>()))
+  
+  // 使用頂層別名，消除組件內部的 <number> 泛型標籤歧義
+  const [notes, setNotes] = useState<NotesMatrix>(() =>
+    Array.from({ length: n }, () => Array.from({ length: n }, () => new Set()))
   );
-  const [selectedCell, setSelectedCell] = useState<[number, number] | null>([0, 0]);
-  const [isCompleted, setIsCompleted] = useState<boolean>(false);
-  const [elapsedMs, setElapsedMs] = useState<number>(0);
-  const [conflictsCount, setConflictsCount] = useState<number>(0);
-  const [showPBModal, setShowPBModal] = useState<boolean>(false);
+  
+  const [selectedCell, setSelectedCell] = useState<Coordinate | null>([0, 0]);
+  const [isCompleted, setIsCompleted] = useState(false);
+  const [elapsedMs, setElapsedMs] = useState(0);
+  const [conflictsCount, setConflictsCount] = useState(0);
+  const [showPBModal, setShowPBModal] = useState(false);
   const [proofSignature, setProofSignature] = useState<string | null>(null);
 
-  const [isNoteMode, setIsNoteMode] = useState<boolean>(false);
-  const [isNoGuessMode, setIsNoGuessMode] = useState<boolean>(true);
+  const [isNoteMode, setIsNoteMode] = useState(false);
+  const [isNoGuessMode, setIsNoGuessMode] = useState(true);
   const [guessWarning, setGuessWarning] = useState<string | null>(null);
 
-  const [hintLevel, setHintLevel] = useState<number>(0);
+  const [hintLevel, setHintLevel] = useState(0);
   const [activeHintStep, setActiveHintStep] = useState<SolvingStep | null>(null);
-  const [boardScale, setBoardScale] = useState<number>(1.0);
+  const [boardScale, setBoardScale] = useState(1.0);
 
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const startTimeRef = useRef<number>(Date.now());
-  const hasRecordedRef = useRef<boolean>(false);
+  const startTimeRef = useRef(Date.now());
+  const hasRecordedRef = useRef(false);
 
   useEffect(() => {
     setGrid(initialGrid.map((r) => [...r]));
-    setNotes(Array.from({ length: n }, () => Array.from({ length: n }, () => new Set<number>())));
+    setNotes(Array.from({ length: n }, () => Array.from({ length: n }, () => new Set())));
     setSelectedCell([0, 0]);
     setIsCompleted(false);
     setElapsedMs(0);
@@ -80,8 +88,8 @@ export function KropkiBoard(props: Props) {
     }
 
     for (let i = 0; i < n; i++) {
-      const rowVals = new Set<number>();
-      const colVals = new Set<number>();
+      const rowVals = new Set();
+      const colVals = new Set();
       for (let j = 0; j < n; j++) {
         rowVals.add(currentGrid[i][j]);
         colVals.add(currentGrid[j][i]);
@@ -361,7 +369,7 @@ export function KropkiBoard(props: Props) {
           {grid.map((row, r) =>
             row.map((val, c) => {
               const isSelected = Boolean(selectedCell && selectedCell[0] === r && selectedCell[1] === c);
-              const isInitial = initialGrid[r][c] !== 0;
+              const isInitial = Boolean(initialGrid[r][c] !== 0);
               const cellNotes = notes[r][c];
               const isHintTarget = Boolean(activeHintStep && activeHintStep.row === r && activeHintStep.col === c);
 
@@ -401,7 +409,7 @@ export function KropkiBoard(props: Props) {
               let cellContent = null;
               if (val !== 0) {
                 cellContent = <span>{val}</span>;
-              } else if (cellNotes.size > 0) {
+              } else if (cellNotes && cellNotes.size > 0) {
                 cellContent = (
                   <div className="absolute inset-0 p-0.5 grid grid-cols-3 gap-0 text-[7px] sm:text-[9px] text-amber-400/90 font-mono items-center justify-items-center">
                     {Array.from({ length: n }, (_, i) => i + 1).map((num) => (
