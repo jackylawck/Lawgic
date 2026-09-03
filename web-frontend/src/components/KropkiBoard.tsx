@@ -13,7 +13,8 @@ interface Props {
   tournamentMode?: boolean;
 }
 
-export const KropkiBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
+export function KropkiBoard(props: Props): React.ReactElement {
+  const { puzzle, puzzleData } = props;
   const actualPuzzle = puzzleData || puzzle;
   const { lang } = useLanguage();
   const isEn = lang === 'en';
@@ -130,9 +131,9 @@ export const KropkiBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
     const firstEntry = deductions.entries().next().value;
     if (!firstEntry) return;
     const [coord, info] = firstEntry;
-    const [rStr, cStr] = coord.split(',');
-    const r = parseInt(rStr, 10);
-    const c = parseInt(cStr, 10);
+    const parts = coord.split(',');
+    const r = parseInt(parts[0], 10);
+    const c = parseInt(parts[1], 10);
 
     setSelectedCell([r, c]);
 
@@ -198,10 +199,11 @@ export const KropkiBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
 
         if (!hasRecordedRef.current && actualPuzzle) {
           hasRecordedRef.current = true;
+          const tierVal: TierKey = (actualPuzzle.tier as TierKey) || 'kids';
           recordAttempt({
             puzzleId: actualPuzzle.id,
             engineType: 'kropki',
-            tier: (actualPuzzle.tier as TierKey) || 'kids',
+            tier: tierVal,
             cognitiveLoad: actualPuzzle.cognitiveLoad || {
               spatial: 0.6,
               numeric: 0.9,
@@ -286,7 +288,7 @@ export const KropkiBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
   const deductionStats = useMemo(() => {
     const forced = solvingSteps.filter((s) => s.type.startsWith('dot_forced')).length;
     const naked = solvingSteps.filter((s) => s.type === 'naked_single').length;
-    const total = forced + naked || 1;
+    const total = forced + naked > 0 ? forced + naked : 1;
     const forcedPercent = Math.round((forced / total) * 100);
     const nakedPercent = 100 - forcedPercent;
     return { forced, naked, forcedPercent, nakedPercent };
@@ -296,9 +298,19 @@ export const KropkiBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
     setShowPBModal(false);
   }, []);
 
+  let modalElement: React.ReactNode = null;
+  if (showPBModal) {
+    modalElement = (
+      <PBCelebrationModal
+        pb={profile.personalBest}
+        onClose={handleClosePBModal}
+        isEn={isEn}
+      />
+    );
+  }
+
   return (
     <div className="flex flex-col items-center justify-center p-2 select-none font-mono">
-      {/* 頂部數據列 */}
       <div className="w-full grid grid-cols-3 gap-1 mb-1.5 text-[9px]">
         <div className="bg-slate-950 border border-slate-800 p-1.5 rounded text-center">
           <div className="text-slate-500 text-[7px]">{isEn ? 'Speed' : '競速'}</div>
@@ -314,7 +326,6 @@ export const KropkiBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
         </div>
       </div>
 
-      {/* 180° 對稱美學標籤 & 縮放控制 */}
       <div className="w-full flex items-center justify-between px-1 mb-1.5">
         <div>
           {spec?.isSymmetric180 && (
@@ -344,7 +355,6 @@ export const KropkiBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
         </div>
       </div>
 
-      {/* 盤面區域 */}
       <div
         className="relative p-2 bg-slate-950 border-2 border-slate-800 rounded-xl shadow-2xl transition-transform duration-150"
         style={{ transform: `scale(${boardScale})`, transformOrigin: 'top center' }}
@@ -421,7 +431,6 @@ export const KropkiBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
         </div>
       </div>
 
-      {/* 3 階提示階梯訊息卡片 */}
       {hintLevel > 0 && activeHintStep && (
         <div className="mt-2.5 p-2 bg-amber-950/70 border border-amber-500/60 rounded-lg text-[8px] text-amber-200 text-center max-w-[min(88vw,44vh)] animate-fade-in">
           <div className="font-bold flex items-center justify-center gap-1 mb-0.5">
@@ -436,9 +445,7 @@ export const KropkiBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
             </div>
           )}
           {hintLevel === 2 && (
-            <div>
-              {activeHintStep.rationale}
-            </div>
+            <div>{activeHintStep.rationale}</div>
           )}
           {hintLevel === 3 && (
             <div className="text-amber-300 font-bold">
@@ -450,14 +457,12 @@ export const KropkiBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
         </div>
       )}
 
-      {/* 無猜測模式警告浮動條 */}
       {guessWarning && (
         <div className="mt-2 px-3 py-1 bg-amber-950/90 border border-amber-500/70 text-amber-300 text-[8px] rounded-lg animate-bounce text-center max-w-[min(88vw,44vh)]">
           {guessWarning}
         </div>
       )}
 
-      {/* 虛擬數字鍵盤 */}
       <div className="flex flex-col gap-1.5 mt-2.5 w-full max-w-[min(88vw,44vh)]">
         <div className="flex gap-1.5">
           {Array.from({ length: n }, (_, i) => i + 1).map((num) => (
@@ -485,7 +490,6 @@ export const KropkiBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
           </button>
         </div>
 
-        {/* 控制功能列 */}
         <div className="flex items-center justify-between px-1">
           <div className="flex gap-1">
             <button
@@ -521,7 +525,6 @@ export const KropkiBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
         </div>
       </div>
 
-      {/* 結算面板 */}
       {isCompleted && (
         <div className="mt-3 p-3 bg-slate-950/95 border border-indigo-500/60 rounded-xl text-center w-[min(88vw,44vh)] shadow-2xl animate-fade-in font-mono">
           <div className="text-emerald-400 font-bold text-xs mb-0.5">KROPKI RESOLVED</div>
@@ -534,7 +537,6 @@ export const KropkiBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
             {isEn ? 'Time' : '耗時'}: {(elapsedMs / 1000).toFixed(2)}s | Gf: IQ {cci.standardIQ}
           </div>
 
-          {/* 思維風格進度條 */}
           <div className="bg-slate-900/60 border border-slate-800 p-2 rounded-lg mb-2 text-left">
             <div className="text-[8px] text-indigo-300 font-bold mb-1 flex justify-between">
               <span>{isEn ? 'Thinking Profile' : '思維風格分析'}</span>
@@ -586,13 +588,7 @@ export const KropkiBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
         </div>
       )}
 
-      {showPBModal && (
-        <PBCelebrationModal
-          pb={profile.personalBest}
-          onClose={handleClosePBModal}
-          isEn={isEn}
-        />
-      )}
+      {modalElement}
     </div>
   );
-};
+}
