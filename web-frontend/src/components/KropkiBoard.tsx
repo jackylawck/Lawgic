@@ -41,7 +41,7 @@ export const KropkiBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
   const [isNoGuessMode, setIsNoGuessMode] = useState<boolean>(true);
   const [guessWarning, setGuessWarning] = useState<string | null>(null);
   
-  // 3 階提示階梯狀態 (Hint Ladder: Level 1 -> Level 2 -> Level 3)
+  // 3 階提示階梯狀態
   const [hintLevel, setHintLevel] = useState<number>(0);
   const [activeHintStep, setActiveHintStep] = useState<SolvingStep | null>(null);
   const [boardScale, setBoardScale] = useState<number>(1.0);
@@ -334,7 +334,7 @@ export const KropkiBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
         </div>
       </div>
 
-      {/* 盤面區域 (支援自適應動態縮放) */}
+      {/* 盤面區域 */}
       <div
         className="relative p-2 bg-slate-950 border-2 border-slate-800 rounded-xl shadow-2xl transition-transform duration-150"
         style={{ transform: `scale(${boardScale})`, transformOrigin: 'top center' }}
@@ -354,25 +354,25 @@ export const KropkiBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
               const cellNotes = notes[r][c];
               const isHintTarget = activeHintStep?.row === r && activeHintStep?.col === c;
 
+              let cellStyle = 'bg-slate-950/70 text-transparent hover:bg-slate-900/50';
+              if (isHintTarget && hintLevel >= 1) {
+                cellStyle = 'bg-amber-500/40 text-amber-200 ring-2 ring-amber-400 animate-pulse z-10';
+              } else if (isSelected) {
+                cellStyle = 'bg-indigo-600/50 text-white ring-2 ring-indigo-400 z-10';
+              } else if (isInitial) {
+                cellStyle = 'bg-slate-800/90 text-cyan-300 font-extrabold';
+              } else if (val !== 0) {
+                cellStyle = 'bg-slate-900/90 text-slate-100';
+              }
+
               return (
                 <div
                   key={`${r}-${c}`}
                   onClick={() => setSelectedCell([r, c])}
-                  className={`relative flex items-center justify-center font-black text-sm sm:text-base rounded-md cursor-pointer transition ${
-                    isHintTarget && hintLevel >= 1
-                      ? 'bg-amber-500/40 text-amber-200 ring-2 ring-amber-400 animate-pulse z-10'
-                      : isSelected
-                      ? 'bg-indigo-600/50 text-white ring-2 ring-indigo-400 z-10'
-                      : isInitial
-                      ? 'bg-slate-800/90 text-cyan-300 font-extrabold'
-                      : val !== 0
-                      ? 'bg-slate-900/90 text-slate-100'
-                      : 'bg-slate-950/70 text-transparent hover:bg-slate-900/50'
-                  }`}
+                  className={`relative flex items-center justify-center font-black text-sm sm:text-base rounded-md cursor-pointer transition ${cellStyle}`}
                 >
-                  {val !== 0 ? (
-                    val
-                  ) : cellNotes.size > 0 ? (
+                  {val !== 0 && val}
+                  {val === 0 && cellNotes.size > 0 && (
                     <div className="absolute inset-0 p-0.5 grid grid-cols-3 gap-0 text-[7px] sm:text-[9px] text-amber-400/90 font-mono items-center justify-items-center">
                       {Array.from({ length: n }, (_, i) => i + 1).map((num) => (
                         <span key={num} className="leading-none">
@@ -380,8 +380,6 @@ export const KropkiBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
                         </span>
                       ))}
                     </div>
-                  ) : (
-                    ''
                   )}
 
                   {/* 右側圓點 */}
@@ -484,7 +482,7 @@ export const KropkiBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
           </button>
         </div>
 
-        {/* 控制功能列：筆記、無猜測與因果提示階梯 */}
+        {/* 控制功能列 */}
         <div className="flex items-center justify-between px-1">
           <div className="flex gap-1">
             <button
@@ -586,7 +584,7 @@ export const KropkiBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
       )}
 
       {showPBModal && (
-        <PBCelebrationModal pb={profile.personalBest} onClose={() => setShowPBModal(false)} isEn={isEn} />
+        <PBCelebrationModal pb={profile.personalBest} onClose={() => setShowPBModal(false)} />
       )}
     </div>
   );
