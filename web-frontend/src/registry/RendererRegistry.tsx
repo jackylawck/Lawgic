@@ -5,14 +5,24 @@ import { MazeBoard } from '../components/MazeBoard';
 import { SudokuBoard } from '../components/SudokuBoard';
 import { SkyscraperBoard } from '../components/SkyscraperBoard';
 import { HashiBoard } from '../components/HashiBoard';
+import { KropkiBoard } from '../components/KropkiBoard';
+import { SlitherlinkBoard } from '../components/SlitherlinkBoard';
+import { TentsBoard } from '../components/TentsBoard';
+import { LightUpBoard } from '../components/LightUpBoard';
 
-// 核心四大神作級引擎映射表 (支援引擎別名容錯)
+// 8 大世界級神作級引擎映射表 (支援引擎別名容錯)
 export const RENDERERS: Record<string, React.ComponentType<any>> = {
   maze: MazeBoard,
   sudoku: SudokuBoard,
   skyscraper: SkyscraperBoard,
   hashi: HashiBoard,
   hashiwokakero: HashiBoard, // 別名相容
+  kropki: KropkiBoard,
+  slitherlink: SlitherlinkBoard,
+  tents: TentsBoard,
+  tentstrees: TentsBoard,    // 別名相容
+  lightup: LightUpBoard,
+  akari: LightUpBoard,       // 別名相容
 };
 
 interface PuzzleRendererProps {
