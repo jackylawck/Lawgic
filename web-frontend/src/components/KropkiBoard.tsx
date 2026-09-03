@@ -356,4 +356,230 @@ export const KropkiBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
 
               let cellStyle = 'bg-slate-950/70 text-transparent hover:bg-slate-900/50';
               if (isHintTarget && hintLevel >= 1) {
-                cellStyle
+                cellStyle = 'bg-amber-500/40 text-amber-200 ring-2 ring-amber-400 animate-pulse z-10';
+              } else if (isSelected) {
+                cellStyle = 'bg-indigo-600/50 text-white ring-2 ring-indigo-400 z-10';
+              } else if (isInitial) {
+                cellStyle = 'bg-slate-800/90 text-cyan-300 font-extrabold';
+              } else if (val !== 0) {
+                cellStyle = 'bg-slate-900/90 text-slate-100';
+              }
+
+              const rightDot = c < n - 1 ? dots.find((d) => d.r1 === r && d.c1 === c && d.r2 === r && d.c2 === c + 1) : null;
+              const bottomDot = r < n - 1 ? dots.find((d) => d.r1 === r && d.c1 === c && d.r2 === r + 1 && d.c2 === c) : null;
+
+              return (
+                <div
+                  key={`${r}-${c}`}
+                  onClick={() => setSelectedCell([r, c])}
+                  className={`relative flex items-center justify-center font-black text-sm sm:text-base rounded-md cursor-pointer transition ${cellStyle}`}
+                >
+                  {val !== 0 ? (
+                    val
+                  ) : cellNotes.size > 0 ? (
+                    <div className="absolute inset-0 p-0.5 grid grid-cols-3 gap-0 text-[7px] sm:text-[9px] text-amber-400/90 font-mono items-center justify-items-center">
+                      {Array.from({ length: n }, (_, i) => i + 1).map((num) => (
+                        <span key={num} className="leading-none">
+                          {cellNotes.has(num) ? num : ''}
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
+
+                  {rightDot && (
+                    <span
+                      className={`absolute -right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 rounded-full z-20 border-2 ${
+                        rightDot.type === 'white'
+                          ? 'bg-white border-slate-900 shadow-[0_0_8px_rgba(255,255,255,0.9)]'
+                          : 'bg-black border-slate-400 shadow-[0_0_8px_rgba(0,0,0,0.9)]'
+                      }`}
+                    />
+                  )}
+
+                  {bottomDot && (
+                    <span
+                      className={`absolute left-1/2 -bottom-2 -translate-x-1/2 w-3.5 h-3.5 rounded-full z-20 border-2 ${
+                        bottomDot.type === 'white'
+                          ? 'bg-white border-slate-900 shadow-[0_0_8px_rgba(255,255,255,0.9)]'
+                          : 'bg-black border-slate-400 shadow-[0_0_8px_rgba(0,0,0,0.9)]'
+                      }`}
+                    />
+                  )}
+                </div>
+              );
+            })
+          )}
+        </div>
+      </div>
+
+      {/* 3 階提示階梯訊息卡片 */}
+      {hintLevel > 0 && activeHintStep && (
+        <div className="mt-2.5 p-2 bg-amber-950/70 border border-amber-500/60 rounded-lg text-[8px] text-amber-200 text-center max-w-[min(88vw,44vh)] animate-fade-in">
+          <div className="font-bold flex items-center justify-center gap-1 mb-0.5">
+            <span>{isEn ? 'Hint Ladder' : '因果思考提示'}</span>
+            <span className="text-amber-400">Level {hintLevel}/3</span>
+          </div>
+          {hintLevel === 1 && (
+            <div>
+              {isEn
+                ? `Focus on Cell (${activeHintStep.row + 1}, ${activeHintStep.col + 1}). Check its neighbors!`
+                : `請觀察座標格 (${activeHintStep.row + 1}, ${activeHintStep.col + 1}) 與周邊約束！`}
+            </div>
+          )}
+          {hintLevel === 2 && (
+            <div>
+              {activeHintStep.rationale}
+            </div>
+          )}
+          {hintLevel === 3 && (
+            <div className="text-amber-300 font-bold">
+              {isEn
+                ? `Decisive deduction: The unique valid value is ${activeHintStep.value}!`
+                : `因果唯一收斂：該格數值為 ${activeHintStep.value}，請親手填入！`}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* 無猜測模式警告浮動條 */}
+      {guessWarning && (
+        <div className="mt-2 px-3 py-1 bg-amber-950/90 border border-amber-500/70 text-amber-300 text-[8px] rounded-lg animate-bounce text-center max-w-[min(88vw,44vh)]">
+          {guessWarning}
+        </div>
+      )}
+
+      {/* 虛擬數字鍵盤 */}
+      <div className="flex flex-col gap-1.5 mt-2.5 w-full max-w-[min(88vw,44vh)]">
+        <div className="flex gap-1.5">
+          {Array.from({ length: n }, (_, i) => i + 1).map((num) => (
+            <button
+              key={num}
+              onMouseDown={() => handleTouchStart(num)}
+              onMouseUp={() => handleTouchEnd(num)}
+              onTouchStart={() => handleTouchStart(num)}
+              onTouchEnd={() => handleTouchEnd(num)}
+              className={`flex-1 py-2 border font-bold text-xs sm:text-sm rounded-lg transition active:scale-95 ${
+                isNoteMode
+                  ? 'bg-amber-950/40 border-amber-600/70 text-amber-300'
+                  : 'bg-slate-900 border-slate-700 hover:bg-slate-800 text-cyan-300'
+              }`}
+            >
+              {num}
+            </button>
+          ))}
+          <button
+            onClick={() => handleInputNumber(0)}
+            className="px-2.5 py-2 bg-rose-950/60 hover:bg-rose-900 border border-rose-800 text-rose-300 font-bold text-xs rounded-lg transition active:scale-95"
+            title={isEn ? 'Erase' : '清除'}
+          >
+            DEL
+          </button>
+        </div>
+
+        {/* 控制功能列 */}
+        <div className="flex items-center justify-between px-1">
+          <div className="flex gap-1">
+            <button
+              onClick={() => setIsNoteMode((prev) => !prev)}
+              className={`px-2 py-1 text-[8px] font-bold rounded-md border transition ${
+                isNoteMode
+                  ? 'bg-amber-500/20 border-amber-400 text-amber-300 shadow-[0_0_8px_rgba(245,158,11,0.3)]'
+                  : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              {isNoteMode ? '筆記 ON' : '筆記'}
+            </button>
+            <button
+              onClick={() => setIsNoGuessMode((prev) => !prev)}
+              className={`px-2 py-1 text-[8px] font-bold rounded-md border transition ${
+                isNoGuessMode
+                  ? 'bg-emerald-500/20 border-emerald-400 text-emerald-300 shadow-[0_0_8px_rgba(16,185,129,0.3)]'
+                  : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              {isNoGuessMode ? '無猜測 ON' : '無猜測'}
+            </button>
+            <button
+              onClick={handleRequestHint}
+              className="px-2 py-1 text-[8px] font-bold rounded-md border bg-slate-900 border-amber-500/50 text-amber-300 hover:bg-amber-950/40 transition flex items-center gap-0.5"
+            >
+              {isEn ? 'Hint' : '提示'}
+            </button>
+          </div>
+          <span className="text-[7px] text-slate-500">
+            {isEn ? 'Key: H (Hint), N (Note)' : '快捷鍵：H提示 / N筆記'}
+          </span>
+        </div>
+      </div>
+
+      {/* 結算面板 */}
+      {isCompleted && (
+        <div className="mt-3 p-3 bg-slate-950/95 border border-indigo-500/60 rounded-xl text-center w-[min(88vw,44vh)] shadow-2xl animate-fade-in font-mono">
+          <div className="text-emerald-400 font-bold text-xs mb-0.5">KROPKI RESOLVED</div>
+          {isNoGuessMode && (
+            <div className="text-[8px] text-amber-300 font-bold mb-1">
+              {isEn ? 'Pure Logic Mastery (Zero Guessing)' : '傳奇純邏輯通關（零猜測認證）'}
+            </div>
+          )}
+          <div className="text-[9px] text-slate-400 mb-2">
+            {isEn ? 'Time' : '耗時'}: {(elapsedMs / 1000).toFixed(2)}s | Gf: IQ {cci.standardIQ}
+          </div>
+
+          {/* 思維風格進度條 */}
+          <div className="bg-slate-900/60 border border-slate-800 p-2 rounded-lg mb-2 text-left">
+            <div className="text-[8px] text-indigo-300 font-bold mb-1 flex justify-between">
+              <span>{isEn ? 'Thinking Profile' : '思維風格分析'}</span>
+              <span>{deductionStats.forcedPercent}% {isEn ? 'Dot Deduction' : '圓點因果推導'}</span>
+            </div>
+            <div className="w-full h-2 bg-slate-800 rounded-full overflow-hidden flex">
+              <div
+                className="bg-indigo-500 h-full transition-all duration-500"
+                style={{ width: `${deductionStats.forcedPercent}%` }}
+              />
+              <div
+                className="bg-cyan-500 h-full transition-all duration-500"
+                style={{ width: `${deductionStats.nakedPercent}%` }}
+              />
+            </div>
+            <div className="flex justify-between text-[7px] text-slate-400 mt-1">
+              <span>{isEn ? 'Dot' : '圓點'}: {deductionStats.forced} {isEn ? 'steps' : '步'}</span>
+              <span>{isEn ? 'Elimination' : '唯餘'}: {deductionStats.naked} {isEn ? '步'}</span>
+            </div>
+
+            <div className="mt-2 pt-1.5 border-t border-slate-800 flex justify-between items-center text-[7.5px]">
+              <span className="text-slate-400">{isEn ? 'Max Forced Domino Chain' : '最長多米諾必然鏈'}:</span>
+              <span className="text-cyan-300 font-bold">
+                {spec?.maxForcedChain || deductionStats.forced} {isEn ? 'consecutive steps' : '步連鎖推導'}
+              </span>
+            </div>
+          </div>
+
+          <div className="bg-slate-900/40 p-2 rounded-lg border border-slate-800 flex flex-col items-center mb-2">
+            <CognitiveRadarChart dimensions={profile.cognitiveDimensions} size={130} />
+          </div>
+
+          <div className="flex gap-1.5">
+            <button
+              onClick={exportLongitudinalDataset}
+              className="flex-1 py-1.5 bg-slate-900 hover:bg-slate-800 border border-cyan-600/50 text-cyan-300 text-[8px] font-bold rounded-lg transition"
+            >
+              {isEn ? 'Export Data' : '匯出數據'}
+            </button>
+          </div>
+
+          {proofSignature && (
+            <div className="mt-2 p-1.5 bg-slate-900 border border-slate-800 rounded text-left">
+              <div className="text-[6.5px] font-mono text-cyan-400/80 break-all select-all">
+                {proofSignature}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {showPBModal && (
+        <PBCelebrationModal pb={profile.personalBest} onClose={handleClosePBModal} isEn={isEn} />
+      )}
+    </div>
+  );
+};
