@@ -1,4 +1,4 @@
-# Lawgic 羅輯・遊戲 (Lawgic Logic Games & Arena)
+# Lawgic 羅輯・遊戲 (Lawgic Logic Games)
 
 <p align="center">
   <img src="web-frontend/public/Lawgic192icon.png" width="96" height="96" alt="Lawgic Logo" />
