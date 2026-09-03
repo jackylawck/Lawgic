@@ -232,10 +232,10 @@ export class WebLightUpGenerator {
             deductions.set(`${nr},${nc}`, {
               r: nr, c: nc, state: 2,
               type: 'zero_black_cross',
-              rationale: `黑塊線索為 0，周邊 4 格絕不可放燈泡`,
+              rationale: '黑塊線索為 0，周邊 4 格絕不可放燈泡',
               humanReadable: {
-                zh: `黑塊數字為 0，代表周圍 4 個方向完全不能有燈泡，全數標記為防護點 •！`,
-                en: `Clue 0 forbids any lights nearby; mark with protective dot •!`,
+                zh: '黑塊數字為 0，代表周圍 4 個方向完全不能有燈泡，全數標記為防護點 •！',
+                en: 'Clue 0 forbids any lights nearby; mark with protective dot •!',
               },
             });
           }
@@ -253,10 +253,10 @@ export class WebLightUpGenerator {
               deductions.set(`${ir},${ic}`, {
                 r: ir, c: ic, state: 2,
                 type: 'ray_no_clash',
-                rationale: `處於現有燈泡的光線上，禁止再放燈泡`,
+                rationale: '處於現有燈泡的光線上，禁止再放燈泡',
                 humanReadable: {
-                  zh: `此格已經被現有燈泡的光束照亮，為防光線相互照射，此處不可再放燈！`,
-                  en: `Already illuminated by an existing light; no additional bulbs allowed in this ray line!`,
+                  zh: '此格已經被現有燈泡的光束照亮，為防光線相互照射，此處不可再放燈！',
+                  en: 'Already illuminated by an existing light; no additional bulbs allowed in this ray line!',
                 },
               });
             }
@@ -326,10 +326,10 @@ export class WebLightUpGenerator {
                   deductions.set(`${farTarget[0]},${farTarget[1]}`, {
                     r: farTarget[0], c: farTarget[1], state: 1,
                     type: 'adjacent_clue_xor',
-                    rationale: `相鄰 1-2 黑塊組合互斥定式，遠側外翼必然放燈`,
+                    rationale: '相鄰 1-2 黑塊組合互斥定式，遠側外翼必然放燈',
                     humanReadable: {
-                      zh: `相鄰的 1 與 2 產生共用邊互斥：因為 1 限制了中間區域只能有 1 頂燈泡，所以 2 遠側的外翼必須放置燈泡 💡！`,
-                      en: `Adjacent 1-2 pair XOR: Since 1 limits the shared zone to 1 light, 2's far outer wing must have a light 💡!`,
+                      zh: '相鄰的 1 與 2 產生共用邊互斥：因為 1 限制了中間區域只能有 1 頂燈泡，所以 2 遠側的外翼必須放置燈泡 💡！',
+                      en: 'Adjacent 1-2 pair XOR: Since 1 limits the shared zone to 1 light, 2\'s far outer wing must have a light 💡!',
                     },
                   });
                 }
@@ -482,7 +482,6 @@ export class WebLightUpGenerator {
       const { blackBlocks, solutionBulbs } = groundTruth;
       const { steps, maxForcedChain, pureRate } = this.traceSolvingProcess(rows, cols, blackBlocks);
 
-      // 傳奇級要求更高的鏈長度與純邏輯佔比
       if ((tier === 'master' || tier === 'legendary') && (maxForcedChain < minForcedChain || pureRate < 0.88)) {
         continue;
       }
@@ -493,7 +492,9 @@ export class WebLightUpGenerator {
 
       return {
         id: puzzleId,
-        tier: tier as TierKey,
+        category: 'spatial_logic',
+        engine_type: 'lightup',
+        tier: (tier === 'legendary' ? 'master' : tier) as TierKey,
         checksum: `LIGHTUP_${rows}x${cols}_${tier.toUpperCase()}_${Date.now().toString(36)}`,
         puzzle: {
           rows,
@@ -529,7 +530,9 @@ export class WebLightUpGenerator {
     ];
     return {
       id: `lightup_${tier}_fallback_${Date.now()}`,
-      tier: tier as TierKey,
+      category: 'spatial_logic',
+      engine_type: 'lightup',
+      tier: (tier === 'legendary' ? 'master' : tier) as TierKey,
       checksum: `LIGHTUP_FALLBACK_${rows}x${cols}`,
       puzzle: {
         rows, cols,
