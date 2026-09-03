@@ -8,6 +8,7 @@ import { CognitiveRadarChart } from './CognitiveRadarChart';
 import { PBCelebrationModal } from './PBCelebrationModal';
 import { TournamentSubmissionModal } from './TournamentSubmissionModal';
 import { getEnvironmentFingerprint, calculateInfractionScore } from '../utils/tournamentSecurity';
+import { SkyscraperHintStep } from '../engines/skyscraperGenerator';
 
 interface Props {
   puzzleData?: PuzzleEntity;
@@ -38,13 +39,16 @@ export const SkyscraperBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamen
   const spec = actualPuzzle?.puzzle as any;
   const size: number = spec?.size || 4;
   const clues = spec?.clues || { top: [], bottom: [], left: [], right: [] };
+  const hints: SkyscraperHintStep[] = useMemo(() => spec?.hints || [], [spec]);
+  const solutionGrid = useMemo(() => (actualPuzzle?.solution as number[][]) || [], [actualPuzzle]);
+
   const metrics = (actualPuzzle?.metrics as any) || {};
   const theoryTime = metrics.estimated_time_sec || 120;
   const currentTier = (actualPuzzle?.tier as TierKey) || 'kids';
   const standardTimeLimit = size === 4 ? 360 : 540;
 
   const benchmarkData = useMemo(() => {
-    return getBenchmarkMetrics('PerspectiveDeduction', theoryTime);
+    return getBenchmarkMetrics('PerspectiveDeduction', theoryTime, 'skyscraper');
   }, [getBenchmarkMetrics, theoryTime]);
 
   const initialGrid = useMemo(() => {
@@ -57,6 +61,7 @@ export const SkyscraperBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamen
   const [grid, setGrid] = useState<number[][]>(initialGrid);
   const [selected, setSelected] = useState<[number, number] | null>(null);
   const [isCompleted, setIsCompleted] = useState<boolean>(false);
+  const [isResigned, setIsResigned] = useState<boolean>(false);
   const [isTimedOut, setIsTimedOut] = useState<boolean>(false);
   const [elapsedSec, setElapsedSec] = useState<number>(0);
   const [showPBModal, setShowPBModal] = useState<boolean>(false);
@@ -64,6 +69,10 @@ export const SkyscraperBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamen
   const [proofSignature, setProofSignature] = useState<string | null>(null);
   const [violationAlert, setViolationAlert] = useState<string | null>(null);
   const [bookmarkToast, setBookmarkToast] = useState<string | null>(null);
+
+  // 提示狀態
+  const [hintLevel, setHintLevel] = useState<number>(0);
+  const [activeHintText, setActiveHintText] = useState<string | null>(null);
 
   const tabSwitchesRef = useRef<number>(0);
   const startTimeRef = useRef<number>(Date.now());
@@ -74,7 +83,7 @@ export const SkyscraperBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamen
 
   // 防作弊偵測
   useEffect(() => {
-    if (!isAssessmentMode || isCompleted || isTimedOut) return;
+    if (!isAssessmentMode || isCompleted || isTimedOut || isResigned) return;
 
     const handleVisibility = () => {
       if (document.hidden) {
@@ -86,13 +95,13 @@ export const SkyscraperBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamen
 
     document.addEventListener('visibilitychange', handleVisibility);
     return () => document.removeEventListener('visibilitychange', handleVisibility);
-  }, [isAssessmentMode, isCompleted, isTimedOut, isEn]);
+  }, [isAssessmentMode, isCompleted, isTimedOut, isResigned, isEn]);
 
-  // 初始化與書籤恢復
+  // 初始化與書籤恢復（修正為通用 boardState）
   useEffect(() => {
     const bookmark = profile.bookmarks[actualPuzzle?.id || ''];
-    if (bookmark) {
-      setGrid(bookmark.savedBridges.length > 0 ? (bookmark.savedBridges as any) : initialGrid);
+    if (bookmark && bookmark.boardState) {
+      setGrid(Array.isArray(bookmark.boardState) && bookmark.boardState.length > 0 ? bookmark.boardState : initialGrid);
       setElapsedSec(bookmark.elapsedSec);
       setBookmarkToast(isEn ? 'Restored bookmarked progress' : '已自動恢復上次暫存進度');
       setTimeout(() => setBookmarkToast(null), 2500);
@@ -103,9 +112,12 @@ export const SkyscraperBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamen
 
     setSelected(null);
     setIsCompleted(false);
+    setIsResigned(false);
     setIsTimedOut(false);
     setProofSignature(null);
     setViolationAlert(null);
+    setHintLevel(0);
+    setActiveHintText(null);
     tabSwitchesRef.current = 0;
     startTimeRef.current = Date.now() - (bookmark?.elapsedSec ? bookmark.elapsedSec * 1000 : 0);
     conflictCountRef.current = 0;
@@ -217,7 +229,7 @@ export const SkyscraperBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamen
 
   // 計時與超時判定
   useEffect(() => {
-    if (isCompleted || isTimedOut) return;
+    if (isCompleted || isTimedOut || isResigned) return;
     const timer = setInterval(() => {
       const currentElapsed = Math.floor((Date.now() - startTimeRef.current) / 1000);
       setElapsedSec(currentElapsed);
@@ -273,7 +285,7 @@ export const SkyscraperBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamen
       }
     }, 1000);
     return () => clearInterval(timer);
-  }, [isCompleted, isTimedOut, isAssessmentMode, standardTimeLimit, actualPuzzle, currentTier, recordAttempt, size, grid, detectedStrategy]);
+  }, [isCompleted, isTimedOut, isResigned, isAssessmentMode, standardTimeLimit, actualPuzzle, currentTier, recordAttempt, size, grid, detectedStrategy]);
 
   // 勝利校驗
   const checkVictory = useCallback(
@@ -313,7 +325,7 @@ export const SkyscraperBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamen
             conflictsCount: conflictCountRef.current,
             technique: detectedStrategy,
             partialCompletionRatio: 1.0,
-            isPureClear: conflictCountRef.current === 0,
+            isPureClear: conflictCountRef.current === 0 && hintLevel === 0,
           });
 
           try {
@@ -341,33 +353,81 @@ export const SkyscraperBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamen
         }
       }
     },
-    [actualPuzzle, size, currentTier, recordAttempt, removeBookmark, detectedStrategy, benchmarkData.isNewPB]
+    [actualPuzzle, size, currentTier, recordAttempt, removeBookmark, detectedStrategy, hintLevel, benchmarkData.isNewPB]
   );
 
-  // 暫存此局
+  // 暫存此局進度（更新為 boardState）
   const handleBookmarkPuzzle = useCallback(() => {
-    if (isCompleted || isTimedOut || !actualPuzzle) return;
+    if (isCompleted || isTimedOut || isResigned || !actualPuzzle) return;
     saveBookmark({
       puzzleId: actualPuzzle.id,
       engineType: 'skyscraper',
       tier: currentTier,
-      savedBridges: grid as any,
+      boardState: grid,
       elapsedSec,
       bookmarkedAt: new Date().toISOString(),
     });
     setBookmarkToast(isEn ? '📌 Progress bookmarked for later' : '📌 已暫存此局進度，可隨時接續');
     setTimeout(() => setBookmarkToast(null), 2500);
     if (navigator.vibrate) navigator.vibrate([25, 40]);
-  }, [isCompleted, isTimedOut, actualPuzzle, currentTier, grid, elapsedSec, saveBookmark, isEn]);
+  }, [isCompleted, isTimedOut, isResigned, actualPuzzle, currentTier, grid, elapsedSec, saveBookmark, isEn]);
+
+  // 優雅投降並覆盤
+  const handleGracefulResign = useCallback(() => {
+    if (isCompleted || isTimedOut || isResigned || !solutionGrid.length) return;
+    if (navigator.vibrate) navigator.vibrate([40, 60, 40]);
+
+    setIsResigned(true);
+    hasRecordedRef.current = true;
+    removeBookmark(actualPuzzle?.id || '');
+
+    setGrid(solutionGrid.map((row) => [...row]));
+
+    const timeSpent = Math.max(1, Math.round((Date.now() - startTimeRef.current) / 1000));
+    recordAttempt({
+      puzzleId: actualPuzzle?.id || 'skyscraper',
+      engineType: 'skyscraper',
+      tier: currentTier,
+      cognitiveLoad: actualPuzzle?.cognitiveLoad || {
+        spatial: 0.85,
+        numeric: 0.4,
+        workingMemory: 0.8,
+        inhibition: 0.6,
+      },
+      isSuccess: false,
+      timeSpentSec: timeSpent,
+      conflictsCount: conflictCountRef.current,
+      technique: detectedStrategy,
+      partialCompletionRatio: 0.5,
+      isPureClear: false,
+    });
+  }, [isCompleted, isTimedOut, isResigned, solutionGrid, actualPuzzle, currentTier, conflictCountRef, detectedStrategy, recordAttempt, removeBookmark]);
+
+  // 漸進式三階提示觸發
+  const triggerHintLadder = () => {
+    if (hints.length === 0 || isCompleted || isTimedOut || isResigned) return;
+
+    const nextLevel = Math.min(3, hintLevel + 1);
+    const hintData = hints.find((h) => h.level === nextLevel) || hints[hints.length - 1];
+
+    setHintLevel(nextLevel);
+    setActiveHintText(isEn ? hintData.messageEn : hintData.messageZh);
+
+    if (hintData.row !== undefined && hintData.col !== undefined) {
+      setSelected([hintData.row, hintData.col]);
+    }
+
+    if (navigator.vibrate) navigator.vibrate(25);
+  };
 
   const handleCellClick = (r: number, c: number) => {
-    if (isCompleted || isTimedOut || initialGrid[r][c] !== 0) return;
+    if (isCompleted || isTimedOut || isResigned || initialGrid[r][c] !== 0) return;
     setSelected([r, c]);
     if (navigator.vibrate) navigator.vibrate(12);
   };
 
   const handleNumberInput = (num: number) => {
-    if (!selected || isCompleted || isTimedOut) return;
+    if (!selected || isCompleted || isTimedOut || isResigned) return;
     const [r, c] = selected;
     if (initialGrid[r][c] !== 0) return;
 
@@ -391,12 +451,21 @@ export const SkyscraperBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamen
     const nextGrid = grid.map((row) => [...row]);
     nextGrid[r][c] = num;
     setGrid(nextGrid);
+
+    // 若第三階提示引導的格子手動填入正確值，自動重置提示條
+    const currentHint = hints.find((h) => h.level === 3);
+    if (hintLevel === 3 && currentHint && currentHint.row === r && currentHint.col === c && num === currentHint.targetNum) {
+      setHintLevel(0);
+      setActiveHintText(isEn ? '✨ Strategic step confirmed!' : '✨ 視線遮擋推理已由您手動確認！');
+      setTimeout(() => setActiveHintText(null), 3000);
+    }
+
     checkVictory(nextGrid);
   };
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (isCompleted || isTimedOut || !selected) return;
+      if (isCompleted || isTimedOut || isResigned || !selected) return;
       const num = parseInt(e.key, 10);
       if (!isNaN(num) && num >= 1 && num <= size) {
         handleNumberInput(num);
@@ -406,7 +475,11 @@ export const SkyscraperBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamen
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selected, isCompleted, isTimedOut, size, grid]);
+  }, [selected, isCompleted, isTimedOut, isResigned, size, grid]);
+
+  const handleNavigateTargetGame = (gameId: string) => {
+    window.dispatchEvent(new CustomEvent('logicore:navigate-game', { detail: { gameId } }));
+  };
 
   const cci = useMemo(() => getCompositeCognitiveIndex(), [getCompositeCognitiveIndex, isCompleted]);
   const remainingTime = Math.max(0, standardTimeLimit - elapsedSec);
@@ -449,13 +522,33 @@ export const SkyscraperBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamen
         </div>
 
         <div className="flex items-center gap-1.5">
-          {!isCompleted && !isTimedOut && (
+          {!isCompleted && !isTimedOut && !isResigned && (
             <button
               onClick={handleBookmarkPuzzle}
               className="px-1.5 py-0.5 bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-400 text-[7px] rounded transition"
               title={isEn ? 'Bookmark progress' : '暫存此局進度'}
             >
               📌 {isEn ? 'Save' : '暫存'}
+            </button>
+          )}
+
+          {!isCompleted && !isTimedOut && !isResigned && (
+            <button
+              onClick={handleGracefulResign}
+              className="px-1.5 py-0.5 bg-slate-900 hover:bg-rose-950/60 border border-slate-700 hover:border-rose-700 text-slate-400 hover:text-rose-300 text-[7px] rounded transition"
+              title={isEn ? 'Resign & Reveal Solution' : '優雅投降並覆盤官方解答'}
+            >
+              🕊️ {isEn ? 'Resign' : '投降'}
+            </button>
+          )}
+
+          {!isCompleted && !isTimedOut && !isResigned && hints.length > 0 && (
+            <button
+              onClick={triggerHintLadder}
+              className="px-2 py-0.5 bg-amber-950 hover:bg-amber-900 border border-amber-500 text-amber-300 text-[7px] font-bold rounded flex items-center gap-1 transition shadow active:scale-95"
+            >
+              <span>💡</span>
+              <span>{hintLevel === 0 ? (isEn ? 'Hint 1' : '提示一') : hintLevel === 1 ? (isEn ? 'Hint 2' : '提示二') : (isEn ? 'Hint 3' : '提示三')}</span>
             </button>
           )}
 
@@ -477,9 +570,22 @@ export const SkyscraperBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamen
         </div>
       </div>
 
+      {/* 提示訊息橫條 */}
+      {activeHintText && (
+        <div className="w-[min(90vw,46vh)] bg-amber-950/90 border border-amber-500 text-amber-200 text-[7.5px] px-2 py-1.5 rounded-lg mb-1 animate-fade-in flex items-start justify-between gap-1 shadow-lg">
+          <div className="flex items-start gap-1">
+            <span className="text-amber-400 font-bold">L{hintLevel}</span>
+            <span className="leading-snug">{activeHintText}</span>
+          </div>
+          <button onClick={() => setActiveHintText(null)} className="text-amber-400 shrink-0 font-bold ml-1">✕</button>
+        </div>
+      )}
+
       {/* 棋盤主體：比例嚴格自適應網格 */}
       <div
-        className="relative bg-slate-950 border border-slate-800 rounded-xl shadow-2xl p-2.5 flex flex-col items-center justify-center"
+        className={`relative bg-slate-950 border rounded-xl shadow-2xl p-2.5 flex flex-col items-center justify-center transition-colors ${
+          isResigned ? 'border-rose-900/60 bg-rose-950/20' : 'border-slate-800'
+        }`}
         style={{ width: 'min(90vw, 46vh)', height: 'min(90vw, 46vh)' }}
       >
         {/* 上方線索 */}
@@ -536,13 +642,18 @@ export const SkyscraperBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamen
                   const isSelected = selected && selected[0] === rIdx && selected[1] === cIdx;
                   const isGiven = initialGrid[rIdx][cIdx] !== 0;
                   const isDuplicate = duplicateConflictSet.has(`${rIdx},${cIdx}`);
+                  const isHintTarget = hintLevel >= 1 && hints[hintLevel - 1]?.row === rIdx && hints[hintLevel - 1]?.col === cIdx;
 
                   return (
                     <button
                       key={cIdx}
                       onClick={() => handleCellClick(rIdx, cIdx)}
                       className={`w-full h-full flex items-center justify-center font-bold text-xs sm:text-base rounded-lg border transition-all ${
-                        isSelected
+                        isResigned
+                          ? 'bg-rose-950 border-rose-600 text-rose-200'
+                          : isHintTarget
+                          ? 'bg-amber-600 border-amber-300 text-white ring-2 ring-amber-400 animate-pulse z-20'
+                          : isSelected
                           ? 'bg-indigo-600 border-indigo-300 text-white ring-2 ring-indigo-400 z-10'
                           : isDuplicate
                           ? 'bg-rose-950/80 border-rose-500 text-rose-300 animate-pulse'
@@ -605,7 +716,7 @@ export const SkyscraperBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamen
       </div>
 
       {/* 數字按鍵盤 */}
-      {!isCompleted && !isTimedOut && (
+      {!isCompleted && !isTimedOut && !isResigned && (
         <div className="flex gap-1.5 mt-2.5 justify-center w-[min(90vw,46vh)]">
           {Array.from({ length: size }, (_, i) => i + 1).map((num) => (
             <button
@@ -649,7 +760,7 @@ export const SkyscraperBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamen
       )}
 
       {/* 臨床測量級空間認知通關反思面板 */}
-      {isCompleted && (
+      {(isCompleted || isResigned) && (
         <div className="mt-3 p-3 bg-slate-950/95 border border-indigo-500/60 rounded-xl text-center w-[min(90vw,46vh)] shadow-2xl animate-fade-in font-mono">
           <div className="flex items-center justify-between border-b border-slate-800 pb-1.5 mb-2">
             <div className="text-left">
@@ -660,7 +771,11 @@ export const SkyscraperBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamen
                 </span>
               </div>
               <div className="text-xs text-indigo-300 font-bold">
-                {detectedStrategy === 'MentalRotator' ? '🌀 Mental Rotation Active' : '📐 Systematic Projection'}
+                {isResigned
+                  ? '🕊️ Resigned (Official Solution Revealed)'
+                  : detectedStrategy === 'MentalRotator'
+                  ? '🌀 Mental Rotation Active'
+                  : '📐 Systematic Projection'}
               </div>
             </div>
 
@@ -711,6 +826,19 @@ export const SkyscraperBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamen
               previousDimensions={profile.previousCognitiveDimensions}
               size={150}
             />
+          </div>
+
+          {/* 弱點導引跳轉 */}
+          <div className="bg-indigo-950/40 p-2 rounded-lg border border-indigo-800/60 text-left mb-2 flex items-center justify-between gap-2">
+            <div className="flex-1 text-[8px] text-slate-300">
+              {isEn ? benchmarkData.recommendedFocus.reasonEn : benchmarkData.recommendedFocus.reasonZh}
+            </div>
+            <button
+              onClick={() => handleNavigateTargetGame(benchmarkData.recommendedFocus.targetGame)}
+              className="shrink-0 px-2 py-1 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[8px] rounded transition active:scale-95"
+            >
+              ➜ {isEn ? 'Train' : '立即訓練'}
+            </button>
           </div>
 
           {/* 操作按鈕群：縱向數據匯出 + 賽事提交入口 */}
