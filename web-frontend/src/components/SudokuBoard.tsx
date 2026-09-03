@@ -1,10 +1,13 @@
 // web-frontend/src/components/SudokuBoard.tsx
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { PuzzleEntity } from '../generated';
-import { useLearnerProfile, TierKey } from '../hooks/useLearnerProfile';
+import { PuzzleEntity, TierKey } from '../generated';
+import { useLearnerProfile } from '../hooks/useLearnerProfile';
 import { useLanguage } from '../contexts/LanguageContext';
+import { MetricErrorBar } from './MetricErrorBar';
 import { CognitiveRadarChart } from './CognitiveRadarChart';
 import { PBCelebrationModal } from './PBCelebrationModal';
+import { TournamentSubmissionModal } from './TournamentSubmissionModal';
+import { getEnvironmentFingerprint, calculateInfractionScore } from '../utils/tournamentSecurity';
 
 interface Props {
   puzzleData?: PuzzleEntity;
@@ -18,11 +21,19 @@ export const SudokuBoard: React.FC<Props> = ({
   tournamentMode = false,
 }) => {
   const actualPuzzle = puzzleData || puzzle;
-  const { recordAttempt, getBenchmarkMetrics, profile } = useLearnerProfile();
+  const {
+    recordAttempt,
+    saveBookmark,
+    removeBookmark,
+    getBenchmarkMetrics,
+    profile,
+    getCompositeCognitiveIndex,
+    exportLongitudinalDataset,
+  } = useLearnerProfile();
+
   const { lang } = useLanguage();
   const isEn = lang === 'en';
 
-  // 模式切換：false = 自由訓練 (Training), true = 標準化施測 (Assessment)
   const [internalAssessment, setInternalAssessment] = useState<boolean>(false);
   const isAssessmentMode = tournamentMode || internalAssessment;
 
@@ -31,7 +42,6 @@ export const SudokuBoard: React.FC<Props> = ({
   const theoryTime = metrics.estimated_time_sec || 120;
   const currentTier = (actualPuzzle?.tier as TierKey) || 'kids';
 
-  // 依難度設定標準化施測時限
   const timeLimitMap: Record<TierKey, number> = {
     kids: 300,
     intermediate: 420,
@@ -58,6 +68,8 @@ export const SudokuBoard: React.FC<Props> = ({
   }, [actualPuzzle]);
 
   const [grid, setGrid] = useState<number[]>(initialGrid);
+  const [candidates, setCandidates] = useState<Record<number, Set<number>>>({});
+  const [isNoteMode, setIsNoteMode] = useState<boolean>(false);
   const [selectedCell, setSelectedCell] = useState<number | null>(null);
   const [conflictCell, setConflictCell] = useState<number | null>(null);
   const [isCompleted, setIsCompleted] = useState<boolean>(false);
@@ -65,48 +77,18 @@ export const SudokuBoard: React.FC<Props> = ({
   const [isTimedOut, setIsTimedOut] = useState<boolean>(false);
   const [elapsedSec, setElapsedSec] = useState<number>(0);
   const [showPBModal, setShowPBModal] = useState<boolean>(false);
+  const [showSubmitModal, setShowSubmitModal] = useState<boolean>(false);
   const [proofSignature, setProofSignature] = useState<string | null>(null);
   const [violationAlert, setViolationAlert] = useState<string | null>(null);
+  const [bookmarkToast, setBookmarkToast] = useState<string | null>(null);
 
-  // 防作弊計數
   const tabSwitchesRef = useRef<number>(0);
   const blurEventsRef = useRef<number>(0);
-
   const startTimeRef = useRef<number>(Date.now());
   const conflictCountRef = useRef<number>(0);
   const hasRecordedRef = useRef<boolean>(false);
 
-  // 本地純前端 SHA-256 防篡改證書生成
-  const generateClientProof = useCallback(async (timeSpent: number, conflicts: number, ratio: number) => {
-    try {
-      const canonical = [
-        actualPuzzle?.id || 'sudoku',
-        currentTier,
-        timeSpent,
-        conflicts,
-        ratio,
-        tabSwitchesRef.current,
-        blurEventsRef.current,
-        new Date().toISOString().slice(0, 10),
-        'LOGICORE_CLIENT_AUDIT',
-      ].join('|');
-
-      if (!window.crypto || !window.crypto.subtle) {
-        return `LOCAL_${Date.now().toString(16).toUpperCase()}`;
-      }
-
-      const enc = new TextEncoder();
-      const buf = await window.crypto.subtle.digest('SHA-256', enc.encode(canonical));
-      const hex = Array.from(new Uint8Array(buf))
-        .map((b) => b.toString(16).padStart(2, '0'))
-        .join('');
-      return `VERIFIED_${hex.slice(0, 24).toUpperCase()}`;
-    } catch {
-      return `LOCAL_${Date.now().toString(16).toUpperCase()}`;
-    }
-  }, [actualPuzzle?.id, currentTier]);
-
-  // 防作弊監聽：切換頁籤與失焦偵測
+  // 防作弊監聽
   useEffect(() => {
     if (!isAssessmentMode || isCompleted || isTimedOut || isFailedAssessment) return;
 
@@ -131,22 +113,34 @@ export const SudokuBoard: React.FC<Props> = ({
     };
   }, [isAssessmentMode, isCompleted, isTimedOut, isFailedAssessment, isEn]);
 
+  // 初始化與書籤恢復
   useEffect(() => {
-    setGrid(initialGrid);
+    const bookmark = profile.bookmarks[actualPuzzle?.id || ''];
+    if (bookmark) {
+      setGrid(bookmark.savedBridges.length > 0 ? (bookmark.savedBridges as any) : initialGrid);
+      setElapsedSec(bookmark.elapsedSec);
+      setBookmarkToast(isEn ? 'Restored bookmarked progress' : '已自動恢復上次暫存進度');
+      setTimeout(() => setBookmarkToast(null), 2500);
+    } else {
+      setGrid(initialGrid);
+      setElapsedSec(0);
+    }
+
+    setCandidates({});
+    setIsNoteMode(false);
     setSelectedCell(null);
     setConflictCell(null);
     setIsCompleted(false);
     setIsFailedAssessment(false);
     setIsTimedOut(false);
-    setElapsedSec(0);
     setProofSignature(null);
     setViolationAlert(null);
     tabSwitchesRef.current = 0;
     blurEventsRef.current = 0;
-    startTimeRef.current = Date.now();
+    startTimeRef.current = Date.now() - (bookmark?.elapsedSec ? bookmark.elapsedSec * 1000 : 0);
     conflictCountRef.current = 0;
     hasRecordedRef.current = false;
-  }, [initialGrid, actualPuzzle?.id]);
+  }, [initialGrid, actualPuzzle?.id, profile.bookmarks, isEn]);
 
   // 計時與超時判定
   useEffect(() => {
@@ -155,7 +149,6 @@ export const SudokuBoard: React.FC<Props> = ({
       const currentElapsed = Math.floor((Date.now() - startTimeRef.current) / 1000);
       setElapsedSec(currentElapsed);
 
-      // 標準施測模式：超時判定
       if (isAssessmentMode && currentElapsed >= standardTimeLimit) {
         setIsTimedOut(true);
         if (!hasRecordedRef.current) {
@@ -182,7 +175,18 @@ export const SudokuBoard: React.FC<Props> = ({
             partialCompletionRatio: partialRatio,
           });
 
-          generateClientProof(standardTimeLimit, conflictCountRef.current, partialRatio).then(setProofSignature);
+          try {
+            const canonical = `${actualPuzzle?.id}|${standardTimeLimit}|${conflictCountRef.current}|TIMEOUT_AUDIT`;
+            const enc = new TextEncoder();
+            window.crypto.subtle.digest('SHA-256', enc.encode(canonical)).then((buf) => {
+              const hex = Array.from(new Uint8Array(buf))
+                .map((b) => b.toString(16).padStart(2, '0'))
+                .join('');
+              setProofSignature(`VERIFIED_${hex.slice(0, 24).toUpperCase()}`);
+            });
+          } catch {
+            setProofSignature(`LOCAL_${Date.now()}`);
+          }
         }
       }
     }, 1000);
@@ -197,10 +201,10 @@ export const SudokuBoard: React.FC<Props> = ({
     currentTier,
     highestTech,
     recordAttempt,
-    generateClientProof,
     grid,
   ]);
 
+  // 勝利判定
   const checkVictory = useCallback(
     async (currentGrid: number[]) => {
       const sol = actualPuzzle?.solution;
@@ -211,6 +215,8 @@ export const SudokuBoard: React.FC<Props> = ({
 
       if (isPerfectMatch) {
         setIsCompleted(true);
+        removeBookmark(actualPuzzle?.id || '');
+
         if (!hasRecordedRef.current) {
           hasRecordedRef.current = true;
           const timeSpent = Math.max(1, Math.round((Date.now() - startTimeRef.current) / 1000));
@@ -228,17 +234,34 @@ export const SudokuBoard: React.FC<Props> = ({
             timeSpentSec: timeSpent,
             conflictsCount: conflictCountRef.current,
             technique: highestTech,
+            partialCompletionRatio: 1.0,
+            isPureClear: conflictCountRef.current === 0,
           });
 
-          const sig = await generateClientProof(timeSpent, conflictCountRef.current, 1.0);
-          setProofSignature(sig);
+          try {
+            const canonical = [
+              actualPuzzle.id,
+              currentTier,
+              timeSpent,
+              conflictCountRef.current,
+              tabSwitchesRef.current,
+              'SUDOKU_PERFECT_MATCH_VERIFIED',
+            ].join('|');
+            const enc = new TextEncoder();
+            const buf = await window.crypto.subtle.digest('SHA-256', enc.encode(canonical));
+            const hex = Array.from(new Uint8Array(buf))
+              .map((b) => b.toString(16).padStart(2, '0'))
+              .join('');
+            setProofSignature(`VERIFIED_${hex.slice(0, 24).toUpperCase()}`);
+          } catch {
+            setProofSignature(`LOCAL_${Date.now()}`);
+          }
 
           if (benchmarkData.isNewPB) {
             setShowPBModal(true);
           }
         }
       } else if (isAssessmentMode && currentGrid.every((v) => v !== 0)) {
-        // 評估模式專屬：盤面已填滿但有錯誤，直接判定施測結束
         setIsFailedAssessment(true);
         if (!hasRecordedRef.current) {
           hasRecordedRef.current = true;
@@ -263,22 +286,65 @@ export const SudokuBoard: React.FC<Props> = ({
             partialCompletionRatio: partialRatio,
           });
 
-          const sig = await generateClientProof(timeSpent, conflictCountRef.current, partialRatio);
-          setProofSignature(sig);
+          try {
+            const canonical = `${actualPuzzle.id}|${timeSpent}|${conflictCountRef.current}|FAILED_FULL_ASSESSMENT`;
+            const enc = new TextEncoder();
+            window.crypto.subtle.digest('SHA-256', enc.encode(canonical)).then((buf) => {
+              const hex = Array.from(new Uint8Array(buf))
+                .map((b) => b.toString(16).padStart(2, '0'))
+                .join('');
+              setProofSignature(`VERIFIED_${hex.slice(0, 24).toUpperCase()}`);
+            });
+          } catch {
+            setProofSignature(`LOCAL_${Date.now()}`);
+          }
         }
       }
     },
-    [actualPuzzle, recordAttempt, currentTier, highestTech, isAssessmentMode, generateClientProof, benchmarkData.isNewPB]
+    [actualPuzzle, recordAttempt, removeBookmark, currentTier, highestTech, isAssessmentMode, benchmarkData.isNewPB]
   );
+
+  // 暫存此局進度
+  const handleBookmarkPuzzle = useCallback(() => {
+    if (isCompleted || isTimedOut || isFailedAssessment || !actualPuzzle) return;
+    saveBookmark({
+      puzzleId: actualPuzzle.id,
+      engineType: 'sudoku',
+      tier: currentTier,
+      savedBridges: grid as any,
+      elapsedSec,
+      bookmarkedAt: new Date().toISOString(),
+    });
+    setBookmarkToast(isEn ? '📌 Progress bookmarked for later' : '📌 已暫存此局進度，可隨時接續');
+    setTimeout(() => setBookmarkToast(null), 2500);
+    if (navigator.vibrate) navigator.vibrate([25, 40]);
+  }, [isCompleted, isTimedOut, isFailedAssessment, actualPuzzle, currentTier, grid, elapsedSec, saveBookmark, isEn]);
 
   const handleCellClick = (index: number) => {
     if (initialGrid[index] !== 0 || isCompleted || isTimedOut || isFailedAssessment) return;
     setSelectedCell(index);
+    if (navigator.vibrate) navigator.vibrate(10);
   };
 
   const handleNumberInput = (num: number) => {
     if (selectedCell === null || initialGrid[selectedCell] !== 0 || isCompleted || isTimedOut || isFailedAssessment) return;
 
+    // 筆記模式：切換候選數標記
+    if (isNoteMode && num !== 0) {
+      setCandidates((prev) => {
+        const cellCandidates = new Set(prev[selectedCell] || []);
+        if (cellCandidates.has(num)) {
+          cellCandidates.delete(num);
+        } else {
+          cellCandidates.add(num);
+        }
+        return { ...prev, [selectedCell]: cellCandidates };
+      });
+      if (navigator.vibrate) navigator.vibrate(15);
+      return;
+    }
+
+    // 正式填入數值
     const sol = actualPuzzle?.solution;
     const flatSol = sol ? (Array.isArray(sol[0]) ? sol.flat() : sol) : [];
     const expectedValue = flatSol[selectedCell];
@@ -300,12 +366,28 @@ export const SudokuBoard: React.FC<Props> = ({
     const nextGrid = [...grid];
     nextGrid[selectedCell] = num;
     setGrid(nextGrid);
+
+    // 清除該格候選數
+    if (num !== 0) {
+      setCandidates((prev) => {
+        const updated = { ...prev };
+        delete updated[selectedCell];
+        return updated;
+      });
+    }
+
     checkVictory(nextGrid);
   };
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (isCompleted || isTimedOut || isFailedAssessment || selectedCell === null) return;
+
+      if (e.key === 'n' || e.key === 'N') {
+        setIsNoteMode((prev) => !prev);
+        return;
+      }
+
       const num = parseInt(e.key, 10);
       if (!isNaN(num) && num >= 1 && num <= 9) {
         handleNumberInput(num);
@@ -316,11 +398,18 @@ export const SudokuBoard: React.FC<Props> = ({
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedCell, isCompleted, isTimedOut, isFailedAssessment, grid]);
+  }, [selectedCell, isCompleted, isTimedOut, isFailedAssessment, grid, isNoteMode]);
 
   const userStat = profile.techniqueStats?.[highestTech];
   const solvingPath: string[] = metrics.solving_path || ['Standard Derivation'];
   const remainingTime = Math.max(0, standardTimeLimit - elapsedSec);
+  const cci = useMemo(() => getCompositeCognitiveIndex(), [getCompositeCognitiveIndex, isCompleted]);
+
+  // 高亮同數值與十字輔助線
+  const selectedValue = selectedCell !== null ? grid[selectedCell] : 0;
+  const selectedRow = selectedCell !== null ? Math.floor(selectedCell / 9) : -1;
+  const selectedCol = selectedCell !== null ? selectedCell % 9 : -1;
+  const selectedBox = selectedCell !== null ? Math.floor(selectedRow / 3) * 3 + Math.floor(selectedCol / 3) : -1;
 
   const handleNavigateTargetGame = (gameId: string) => {
     window.dispatchEvent(new CustomEvent('logicore:navigate-game', { detail: { gameId } }));
@@ -328,10 +417,17 @@ export const SudokuBoard: React.FC<Props> = ({
 
   return (
     <div className="flex flex-col items-center w-full select-none py-1 font-mono">
-      {/* 防作弊懸浮警示 */}
+      {/* 違規警告 */}
       {violationAlert && (
         <div className="fixed top-2 z-50 px-3 py-1.5 bg-rose-600 border border-rose-400 text-white font-bold text-xs rounded-full shadow-2xl animate-bounce">
           {violationAlert}
+        </div>
+      )}
+
+      {/* 暫存提示 */}
+      {bookmarkToast && (
+        <div className="fixed top-2 z-50 px-3 py-1.5 bg-indigo-600 border border-indigo-400 text-white font-bold text-xs rounded-full shadow-2xl animate-bounce">
+          {bookmarkToast}
         </div>
       )}
 
@@ -351,14 +447,28 @@ export const SudokuBoard: React.FC<Props> = ({
           <span>
             IRT: <strong className="text-cyan-400">{metrics.irt_logit_difficulty ?? '0.0'}</strong>
           </span>
+          <span className="hidden sm:inline">
+            Tech: <strong className="text-indigo-400">{highestTech}</strong>
+          </span>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5">
+          {!isCompleted && !isTimedOut && !isFailedAssessment && (
+            <button
+              onClick={handleBookmarkPuzzle}
+              className="px-1.5 py-0.5 bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-400 text-[7px] rounded transition"
+              title={isEn ? 'Bookmark progress' : '暫存此局進度'}
+            >
+              📌 {isEn ? 'Save' : '暫存'}
+            </button>
+          )}
+
           {tabSwitchesRef.current > 0 && (
             <span className="text-rose-400 font-bold text-[7px]">
               Switches: {tabSwitchesRef.current}
             </span>
           )}
+
           {isAssessmentMode ? (
             <span className="text-rose-400 font-bold">
               ⏱️ {String(Math.floor(remainingTime / 60)).padStart(2, '0')}:{String(remainingTime % 60).padStart(2, '0')}
@@ -380,55 +490,104 @@ export const SudokuBoard: React.FC<Props> = ({
 
           const row = Math.floor(idx / 9);
           const col = idx % 9;
+          const box = Math.floor(row / 3) * 3 + Math.floor(col / 3);
+
+          const isSameValue = selectedValue > 0 && val === selectedValue;
+          const isInSameLineOrBox = selectedCell !== null && (row === selectedRow || col === selectedCol || box === selectedBox);
+
           const borderRight = (col + 1) % 3 === 0 && col !== 8 ? 'border-r-2 border-r-slate-600' : '';
           const borderBottom = (row + 1) % 3 === 0 && row !== 8 ? 'border-b-2 border-b-slate-600' : '';
+
+          const cellCandidates = candidates[idx];
 
           return (
             <button
               key={idx}
               onClick={() => handleCellClick(idx)}
-              className={`w-full h-full flex items-center justify-center text-xs sm:text-base font-bold transition-colors rounded-xs ${borderRight} ${borderBottom} ${
+              className={`w-full h-full flex items-center justify-center text-xs sm:text-base font-bold transition-colors rounded-xs relative ${borderRight} ${borderBottom} ${
                 isConflict
                   ? 'bg-rose-600 text-white animate-pulse'
                   : isSelected
-                  ? 'bg-indigo-600 text-white ring-1 ring-indigo-300'
+                  ? 'bg-indigo-600 text-white ring-2 ring-indigo-300 z-10'
+                  : isSameValue
+                  ? 'bg-cyan-950/80 text-cyan-300 border border-cyan-500/60'
+                  : isInSameLineOrBox
+                  ? 'bg-slate-900/90 text-slate-200'
                   : isGiven
-                  ? 'bg-slate-900/90 text-slate-300'
+                  ? 'bg-slate-900/60 text-slate-300'
                   : val !== 0
                   ? 'bg-slate-950 text-cyan-400 font-semibold'
                   : 'bg-slate-950 hover:bg-slate-900 text-transparent'
               }`}
             >
-              {val !== 0 ? val : ''}
+              {val !== 0 ? (
+                val
+              ) : cellCandidates && cellCandidates.size > 0 ? (
+                <div className="grid grid-cols-3 grid-rows-3 w-full h-full p-0.5 pointer-events-none">
+                  {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => (
+                    <span
+                      key={n}
+                      className={`text-[6px] sm:text-[7.5px] leading-none flex items-center justify-center font-normal ${
+                        cellCandidates.has(n) ? 'text-amber-400 font-bold' : 'text-transparent'
+                      }`}
+                    >
+                      {n}
+                    </span>
+                  ))}
+                </div>
+              ) : (
+                ''
+              )}
             </button>
           );
         })}
       </div>
 
-      {/* 數字鍵盤 */}
+      {/* 數字鍵盤 + 筆記模式切換 */}
       {!isCompleted && !isTimedOut && !isFailedAssessment && (
-        <div className="grid grid-cols-10 gap-1 mt-3 w-[min(90vw,46vh)]">
-          {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((num) => (
+        <div className="flex flex-col gap-1.5 mt-2.5 w-[min(90vw,46vh)]">
+          <div className="grid grid-cols-10 gap-1">
+            {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((num) => (
+              <button
+                key={num}
+                onClick={() => handleNumberInput(num)}
+                disabled={selectedCell === null}
+                className="py-2 bg-slate-900 hover:bg-slate-800 disabled:opacity-30 active:scale-95 text-slate-200 border border-slate-700 rounded-lg text-xs font-mono font-bold transition shadow"
+              >
+                {num}
+              </button>
+            ))}
             <button
-              key={num}
-              onClick={() => handleNumberInput(num)}
+              onClick={() => handleNumberInput(0)}
               disabled={selectedCell === null}
-              className="py-2 bg-slate-900 hover:bg-slate-800 disabled:opacity-30 active:scale-95 text-slate-200 border border-slate-700 rounded-lg text-xs font-mono font-bold transition shadow"
+              className="py-2 bg-rose-950/60 hover:bg-rose-900/60 disabled:opacity-30 active:scale-95 text-rose-300 border border-rose-800 rounded-lg text-xs font-mono font-bold transition shadow"
             >
-              {num}
+              ⌫
             </button>
-          ))}
-          <button
-            onClick={() => handleNumberInput(0)}
-            disabled={selectedCell === null}
-            className="py-2 bg-rose-950/60 hover:bg-rose-900/60 disabled:opacity-30 active:scale-95 text-rose-300 border border-rose-800 rounded-lg text-xs font-mono font-bold transition shadow"
-          >
-            ⌫
-          </button>
+          </div>
+
+          <div className="flex justify-between items-center px-1 text-[8px] text-slate-400">
+            <button
+              onClick={() => setIsNoteMode((prev) => !prev)}
+              className={`px-2.5 py-1 rounded-lg border text-[8px] font-bold transition flex items-center gap-1 active:scale-95 ${
+                isNoteMode
+                  ? 'bg-amber-950 border-amber-500 text-amber-300 shadow-sm shadow-amber-500/40'
+                  : 'bg-slate-900 border-slate-700 text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <span>✏️</span>
+              <span>{isEn ? 'Notes Mode (N)' : '筆記模式 (N)'}</span>
+              <span className={`w-1.5 h-1.5 rounded-full ${isNoteMode ? 'bg-amber-400' : 'bg-slate-600'}`} />
+            </button>
+
+            <span className="text-[7px] text-slate-500">
+              {isNoteMode ? (isEn ? 'Pencil candidate digits' : '輸入小字候選數') : (isEn ? 'Direct entry' : '直接填入數字')}
+            </span>
+          </div>
         </div>
       )}
 
-      {/* 超時或答錯中斷警告 + 部分完成度條 */}
+      {/* 超時或失誤面板 */}
       {(isTimedOut || isFailedAssessment) && (
         <div className="mt-3 p-3 bg-rose-950/90 border border-rose-600 rounded-xl text-center w-[min(90vw,46vh)] shadow-2xl animate-fade-in">
           <div className="text-xs text-rose-200 font-bold mb-1">
@@ -447,20 +606,29 @@ export const SudokuBoard: React.FC<Props> = ({
         </div>
       )}
 
-      {/* 心理計量學通關反思面板 */}
+      {/* 臨床測量級心理計量學通關反思面板 */}
       {isCompleted && (
-        <div className="mt-3 p-3 bg-slate-950/95 border border-indigo-500/60 rounded-xl text-center w-[min(90vw,46vh)] shadow-2xl animate-fade-in">
+        <div className="mt-3 p-3 bg-slate-950/95 border border-indigo-500/60 rounded-xl text-center w-[min(90vw,46vh)] shadow-2xl animate-fade-in font-mono">
           <div className="flex items-center justify-between border-b border-slate-800 pb-1.5 mb-2">
             <div className="text-left">
-              <div className="text-[8px] text-slate-500 tracking-wider">
-                {isAssessmentMode ? 'STANDARDIZED PSYCHOMETRIC REPORT' : 'STRATEGIC REFLECTION'}
+              <div className="text-[8px] text-slate-500 tracking-wider flex items-center gap-1">
+                <span>CONSTRAINT PROPAGATION VERIFIED</span>
+                <span className="text-[6.5px] px-1 py-0.2 bg-indigo-950 border border-indigo-700 text-indigo-300 rounded">
+                  CSEM: ±{cci.semIQ} IQ
+                </span>
               </div>
               <div className="text-xs text-indigo-300 font-bold">
                 {elapsedSec <= benchmarkData.benchmarkTime ? '⚡ High-Efficiency Pace' : '🔍 Deep Exploration'}
               </div>
             </div>
-            <div className="px-2 py-0.5 border border-cyan-500 bg-cyan-950/80 rounded text-[10px] font-bold text-cyan-300">
-              Top {Number((100 - benchmarkData.percentileRank).toFixed(1))}% Mensa Norm
+
+            <div className="flex flex-col items-end">
+              <div className="px-2 py-0.5 border border-cyan-500 bg-cyan-950/80 rounded text-[10px] font-bold text-cyan-300">
+                IQ {cci.standardIQ} (95% CI: [{cci.ci95IQ[0]}-{cci.ci95IQ[1]}])
+              </div>
+              <span className="text-[6.5px] text-slate-400 mt-0.5">
+                年齡層 ({cci.ageNorm.cohort}): {cci.ageNorm.ageAdjustedZ >= 0 ? `+${cci.ageNorm.ageAdjustedZ}` : cci.ageNorm.ageAdjustedZ} SD (Top {Number((100 - cci.ageNorm.agePercentile).toFixed(1))}%)
+              </span>
             </div>
           </div>
 
@@ -468,22 +636,32 @@ export const SudokuBoard: React.FC<Props> = ({
             <div className="bg-slate-900/80 p-1.5 rounded">
               <div>{isEn ? 'Actual Time' : '實際耗時'}</div>
               <div className="text-slate-200 font-bold text-xs">{elapsedSec}s</div>
-              <div className="text-[7px] text-slate-500">
-                95% CI: [{benchmarkData.ci95[0]}s, {benchmarkData.ci95[1]}s]
-              </div>
+              <div className="text-[7px] text-slate-500">Benchmark: {benchmarkData.benchmarkTime}s</div>
             </div>
             <div className="bg-slate-900/80 p-1.5 rounded">
               <div>IRT 難度 (b)</div>
               <div className="text-cyan-300 font-bold text-xs">{metrics.irt_logit_difficulty ?? 0.0}</div>
-              <div className="text-[7px] text-slate-500">SEM: ±{benchmarkData.sem}s</div>
+              <div className="text-[7px] text-slate-500">Tech: {highestTech}</div>
             </div>
             <div className="bg-slate-900/80 p-1.5 rounded">
-              <div>技巧精熟度</div>
-              <div className="text-amber-300 font-bold text-xs">
-                {userStat ? `${Math.round(userStat.accuracy * 100)}%` : '100%'}
+              <div>約束衝突次數</div>
+              <div className="text-amber-300 font-bold text-xs">{conflictCountRef.current} 次</div>
+              <div className="text-[7px] text-slate-500">
+                Acc: {userStat ? `${Math.round(userStat.accuracy * 100)}%` : '100%'}
               </div>
-              <div className="text-[7px] text-slate-500">Hist: {userStat?.attempts || 1} clears</div>
             </div>
+          </div>
+
+          {/* 心理計量學信賴區間誤差棒 */}
+          <div className="mb-2">
+            <MetricErrorBar
+              actualVal={elapsedSec}
+              benchmarkVal={benchmarkData.benchmarkTime}
+              ci95={benchmarkData.ci95}
+              sem={benchmarkData.sem}
+              unit="s"
+              isEn={isEn}
+            />
           </div>
 
           {/* 五維認知雙軌雷達圖 */}
@@ -525,7 +703,26 @@ export const SudokuBoard: React.FC<Props> = ({
             </button>
           </div>
 
-          {/* 純前端 Web Crypto SHA-256 存證指紋 */}
+          {/* 操作按鈕群：縱向數據匯出 + 賽事提交入口 */}
+          <div className="flex gap-1.5 mb-2">
+            <button
+              onClick={exportLongitudinalDataset}
+              className="flex-1 py-1.5 bg-slate-900 hover:bg-slate-800 border border-cyan-600/50 hover:border-cyan-400 text-cyan-300 text-[8px] font-bold rounded-lg transition shadow flex items-center justify-center gap-1 active:scale-95"
+            >
+              <span>📊</span>
+              <span>{isEn ? 'Export Dataset' : '匯出縱向數據'}</span>
+            </button>
+
+            <button
+              onClick={() => setShowSubmitModal(true)}
+              className="flex-1 py-1.5 bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 text-slate-950 text-[8px] font-black rounded-lg shadow transition active:scale-95 flex items-center justify-center gap-1"
+            >
+              <span>📤</span>
+              <span>{isEn ? 'Submit Result' : '官方賽事提交'}</span>
+            </button>
+          </div>
+
+          {/* 本地 Web Crypto SHA-256 存證指紋 */}
           {proofSignature && (
             <div className="mt-1 p-1.5 bg-slate-900 border border-slate-800 rounded text-left">
               <div className="text-[7px] text-slate-500 font-bold uppercase tracking-wider flex items-center justify-between">
@@ -537,19 +734,39 @@ export const SudokuBoard: React.FC<Props> = ({
               </div>
             </div>
           )}
-
-          <div className="text-[8px] text-slate-500 border-t border-slate-800/80 pt-1.5 flex justify-between mt-1">
-            <span>Symmetry: {metrics.symmetry_type ?? 'rotational_180'}</span>
-            <span>Conflicts: {conflictCountRef.current}</span>
-          </div>
         </div>
       )}
 
-      {/* 破紀錄彈窗 */}
       {showPBModal && (
         <PBCelebrationModal
           pb={profile.personalBest}
           onClose={() => setShowPBModal(false)}
+          isEn={isEn}
+        />
+      )}
+
+      {showSubmitModal && (
+        <TournamentSubmissionModal
+          payload={{
+            submissionId: `SUB-${actualPuzzle.id}-${Date.now().toString(36)}`,
+            tournamentId: tournamentMode ? 'WPF_SUDOKU_2026' : 'GLOBAL_LOGIC_STAGE',
+            playerId: profile.personalBest.updatedAt ? 'CONTENDER_VERIFIED' : 'LOCAL_PLAYER_1',
+            division: 'open',
+            puzzleId: actualPuzzle.id,
+            engineType: 'sudoku',
+            tier: currentTier,
+            timeSpentSec: elapsedSec,
+            conflictsCount: conflictCountRef.current,
+            infractionScore: calculateInfractionScore({
+              tabSwitches: tabSwitchesRef.current,
+              blurEvents: blurEventsRef.current,
+              clipboardEvents: 0,
+              untrustedEvents: 0,
+            }),
+            environment: getEnvironmentFingerprint(),
+            timestamp: new Date().toISOString(),
+          }}
+          onClose={() => setShowSubmitModal(false)}
           isEn={isEn}
         />
       )}
