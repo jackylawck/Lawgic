@@ -13,7 +13,8 @@ interface Props {
   tournamentMode?: boolean;
 }
 
-export const KropkiBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
+export function KropkiBoard(props: Props) {
+  const { puzzle, puzzleData } = props;
   const actualPuzzle = puzzleData || puzzle;
   const { lang } = useLanguage();
   const isEn = lang === 'en';
@@ -259,10 +260,10 @@ export const KropkiBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
       if (isCompleted || !selectedCell) return;
       const [r, c] = selectedCell;
 
-      if (['ArrowUp', 'KeyW'].includes(e.code)) setSelectedCell([Math.max(0, r - 1), c]);
-      if (['ArrowDown', 'KeyS'].includes(e.code)) setSelectedCell([Math.min(n - 1, r + 1), c]);
-      if (['ArrowLeft', 'KeyA'].includes(e.code)) setSelectedCell([r, Math.max(0, c - 1)]);
-      if (['ArrowRight', 'KeyD'].includes(e.code)) setSelectedCell([r, Math.min(n - 1, c + 1)]);
+      if (e.code === 'ArrowUp' || e.code === 'KeyW') setSelectedCell([Math.max(0, r - 1), c]);
+      if (e.code === 'ArrowDown' || e.code === 'KeyS') setSelectedCell([Math.min(n - 1, r + 1), c]);
+      if (e.code === 'ArrowLeft' || e.code === 'KeyA') setSelectedCell([r, Math.max(0, c - 1)]);
+      if (e.code === 'ArrowRight' || e.code === 'KeyD') setSelectedCell([r, Math.min(n - 1, c + 1)]);
       if (e.code === 'KeyN') setIsNoteMode((prev) => !prev);
       if (e.code === 'KeyH') handleRequestHint();
 
@@ -593,7 +594,6 @@ export const KropkiBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
         </div>
       )}
 
-      {/* 獨立彈窗掛載 */}
       {showPBModal && (
         <PBCelebrationModal
           pb={profile.personalBest}
@@ -603,4 +603,4 @@ export const KropkiBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
       )}
     </div>
   );
-};
+}
