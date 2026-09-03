@@ -318,7 +318,7 @@ const MainDashboard: React.FC = () => {
         {/* 正式升級品牌：Lawgic 羅輯 */}
         <div className="flex flex-col shrink-0 leading-tight">
           <span className="text-xs font-black tracking-widest text-indigo-400">LAWGIC</span>
-          <span className="text-[6.5px] font-bold text-slate-500 tracking-wider">羅輯・認知評估</span>
+          <span className="text-[6.5px] font-bold text-slate-500 tracking-wider">羅輯・遊戲</span>
         </div>
 
         <div className="flex items-center gap-1.5 flex-1 min-w-0">
