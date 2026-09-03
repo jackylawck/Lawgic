@@ -16,13 +16,13 @@ export const RENDERERS: Record<string, React.ComponentType<any>> = {
   sudoku: SudokuBoard,
   skyscraper: SkyscraperBoard,
   hashi: HashiBoard,
-  hashiwokakero: HashiBoard, // 別名相容
+  hashiwokakero: HashiBoard,
   kropki: KropkiBoard,
   slitherlink: SlitherlinkBoard,
   tents: TentsBoard,
-  tentstrees: TentsBoard,    // 別名相容
+  tentstrees: TentsBoard,
   lightup: LightUpBoard,
-  akari: LightUpBoard,       // 別名相容
+  akari: LightUpBoard,
 };
 
 interface PuzzleRendererProps {
@@ -38,7 +38,10 @@ const LoadingSkeleton: React.FC = () => (
 );
 
 export const PuzzleRenderer: React.FC<PuzzleRendererProps> = ({ puzzle, tournamentMode = false }) => {
-  if (!puzzle || !puzzle.engine_type) {
+  // 雙向相容 engine_type (snake_case) 與 engineType (camelCase)
+  const rawEngine = puzzle?.engine_type || (puzzle as any)?.engineType;
+
+  if (!puzzle || !rawEngine) {
     return (
       <div className="p-6 text-center text-xs text-rose-400 font-mono bg-rose-950/20 border border-rose-900 rounded-xl">
         ⚠️ 題目實體無效 / Invalid Puzzle Entity
@@ -47,14 +50,14 @@ export const PuzzleRenderer: React.FC<PuzzleRendererProps> = ({ puzzle, tourname
   }
 
   // 正規化引擎字串，避免大小寫或多餘空白導致找不到組件
-  const normalizedKey = puzzle.engine_type.trim().toLowerCase();
+  const normalizedKey = String(rawEngine).trim().toLowerCase();
   const Component = RENDERERS[normalizedKey];
 
   if (!Component) {
     return (
       <div className="p-6 text-center text-xs text-slate-500 font-mono bg-slate-900/40 border border-slate-800 rounded-xl">
         <div className="text-amber-400 mb-1 font-bold">🚧 引擎即將解鎖 / Engine Coming Soon</div>
-        <div>未支援的引擎類型 / Unsupported Engine: <code className="text-cyan-400">{puzzle.engine_type}</code></div>
+        <div>未支援的引擎類型 / Unsupported Engine: <code className="text-cyan-400">{rawEngine}</code></div>
       </div>
     );
   }
