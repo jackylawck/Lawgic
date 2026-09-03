@@ -27,7 +27,7 @@ export interface SlitherStep {
   step: number;
   type: SlitherDeductionType;
   edge: SlitherEdge;
-  state: 1 | 2; // 1 = 畫線, 2 = 標叉
+  state: 1 | 2;
   rationale: string;
   humanReadable: {
     zh: string;
@@ -704,7 +704,7 @@ export class WebSlitherlinkGenerator {
 
       return {
         id: puzzleId,
-        category: 'loop_logic',
+        category: 'loop_logic' as any,
         engine_type: 'slitherlink',
         tier,
         checksum: `SLITHER_${rows}x${cols}_CERTIFIED_${Date.now().toString(36)}`,
@@ -745,7 +745,7 @@ export class WebSlitherlinkGenerator {
     const fallbackClues = this.extractClues(rows, cols, fallback.hEdges, fallback.vEdges);
     return {
       id: `slither_${tier}_fallback_${Date.now()}`,
-      category: 'loop_logic',
+      category: 'loop_logic' as any,
       engine_type: 'slitherlink',
       tier,
       checksum: `SLITHER_FALLBACK_${rows}x${cols}`,
