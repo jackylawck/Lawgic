@@ -8,7 +8,6 @@ import {
   HitoriHintStep,
   WebHitoriGenerator,
   HITORI_SYMBOLIC_SETS,
-  calibrateHitoriIrt,
 } from '../engines/hitoriGenerator';
 import { VaultManager } from '../utils/vaultStorage';
 
@@ -36,7 +35,6 @@ export const HitoriBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMod
   const maxDecisionDepth = (actualPuzzle?.metrics as any)?.maxDecisionDepth || spec?.maxDecisionDepth || 2;
   const seed = (actualPuzzle?.metrics as any)?.seed || spec?.seed || 12345;
   const isSymmetric = (actualPuzzle?.metrics as any)?.isSymmetric ?? true;
-  const edgeConnectivity = (actualPuzzle?.metrics as any)?.edgeConnectivity || spec?.edgeConnectivity || 2;
   const rhythmType = (actualPuzzle?.metrics as any)?.rhythmType || spec?.rhythmType || 'peaked';
 
   const [displayMode, setDisplayMode] = useState<'numeric' | 'symbolic_dots' | 'symbolic_geo'>('numeric');
@@ -67,8 +65,10 @@ export const HitoriBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMod
   const [hintLevel, setHintLevel] = useState<number>(0);
   const [activeHint, setActiveHint] = useState<HitoriHintStep | null>(null);
 
+  // 修正點：允許傳入 number | string | undefined，嚴格防禦非數值類型
   const renderValue = useCallback(
-    (val: number) => {
+    (val: number | string | undefined): string => {
+      if (typeof val !== 'number') return '';
       if (displayMode === 'symbolic_dots') return HITORI_SYMBOLIC_SETS.dots[val - 1] || `${val}`;
       if (displayMode === 'symbolic_geo') return HITORI_SYMBOLIC_SETS.geometric[val - 1] || `${val}`;
       return `${val}`;
@@ -200,8 +200,10 @@ export const HitoriBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMod
     const rowCommittedWhites = new Set<number>();
     for (let c = 0; c < size; c++) {
       const val = board[selR]?.[c];
-      rowCounts.set(val, (rowCounts.get(val) || 0) + 1);
-      if (state[selR][c] === 2) rowCommittedWhites.add(val);
+      if (val !== undefined) {
+        rowCounts.set(val, (rowCounts.get(val) || 0) + 1);
+        if (state[selR][c] === 2) rowCommittedWhites.add(val);
+      }
     }
     const rowDuplicates = Array.from(rowCounts.entries())
       .filter(([_, count]) => count > 1)
@@ -211,8 +213,10 @@ export const HitoriBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMod
     const colCommittedWhites = new Set<number>();
     for (let r = 0; r < size; r++) {
       const val = board[r]?.[selC];
-      colCounts.set(val, (colCounts.get(val) || 0) + 1);
-      if (state[r][selC] === 2) colCommittedWhites.add(val);
+      if (val !== undefined) {
+        colCounts.set(val, (colCounts.get(val) || 0) + 1);
+        if (state[r][selC] === 2) colCommittedWhites.add(val);
+      }
     }
     const colDuplicates = Array.from(colCounts.entries())
       .filter(([_, count]) => count > 1)
@@ -443,7 +447,7 @@ export const HitoriBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMod
             {displayMode === 'symbolic_dots' && '⚪ 點陣'}
             {displayMode === 'symbolic_geo' && '▲ 圖形'}
           </button>
-          
+
           <button
             onClick={() => setPureInferenceMode((prev) => !prev)}
             className={`px-2 py-1 rounded border font-bold transition ${
@@ -457,14 +461,12 @@ export const HitoriBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMod
         </div>
 
         <div className="flex items-center gap-1 text-slate-400 font-semibold">
-          {/* 開局節奏預判 */}
           <span className="px-1.5 py-0.5 bg-slate-900 border border-slate-700 rounded text-amber-300 font-bold" title={curRhythm.desc}>
             {curRhythm.icon} {curRhythm.name}
           </span>
           <span className="px-1.5 py-0.5 bg-slate-900 border border-slate-700 rounded text-cyan-300 font-mono" title="預估推導步數">
             📏 ~{estSteps} 步
           </span>
-          {/* 傳奇庫收藏按鈕 */}
           <button
             onClick={handleToggleFavorite}
             className={`px-1.5 py-0.5 rounded border transition font-bold ${
@@ -578,7 +580,7 @@ export const HitoriBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMod
         >
           {state.map((row, r) =>
             row.map((val, c) => {
-              const num = board[r]?.[c] ?? '';
+              const num = board[r]?.[c];
               const isSelected = selectedCell[0] === r && selectedCell[1] === c;
               const isConflict = conflicts.has(`${r},${c}`);
               const isHintTarget = activeHint?.r === r && activeHint?.c === c && hintLevel === 3;
@@ -657,7 +659,7 @@ export const HitoriBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMod
         </button>
       </div>
 
-      {/* 結算面板：榮譽卡、覆盤波形與傳奇庫操作 */}
+      {/* 結算面板 */}
       {isCompleted && (
         <div className="mt-2.5 p-3 bg-slate-950 border border-emerald-500/80 rounded-xl text-center w-full max-w-[280px] shadow-2xl font-mono animate-fade-in">
           <div className="text-emerald-400 font-bold text-xs mb-0.5">HITORI CLEARED!</div>
