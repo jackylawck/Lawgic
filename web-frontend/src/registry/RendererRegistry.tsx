@@ -17,6 +17,8 @@ import { FutoshikiBoard } from '../components/FutoshikiBoard';
 import { HitoriBoard } from '../components/HitoriBoard';
 import { KakuroBoard } from '../components/KakuroBoard';
 import { MasyuBoard } from '../components/MasyuBoard';
+import { DominoesBoard } from '../components/DominoesBoard';
+import { HeyawakeBoard } from '../components/HeyawakeBoard';
 
 export const RENDERERS: Record<string, React.ComponentType<any>> = {
   maze: MazeBoard,
@@ -37,6 +39,8 @@ export const RENDERERS: Record<string, React.ComponentType<any>> = {
   hitori: HitoriBoard,
   kakuro: KakuroBoard,
   masyu: MasyuBoard,
+  dominoes: DominoesBoard,
+  heyawake: HeyawakeBoard,
 };
 
 interface PuzzleRendererProps {
