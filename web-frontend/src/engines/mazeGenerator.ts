@@ -142,7 +142,8 @@ export class WebMazeGenerator {
       id,
       category: 'topological',
       engine_type: 'maze',
-      tier: (tier === 'ultimate' || tier === 'legendary' ? 'master' : tier) as TierKey,
+      // 保留實際 tier 階梯資訊供下游 Board 組件作嚴格迷霧鎖定判斷
+      tier: tier as unknown as TierKey,
       puzzle: {
         width,
         height,
@@ -152,6 +153,7 @@ export class WebMazeGenerator {
         goal: end,
         grid,
         seed: actualSeed,
+        actualTier: tier,
         visualNoise: tier === 'kids' ? 0.15 : tier === 'intermediate' ? 0.45 : tier === 'expert' ? 0.75 : 0.95,
         adaptedFor: personaBias || 'standard',
         solving_path: solvingPath,
@@ -170,6 +172,7 @@ export class WebMazeGenerator {
         estimated_time_sec: estimatedTimeSec,
         solving_path: solvingPath,
         seed: actualSeed,
+        actualTier: tier,
       } as any,
       cognitiveLoad: {
         spatial: Number(spatialLoad.toFixed(2)),
@@ -261,7 +264,6 @@ export class WebMazeGenerator {
       }
     }
 
-    // 隨機洗牌候選節點
     for (let i = candidates.length - 1; i > 0; i--) {
       const j = Math.floor(rnd() * (i + 1));
       [candidates[i], candidates[j]] = [candidates[j], candidates[i]];
@@ -291,7 +293,6 @@ export class WebMazeGenerator {
           grid[wallY][wallX] === 1 &&
           grid[blindY][blindX] === 1
         ) {
-          // 確保盲巷內部不連通其他通道
           const hasLeak = dirs.some(([ddx, ddy]) => {
             const tx = blindX + ddx;
             const ty = blindY + ddy;
@@ -316,7 +317,10 @@ export class WebMazeGenerator {
     start: [number, number],
     end: [number, number]
   ): [number, number][] {
-    const queue: [number, number, [number, number][]][] = [[start[0], start[1], [start]]];
+    if (start[0] === end[0] && start[1] === end[1]) return [start];
+
+    const queue: [number, number][] = [start];
+    const prevMap = new Map<string, [number, number]>();
     const visited = new Set<string>([`${start[0]},${start[1]}`]);
     let head = 0;
 
@@ -327,9 +331,13 @@ export class WebMazeGenerator {
       [-1, 0],
     ];
 
+    let found = false;
     while (head < queue.length) {
-      const [cx, cy, path] = queue[head++];
-      if (cx === end[0] && cy === end[1]) return path;
+      const [cx, cy] = queue[head++];
+      if (cx === end[0] && cy === end[1]) {
+        found = true;
+        break;
+      }
 
       for (const [dx, dy] of dirs) {
         const nx = cx + dx;
@@ -338,12 +346,24 @@ export class WebMazeGenerator {
           const key = `${nx},${ny}`;
           if (!visited.has(key)) {
             visited.add(key);
-            queue.push([nx, ny, [...path, [nx, ny]]]);
+            prevMap.set(key, [cx, cy]);
+            queue.push([nx, ny]);
           }
         }
       }
     }
-    return [start, end];
+
+    if (!found) return [start, end];
+
+    // 回溯重建最優路徑
+    const path: [number, number][] = [];
+    let curr: [number, number] | undefined = end;
+    while (curr) {
+      path.push(curr);
+      if (curr[0] === start[0] && curr[1] === start[1]) break;
+      curr = prevMap.get(`${curr[0]},${curr[1]}`);
+    }
+    return path.reverse();
   }
 
   private static _simulateHumanPathLimited(
@@ -479,7 +499,11 @@ export class WebMazeGenerator {
     if (deadEnds.length === 0) return 2.0;
 
     let totalDepth = 0;
+    const globalMemo = new Set<string>();
+
     for (const [sx, sy] of deadEnds) {
+      if (globalMemo.has(`${sx},${sy}`)) continue;
+
       let depth = 1;
       let cx = sx;
       let cy = sy;
@@ -501,6 +525,7 @@ export class WebMazeGenerator {
         if (deg >= 3) break;
 
         visited.add(`${nextNode[0]},${nextNode[1]}`);
+        globalMemo.add(`${nextNode[0]},${nextNode[1]}`);
         cx = nextNode[0];
         cy = nextNode[1];
         depth++;
