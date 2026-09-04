@@ -105,6 +105,9 @@ export class WebMazeGenerator {
     const pathEntropy = this._computePathEntropy(grid, width, height, solution);
     const tortuosity = this._computeTortuosity(solution);
 
+    // 只有終極難度 (Ultimate) 視為強制鎖定戰霧
+    const isUltimate = tier === 'ultimate';
+
     // 認知負荷建模 (CHC Gv 空間與 Gwm 工作記憶)
     const spatialLoad = Math.min(
       1.0,
@@ -114,20 +117,19 @@ export class WebMazeGenerator {
       1.0,
       0.25 + (pathEntropy / 3.0) * 0.45 + (realDeadEndDepth / 7.0) * 0.30
     );
-    const isHardcore = ['master', 'legendary', 'ultimate'].includes(tier);
     const inhibitionLoad = Math.min(
       1.0,
-      0.25 + (realDeadEndDepth / 6.0) * 0.45 + (isHardcore ? 0.30 : 0.15)
+      0.25 + (realDeadEndDepth / 6.0) * 0.45 + (isUltimate ? 0.30 : 0.18)
     );
 
     // 嚴謹 IRT Logit 難度 (-2.5 ~ +4.5)
     const normalizedSteps = limitedHumanPath.length / (width * height);
     const rawDifficulty = pathEntropy * 0.35 + realDeadEndDepth * 0.25 + normalizedSteps * 1.1;
-    const tierBonus = tier === 'ultimate' ? 1.8 : tier === 'legendary' ? 1.2 : isHardcore ? 0.6 : 0;
+    const tierBonus = tier === 'ultimate' ? 1.8 : tier === 'legendary' ? 1.2 : tier === 'master' ? 0.6 : 0;
     const irtLogitDifficulty = Number(Math.max(-2.5, Math.min(4.5, (rawDifficulty - 1.8) * 1.25 + tierBonus)).toFixed(2));
 
     const estimatedTimeSec = Math.round(
-      12 + limitedHumanPath.length * 0.55 + turnCount * 0.8 + (isHardcore ? 40 : 0)
+      12 + limitedHumanPath.length * 0.55 + turnCount * 0.8 + (isUltimate ? 40 : tier === 'legendary' ? 25 : 15)
     );
 
     const solvingPath = [
@@ -142,8 +144,7 @@ export class WebMazeGenerator {
       id,
       category: 'topological',
       engine_type: 'maze',
-      // 保留實際 tier 階梯資訊供下游 Board 組件作嚴格迷霧鎖定判斷
-      tier: tier as unknown as TierKey,
+      tier: (tier === 'ultimate' || tier === 'legendary' ? 'master' : tier) as TierKey,
       puzzle: {
         width,
         height,
@@ -355,7 +356,6 @@ export class WebMazeGenerator {
 
     if (!found) return [start, end];
 
-    // 回溯重建最優路徑
     const path: [number, number][] = [];
     let curr: [number, number] | undefined = end;
     while (curr) {
