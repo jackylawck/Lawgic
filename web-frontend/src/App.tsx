@@ -20,6 +20,9 @@ import { WebKropkiGenerator } from './engines/kropkiGenerator';
 import { WebSlitherlinkGenerator } from './engines/slitherlinkGenerator';
 import { WebTentsGenerator } from './engines/tentsGenerator';
 import { WebLightUpGenerator } from './engines/lightupGenerator';
+import { WebFutoshikiGenerator } from './engines/futoshikiGenerator';
+import { WebHitoriGenerator } from './engines/hitoriGenerator';
+import { WebKakuroGenerator } from './engines/kakuroGenerator';
 
 export type ExtendedTierKey = TierKey | 'legendary' | 'ultimate';
 
@@ -107,6 +110,15 @@ function generateEnginePuzzle(gameId: string, tier: ExtendedTierKey): PuzzleEnti
       case 'lightup':
         puzzle = WebLightUpGenerator.generate((tier === 'ultimate' ? 'legendary' : tier) as any);
         break;
+      case 'futoshiki':
+        puzzle = WebFutoshikiGenerator.generate(tier as any);
+        break;
+      case 'hitori':
+        puzzle = WebHitoriGenerator.generate(tier as any);
+        break;
+      case 'kakuro':
+        puzzle = WebKakuroGenerator.generate(tier as any);
+        break;
       default:
         return null;
     }
@@ -137,12 +149,12 @@ const MainDashboard: React.FC = () => {
   const [tournamentMode, setTournamentMode] = useState<boolean>(false);
   const [elapsed, setElapsed] = useState<number>(0);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
+  const [isGenerating, setIsGenerating] = useState<boolean>(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // 防止同一難度與遊戲並行重複觸發批次生成的鎖定標記
   const isGeneratingRef = useRef<boolean>(false);
 
-  // 初次啟動僅生成 1 題迷宮，其餘分類為空，確保 0ms 秒開
+  // 初次啟動僅生成 1 題迷宮，確保 0ms 開屏秒開
   const [dynamicPuzzles, setDynamicPuzzles] = useState<Record<string, PuzzleEntity[]>>(() => {
     const initialPool: Record<string, PuzzleEntity[]> = {
       maze: [],
@@ -155,6 +167,9 @@ const MainDashboard: React.FC = () => {
       slitherlink: [],
       tents: [],
       lightup: [],
+      futoshiki: [],
+      hitori: [],
+      kakuro: [],
     };
 
     try {
@@ -170,7 +185,6 @@ const MainDashboard: React.FC = () => {
     return initialPool;
   });
 
-  // 計算當前遊戲與難度下的題目列表
   const activeList = useMemo(() => {
     const staticList = PUZZLE_CATALOG[selectedType] || [];
     const liveList = dynamicPuzzles[selectedType] || [];
@@ -180,11 +194,12 @@ const MainDashboard: React.FC = () => {
 
   const activePuzzle = activeList.length > 0 ? activeList[puzzleIndex % activeList.length] : null;
 
-  // 核心邏輯：非同步批次追補題目（每次追補 5 題，間隔 30ms 確保主執行緒完全流暢）
+  // 核心非同步批次生成邏輯
   const appendBatchPuzzles = useCallback(
     async (gameId: string, tier: ExtendedTierKey, count: number = 5) => {
       if (isGeneratingRef.current) return;
       isGeneratingRef.current = true;
+      setIsGenerating(true);
 
       const generated: PuzzleEntity[] = [];
       for (let i = 0; i < count; i++) {
@@ -197,7 +212,6 @@ const MainDashboard: React.FC = () => {
         } catch (err) {
           console.warn(`Engine ${gameId} batch error:`, err);
         }
-        // 讓出主執行緒，確保點擊與畫面更新不卡頓
         await new Promise((resolve) => setTimeout(resolve, 30));
       }
 
@@ -209,25 +223,25 @@ const MainDashboard: React.FC = () => {
       }
 
       isGeneratingRef.current = false;
+      setIsGenerating(false);
     },
     []
   );
 
-  // 【規則一】：點進全新遊戲或切換難度時，若該分類題庫為空（或少於 2 題），自動補足 5 題
+  // 切換至新遊戲或新階層時，自動補足 5 題
   useEffect(() => {
     if (activeList.length < 2 && !isGeneratingRef.current) {
       appendBatchPuzzles(selectedType, currentLevel, 5);
     }
   }, [selectedType, currentLevel, activeList.length, appendBatchPuzzles]);
 
-  // 【規則二】：當做到第 5 題（或倒數最後 1 題）時，背景自動再追補 5 題
+  // 做題推進至末尾時，背後自動追補 5 題
   useEffect(() => {
     if (activeList.length > 0 && puzzleIndex >= activeList.length - 1 && !isGeneratingRef.current) {
       appendBatchPuzzles(selectedType, currentLevel, 5);
     }
   }, [puzzleIndex, activeList.length, selectedType, currentLevel, appendBatchPuzzles]);
 
-  // 外部導航事件
   useEffect(() => {
     const handleNav = (e: Event) => {
       const customEvent = e as CustomEvent<{ gameId?: string }>;
@@ -240,7 +254,6 @@ const MainDashboard: React.FC = () => {
     return () => window.removeEventListener('logicore:navigate-game', handleNav);
   }, []);
 
-  // 挑戰碼解析
   useEffect(() => {
     const checkHashChallenge = () => {
       const hash = window.location.hash;
@@ -296,19 +309,26 @@ const MainDashboard: React.FC = () => {
     setPuzzleIndex((prev) => (prev + 1) % (activeList.length || 1));
   }, [activeList.length]);
 
-  const handleLiveGenerate = useCallback(() => {
+  const handleLiveGenerate = useCallback(async () => {
     if (navigator.vibrate) navigator.vibrate(20);
+    setIsGenerating(true);
 
-    const newPuzzle = generateEnginePuzzle(selectedType, currentLevel);
-    if (newPuzzle) {
-      newPuzzle.id = `${selectedType}_${currentLevel}_manual_${Date.now().toString(36)}`;
-      setDynamicPuzzles((prev) => ({
-        ...prev,
-        [selectedType]: [newPuzzle, ...(prev[selectedType] || [])],
-      }));
-      setPuzzleIndex(0);
-      setToastMsg(isEn ? '⚡ Dynamic puzzle synthesized' : '⚡ 演算法已即時合成全新題目');
-      setTimeout(() => setToastMsg(null), 2000);
+    await new Promise((r) => setTimeout(r, 16));
+
+    try {
+      const newPuzzle = generateEnginePuzzle(selectedType, currentLevel);
+      if (newPuzzle) {
+        newPuzzle.id = `${selectedType}_${currentLevel}_manual_${Date.now().toString(36)}`;
+        setDynamicPuzzles((prev) => ({
+          ...prev,
+          [selectedType]: [newPuzzle, ...(prev[selectedType] || [])],
+        }));
+        setPuzzleIndex(0);
+        setToastMsg(isEn ? '⚡ Dynamic puzzle synthesized' : '⚡ 演算法已即時合成全新題目');
+        setTimeout(() => setToastMsg(null), 2000);
+      }
+    } finally {
+      setIsGenerating(false);
     }
   }, [selectedType, currentLevel, isEn]);
 
@@ -377,9 +397,18 @@ const MainDashboard: React.FC = () => {
 
   return (
     <main className="min-h-screen bg-[#090d14] text-slate-200 flex flex-col items-center py-2 px-2 font-mono selection:bg-indigo-600">
+      {/* 提示訊息浮層 */}
       {toastMsg && (
         <div className="fixed top-2 z-50 px-3 py-1.5 bg-cyan-600 border border-cyan-400 text-white font-bold text-xs rounded-full shadow-2xl animate-fade-in pointer-events-none">
           {toastMsg}
+        </div>
+      )}
+
+      {/* 神經網絡演算法生成呼吸指示器 */}
+      {isGenerating && (
+        <div className="fixed top-1 left-1/2 -translate-x-1/2 z-50 flex items-center gap-1.5 px-3 py-1 bg-slate-900/95 border border-indigo-500/80 rounded-full text-indigo-300 text-[8px] font-mono shadow-2xl animate-pulse pointer-events-none">
+          <div className="w-2 h-2 rounded-full border border-indigo-400 border-t-transparent animate-spin" />
+          <span>🧠 {isEn ? 'Synthesizing Topology...' : '神經網絡拓撲生成中...'}</span>
         </div>
       )}
 
