@@ -9,13 +9,13 @@
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="theme-color" content="#090d14" />
 
-  <!-- 修正 CSP：允許 WASM 編譯、Blob、Worker 與外聯 CDN -->
+  <!-- 嚴格 CSP：允許 WASM 編譯、Blob、Worker 與外聯 CDN -->
   <meta http-equiv="Content-Security-Policy" content="
     default-src 'self';
     script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' 'unsafe-eval' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net;
     style-src 'self' 'unsafe-inline';
     img-src 'self' data: blob: https:;
-    font-src 'self' data:;
+    font-src 'self' data: https://fonts.gstatic.com;
     connect-src 'self' data: blob: https:;
     worker-src 'self' blob:;
     object-src 'none';
@@ -29,7 +29,7 @@
 
   <title>Lawgic 羅輯・遊戲 | 高精度邏輯推理、空間運算與競技解題平台</title>
   <meta name="description" content="Lawgic (羅輯) 是一款純前端即時演算法益智競技平台。收錄空間迷宮、數獨魔陣、摩天透視、星際數橋等，提供因果提示鏈與零信任存證。" />
-  <meta name="keywords" content="Lawgic, 羅輯, 數獨, Sudoku, 空間迷宮, Maze, 摩天透視, 數橋, PWA" />
+  <meta name="keywords" content="Lawgic, 羅輯, 數獨, Sudoku, 空間迷宮, Maze, 摩天透視, 數橋, PWA, 邏輯遊戲" />
   <meta name="author" content="羅子淇 Jacky Law" />
   <meta name="robots" content="index, follow" />
   <link rel="canonical" href="https://jackylawck.github.io/Lawgic/" />
@@ -38,12 +38,13 @@
   <link rel="manifest" href="./manifest.json" />
   <link rel="apple-touch-icon" href="./Lawgic192icon.png" />
   <link rel="icon" type="image/png" sizes="192x192" href="./Lawgic192icon.png" />
+  <link rel="icon" type="image/png" sizes="512x512" href="./Lawgic512icon.png" />
 
   <!-- Open Graph -->
   <meta property="og:type" content="website" />
   <meta property="og:url" content="https://jackylawck.github.io/Lawgic/" />
   <meta property="og:title" content="Lawgic 羅輯 | 專為思考者打造的純粹邏輯競技場" />
-  <meta property="og:description" content="無廣告、純前端現場演算法生成！" />
+  <meta property="og:description" content="無廣告、純前端現場演算法生成！高精度邏輯推理與競技解題平台。" />
   <meta property="og:image" content="https://jackylawck.github.io/Lawgic/Lawgic512icon.png" />
 
   <!-- Twitter Card -->
@@ -64,14 +65,40 @@
   }
   </script>
 </head>
-<body class="bg-[#090d14] text-slate-200 overflow-x-hidden select-none">
+<body class="bg-[#090d14] text-slate-200 overflow-x-hidden select-none touch-manipulation overscroll-none min-h-screen">
   <div id="root"></div>
   <script type="module" src="./src/main.tsx"></script>
 
+  <!-- 強固型 PWA 註冊與生命週期監聽 -->
   <script>
     if ('serviceWorker' in navigator && window.location.protocol.startsWith('http')) {
       window.addEventListener('load', () => {
-        navigator.serviceWorker.register('./sw.js').catch(() => {});
+        navigator.serviceWorker.register('./sw.js', { scope: './' })
+          .then((registration) => {
+            // 監聽是否有新版本發布
+            registration.addEventListener('updatefound', () => {
+              const newWorker = registration.installing;
+              if (newWorker) {
+                newWorker.addEventListener('statechange', () => {
+                  if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                    console.info('[Lawgic PWA] 新版本資源已就緒。');
+                  }
+                });
+              }
+            });
+          })
+          .catch((err) => {
+            console.warn('[Lawgic PWA] Service Worker 註冊失敗:', err);
+          });
+      });
+
+      // 避免快取版本切換導致舊資產死鎖
+      let refreshing = false;
+      navigator.serviceWorker.addEventListener('controllerchange', () => {
+        if (!refreshing) {
+          refreshing = true;
+          window.location.reload();
+        }
       });
     }
   </script>
