@@ -139,6 +139,7 @@ const MainDashboard: React.FC = () => {
   const [toastMsg, setToastMsg] = useState<string | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  // 輕量化初始化：首屏僅生成當前顯示的迷宮，避免同步執行重度回溯導致主執行緒卡死
   const [dynamicPuzzles, setDynamicPuzzles] = useState<Record<string, PuzzleEntity[]>>(() => {
     const initialPool: Record<string, PuzzleEntity[]> = {
       maze: [],
@@ -153,22 +154,20 @@ const MainDashboard: React.FC = () => {
       lightup: [],
     };
 
-    const activeEngines = Object.keys(initialPool);
-
-    LEVEL_KEYS.forEach((tier) => {
-      activeEngines.forEach((engineId) => {
-        const p = generateEnginePuzzle(engineId, tier);
-        if (p) {
-          p.id = `${engineId}_${tier}_init_1`;
-          initialPool[engineId].push(p);
-        }
-      });
-    });
+    try {
+      const p = generateEnginePuzzle('maze', 'kids');
+      if (p) {
+        p.id = `maze_kids_init_1`;
+        initialPool.maze.push(p);
+      }
+    } catch (e) {
+      console.error('Initial puzzle gen error:', e);
+    }
 
     return initialPool;
   });
 
-  // 異步背景填充題目池
+  // 異步背景延遲排程生成其餘題目，給予 UI 讓出執行緒
   useEffect(() => {
     let isMounted = true;
     const activeEngines = [
@@ -188,20 +187,24 @@ const MainDashboard: React.FC = () => {
       for (const tier of LEVEL_KEYS) {
         for (const engineId of activeEngines) {
           if (!isMounted) return;
-          const p = generateEnginePuzzle(engineId, tier);
-          if (p) {
-            p.id = `${engineId}_${tier}_bg_${Date.now().toString(36).slice(-4)}`;
-            setDynamicPuzzles((prev) => ({
-              ...prev,
-              [engineId]: [...(prev[engineId] || []), p],
-            }));
+          try {
+            const p = generateEnginePuzzle(engineId, tier);
+            if (p) {
+              p.id = `${engineId}_${tier}_bg_${Date.now().toString(36).slice(-4)}`;
+              setDynamicPuzzles((prev) => ({
+                ...prev,
+                [engineId]: [...(prev[engineId] || []), p],
+              }));
+            }
+          } catch (err) {
+            console.warn(`Engine ${engineId} skipped:`, err);
           }
-          await new Promise((resolve) => setTimeout(resolve, 20));
+          await new Promise((resolve) => setTimeout(resolve, 60));
         }
       }
     };
 
-    const timer = setTimeout(fillPoolAsync, 300);
+    const timer = setTimeout(fillPoolAsync, 600);
     return () => {
       isMounted = false;
       clearTimeout(timer);
@@ -382,8 +385,9 @@ const MainDashboard: React.FC = () => {
 
   return (
     <main className="min-h-screen bg-[#090d14] text-slate-200 flex flex-col items-center py-2 px-2 font-mono selection:bg-indigo-600">
+      {/* 加入 pointer-events-none 確保 Toast 浮層絕不阻擋任何按鈕點擊 */}
       {toastMsg && (
-        <div className="fixed top-2 z-50 px-3 py-1.5 bg-cyan-600 border border-cyan-400 text-white font-bold text-xs rounded-full shadow-2xl animate-fade-in">
+        <div className="fixed top-2 z-50 px-3 py-1.5 bg-cyan-600 border border-cyan-400 text-white font-bold text-xs rounded-full shadow-2xl animate-fade-in pointer-events-none">
           {toastMsg}
         </div>
       )}
