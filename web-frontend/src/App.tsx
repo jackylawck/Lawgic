@@ -8,9 +8,11 @@ import { LangSwitcher } from './components/LangSwitcher';
 import { VirtualGamepad } from './components/VirtualGamepad';
 import { useLearnerProfile, TierKey } from './hooks/useLearnerProfile';
 
-// 匯入已完成的 8 大世界級演算法生成器
+// 匯入已完成的世界級演算法生成器
 import { WebMazeGenerator } from './engines/mazeGenerator';
 import { WebSudokuGenerator } from './engines/sudokuGenerator';
+import { WebNonogramGenerator } from './engines/nonogramGenerator';
+import { WebNurikabeGenerator } from './engines/nurikabeGenerator';
 import { WebSkyscraperGenerator } from './engines/skyscraperGenerator';
 import { WebHashiGenerator } from './engines/hashiGenerator';
 import { WebKropkiGenerator } from './engines/kropkiGenerator';
@@ -18,7 +20,7 @@ import { WebSlitherlinkGenerator } from './engines/slitherlinkGenerator';
 import { WebTentsGenerator } from './engines/tentsGenerator';
 import { WebLightUpGenerator } from './engines/lightupGenerator';
 
-export type ExtendedTierKey = TierKey | 'legendary';
+export type ExtendedTierKey = TierKey | 'legendary' | 'ultimate';
 
 interface PuzzleMeta {
   id: string;
@@ -30,6 +32,8 @@ interface PuzzleMeta {
 const ALL_GAMES: PuzzleMeta[] = [
   { id: 'maze', nameZh: '空間迷宮', nameEn: 'Maze', icon: '🌀' },
   { id: 'sudoku', nameZh: '數獨魔陣', nameEn: 'Sudoku', icon: '🔢' },
+  { id: 'nonogram', nameZh: '像素數織', nameEn: 'Nonogram', icon: '🎨' },
+  { id: 'nurikabe', nameZh: '暗夜數牆', nameEn: 'Nurikabe', icon: '🧱' },
   { id: 'skyscraper', nameZh: '摩天透視', nameEn: 'Skyscraper', icon: '🏢' },
   { id: 'hashi', nameZh: '星際數橋', nameEn: 'Hashi', icon: '🌉' },
   { id: 'kropki', nameZh: '黑白雙星', nameEn: 'Kropki', icon: '⚪' },
@@ -37,14 +41,13 @@ const ALL_GAMES: PuzzleMeta[] = [
   { id: 'tents', nameZh: '帳篷扎營', nameEn: 'Tents & Trees', icon: '⛺' },
   { id: 'lightup', nameZh: '燈泡照明', nameEn: 'Light Up', icon: '💡' },
   { id: 'kakuro', nameZh: '數和密碼', nameEn: 'Kakuro', icon: '➕' },
-  { id: 'nurikabe', nameZh: '暗夜數牆', nameEn: 'Nurikabe', icon: '🧱' },
   { id: 'hitori', nameZh: '孤島數壹', nameEn: 'Hitori', icon: '⬛' },
   { id: 'futoshiki', nameZh: '天平不等', nameEn: 'Futoshiki', icon: '⚖️' },
   { id: 'jigsaw', nameZh: '幾何拼圖', nameEn: 'Jigsaw', icon: '🧩' },
   { id: 'dominoes', nameZh: '骨牌矩陣', nameEn: 'Dominoes', icon: '🀄' },
 ];
 
-export const LEVEL_KEYS: ExtendedTierKey[] = ['kids', 'intermediate', 'expert', 'master', 'legendary'];
+export const LEVEL_KEYS: ExtendedTierKey[] = ['kids', 'intermediate', 'expert', 'master', 'legendary', 'ultimate'];
 
 const TIER_NAMES: Record<ExtendedTierKey, { zh: string; en: string }> = {
   kids: { zh: '兒童', en: 'Kids' },
@@ -52,6 +55,7 @@ const TIER_NAMES: Record<ExtendedTierKey, { zh: string; en: string }> = {
   expert: { zh: '專家', en: 'Expert' },
   master: { zh: '大師', en: 'Master' },
   legendary: { zh: '傳奇', en: 'Legendary' },
+  ultimate: { zh: '終極', en: 'Ultimate' },
 };
 
 const EngineFallbackUI: React.FC<{ resetErrorBoundary: () => void }> = ({ resetErrorBoundary }) => (
@@ -69,7 +73,7 @@ const EngineFallbackUI: React.FC<{ resetErrorBoundary: () => void }> = ({ resetE
 function generateEnginePuzzle(gameId: string, tier: ExtendedTierKey): PuzzleEntity | null {
   try {
     let puzzle: PuzzleEntity | null = null;
-    const baseTier: TierKey = tier === 'legendary' ? 'master' : (tier as TierKey);
+    const baseTier: TierKey = (tier === 'legendary' || tier === 'ultimate') ? 'master' : (tier as TierKey);
 
     switch (gameId) {
       case 'maze':
@@ -77,6 +81,12 @@ function generateEnginePuzzle(gameId: string, tier: ExtendedTierKey): PuzzleEnti
         break;
       case 'sudoku':
         puzzle = WebSudokuGenerator.generate(baseTier);
+        break;
+      case 'nonogram':
+        puzzle = WebNonogramGenerator.generate(tier as any);
+        break;
+      case 'nurikabe':
+        puzzle = WebNurikabeGenerator.generate(tier as any);
         break;
       case 'skyscraper':
         puzzle = WebSkyscraperGenerator.generate(baseTier);
@@ -94,18 +104,18 @@ function generateEnginePuzzle(gameId: string, tier: ExtendedTierKey): PuzzleEnti
         puzzle = WebTentsGenerator.generate(baseTier);
         break;
       case 'lightup':
-        // Light Up 原生支援 'legendary' 9x9 特規，其餘使用 master 生成
-        puzzle = WebLightUpGenerator.generate(tier as any);
+        puzzle = WebLightUpGenerator.generate((tier === 'ultimate' ? 'legendary' : tier) as any);
         break;
       default:
         return null;
     }
 
-    // 若要求傳奇階級，強制將 puzzle.tier 賦予 'legendary' 標記
-    if (puzzle && tier === 'legendary') {
-      puzzle.tier = 'legendary' as any;
+    if (puzzle && (tier === 'legendary' || tier === 'ultimate')) {
+      puzzle.tier = tier as any;
       if (puzzle.metrics) {
-        puzzle.metrics.irt_logit_difficulty = Number(((puzzle.metrics.irt_logit_difficulty || 2.2) + 0.6).toFixed(2));
+        puzzle.metrics.irt_logit_difficulty = Number(
+          ((puzzle.metrics.irt_logit_difficulty || 2.2) + (tier === 'ultimate' ? 1.0 : 0.6)).toFixed(2)
+        );
       }
     }
 
@@ -132,6 +142,8 @@ const MainDashboard: React.FC = () => {
     const initialPool: Record<string, PuzzleEntity[]> = {
       maze: [],
       sudoku: [],
+      nonogram: [],
+      nurikabe: [],
       skyscraper: [],
       hashi: [],
       kropki: [],
@@ -157,7 +169,18 @@ const MainDashboard: React.FC = () => {
 
   useEffect(() => {
     let isMounted = true;
-    const activeEngines = ['maze', 'sudoku', 'skyscraper', 'hashi', 'kropki', 'slitherlink', 'tents', 'lightup'];
+    const activeEngines = [
+      'maze',
+      'sudoku',
+      'nonogram',
+      'nurikabe',
+      'skyscraper',
+      'hashi',
+      'kropki',
+      'slitherlink',
+      'tents',
+      'lightup',
+    ];
 
     const fillPoolAsync = async () => {
       for (const tier of LEVEL_KEYS) {
@@ -215,6 +238,7 @@ const MainDashboard: React.FC = () => {
       expert: [],
       master: [],
       legendary: [],
+      ultimate: [],
     };
 
     fullList.forEach((p) => {
@@ -434,7 +458,7 @@ const MainDashboard: React.FC = () => {
             </button>
           </div>
 
-          {currentLevel !== 'legendary' && (
+          {currentLevel !== 'ultimate' && (
             <div className="flex gap-1.5 mt-1.5 w-full">
               <button
                 onClick={() => handleTierJump(1)}
