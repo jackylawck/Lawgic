@@ -1,24 +1,57 @@
 {
+  "$schema": "https://json.schemastore.org/web-manifest-combined.json",
   "name": "Lawgic 羅輯・遊戲",
   "short_name": "Lawgic",
-  "description": "Lawgic Logic Games & Arena",
+  "description": "高精度邏輯推理、空間運算與競技解題平台",
+  "lang": "zh-HK",
+  "id": "/Lawgic/",
   "start_url": "./",
+  "scope": "./",
   "display": "standalone",
   "orientation": "portrait",
   "background_color": "#090d14",
   "theme_color": "#090d14",
+  "categories": ["games", "puzzle", "education"],
   "icons": [
     {
-      "src": "Lawgic192icon.png",
+      "src": "./Lawgic192icon.png",
       "sizes": "192x192",
       "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "any"
     },
     {
-      "src": "Lawgic512icon.png",
+      "src": "./Lawgic192icon.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "./Lawgic512icon.png",
       "sizes": "512x512",
       "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "any"
+    },
+    {
+      "src": "./Lawgic512icon.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "空間迷宮 (Maze)",
+      "short_name": "迷宮",
+      "description": "空間導航與心智心圖訓練",
+      "url": "./?game=maze",
+      "icons": [{ "src": "./Lawgic192icon.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "數獨魔陣 (Sudoku)",
+      "short_name": "數獨",
+      "description": "約束傳播與邏輯演繹",
+      "url": "./?game=sudoku",
+      "icons": [{ "src": "./Lawgic192icon.png", "sizes": "192x192" }]
     }
   ]
 }
