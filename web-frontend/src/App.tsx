@@ -67,19 +67,49 @@ const EngineFallbackUI: React.FC<{ resetErrorBoundary: () => void }> = ({ resetE
 );
 
 function generateEnginePuzzle(gameId: string, tier: ExtendedTierKey): PuzzleEntity | null {
-  const t: TierKey = tier === 'legendary' ? 'master' : (tier as TierKey);
   try {
+    let puzzle: PuzzleEntity | null = null;
+    const baseTier: TierKey = tier === 'legendary' ? 'master' : (tier as TierKey);
+
     switch (gameId) {
-      case 'maze': return WebMazeGenerator.generate(t);
-      case 'sudoku': return WebSudokuGenerator.generate(t);
-      case 'skyscraper': return WebSkyscraperGenerator.generate(t);
-      case 'hashi': return WebHashiGenerator.generate(t);
-      case 'kropki': return WebKropkiGenerator.generate(t);
-      case 'slitherlink': return WebSlitherlinkGenerator.generate(t);
-      case 'tents': return WebTentsGenerator.generate(t);
-      case 'lightup': return WebLightUpGenerator.generate(t);
-      default: return null;
+      case 'maze':
+        puzzle = WebMazeGenerator.generate(baseTier);
+        break;
+      case 'sudoku':
+        puzzle = WebSudokuGenerator.generate(baseTier);
+        break;
+      case 'skyscraper':
+        puzzle = WebSkyscraperGenerator.generate(baseTier);
+        break;
+      case 'hashi':
+        puzzle = WebHashiGenerator.generate(baseTier);
+        break;
+      case 'kropki':
+        puzzle = WebKropkiGenerator.generate(baseTier);
+        break;
+      case 'slitherlink':
+        puzzle = WebSlitherlinkGenerator.generate(baseTier);
+        break;
+      case 'tents':
+        puzzle = WebTentsGenerator.generate(baseTier);
+        break;
+      case 'lightup':
+        // Light Up 原生支援 'legendary' 9x9 特規，其餘使用 master 生成
+        puzzle = WebLightUpGenerator.generate(tier as any);
+        break;
+      default:
+        return null;
     }
+
+    // 若要求傳奇階級，強制將 puzzle.tier 賦予 'legendary' 標記
+    if (puzzle && tier === 'legendary') {
+      puzzle.tier = 'legendary' as any;
+      if (puzzle.metrics) {
+        puzzle.metrics.irt_logit_difficulty = Number(((puzzle.metrics.irt_logit_difficulty || 2.2) + 0.6).toFixed(2));
+      }
+    }
+
+    return puzzle;
   } catch {
     return null;
   }
