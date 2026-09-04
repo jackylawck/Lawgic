@@ -3,9 +3,16 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { PuzzleEntity, TierKey } from '../generated';
 import { useLearnerProfile } from '../hooks/useLearnerProfile';
 import { useLanguage } from '../contexts/LanguageContext';
-import { LightUpSpec, WebLightUpGenerator, LightUpStep, ExtendedTierKey } from '../engines/lightupGenerator';
+import {
+  LightUpSpec,
+  WebLightUpGenerator,
+  LightUpStep,
+  ExtendedTierKey,
+  generateAkariSignature,
+} from '../engines/lightupGenerator';
 import { CognitiveRadarChart } from './CognitiveRadarChart';
 import { PBCelebrationModal } from './PBCelebrationModal';
+import { VaultManager } from '../utils/vaultStorage';
 
 interface Props {
   puzzle?: PuzzleEntity;
@@ -15,11 +22,17 @@ interface Props {
 
 type CellState = 0 | 1 | 2 | 3;
 
-export const LightUpBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
+export const LightUpBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode = false }) => {
   const actualPuzzle = puzzleData || puzzle;
   const { lang } = useLanguage();
   const isEn = lang === 'en';
-  const { recordAttempt, profile, getCompositeCognitiveIndex, exportLongitudinalDataset } = useLearnerProfile();
+  const {
+    recordAttempt,
+    profile,
+    getCompositeCognitiveIndex,
+    getSpatialCompositeIndex,
+    exportLongitudinalDataset,
+  } = useLearnerProfile();
 
   const spec = (actualPuzzle?.puzzle || actualPuzzle) as unknown as LightUpSpec;
   const rows = spec?.rows || 5;
@@ -40,11 +53,15 @@ export const LightUpBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
 
   const [isCompleted, setIsCompleted] = useState<boolean>(false);
   const [elapsedMs, setElapsedMs] = useState<number>(0);
+  const [remainingSec, setRemainingSec] = useState<number>(
+    actualPuzzle?.metrics?.estimated_time_sec || 90
+  );
   const [showPBModal, setShowPBModal] = useState<boolean>(false);
   const [proofSignature, setProofSignature] = useState<string | null>(null);
+  const [isFav, setIsFav] = useState<boolean>(false);
 
   // 模式控制
-  const [isNoGuessMode, setIsNoGuessMode] = useState<boolean>(true);
+  const [isNoGuessMode, setIsNoGuessMode] = useState<boolean>(!tournamentMode);
   const [isNoteMode, setIsNoteMode] = useState<boolean>(false);
   const [isFocusDarkness, setIsFocusDarkness] = useState<boolean>(false);
   const [guessWarning, setGuessWarning] = useState<string | null>(null);
@@ -58,6 +75,8 @@ export const LightUpBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
   const startTimeRef = useRef<number>(Date.now());
   const hasRecordedRef = useRef<boolean>(false);
 
+  const timeLimitSec = actualPuzzle?.metrics?.estimated_time_sec || 90;
+
   useEffect(() => {
     const b: CellState[][] = Array.from({ length: rows }, () => Array(cols).fill(0));
     for (const blk of blackBlocks) b[blk.r][blk.c] = 2;
@@ -65,6 +84,7 @@ export const LightUpBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
     setPencilNotes(Array.from({ length: rows }, () => Array(cols).fill(false)));
     setIsCompleted(false);
     setElapsedMs(0);
+    setRemainingSec(timeLimitSec);
     setTotalActions(0);
     setCorrections(0);
     setProofSignature(null);
@@ -72,17 +92,25 @@ export const LightUpBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
     setHintLevel(0);
     setActiveHintStep(null);
     setIsFocusDarkness(false);
+    setIsFav(VaultManager.isFavorited(actualPuzzle?.id || ''));
     startTimeRef.current = Date.now();
     hasRecordedRef.current = false;
-  }, [actualPuzzle?.id, rows, cols]);
+  }, [actualPuzzle?.id, rows, cols, timeLimitSec]);
 
   useEffect(() => {
     if (isCompleted) return;
     const interval = setInterval(() => {
-      setElapsedMs(Date.now() - startTimeRef.current);
+      const now = Date.now();
+      const spent = now - startTimeRef.current;
+      setElapsedMs(spent);
+
+      if (tournamentMode) {
+        const left = Math.max(0, timeLimitSec - Math.floor(spent / 1000));
+        setRemainingSec(left);
+      }
     }, 100);
     return () => clearInterval(interval);
-  }, [isCompleted]);
+  }, [isCompleted, tournamentMode, timeLimitSec]);
 
   const litMatrix = useMemo(() => {
     const lit: boolean[][] = Array.from({ length: rows }, () => Array(cols).fill(false));
@@ -192,7 +220,7 @@ export const LightUpBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
     [rows, cols, blackBlocks]
   );
 
-  const triggerVictory = useCallback(() => {
+  const triggerVictory = useCallback(async () => {
     setIsCompleted(true);
     const timeSpent = Math.max(1, Math.round((Date.now() - startTimeRef.current) / 1000));
 
@@ -212,30 +240,22 @@ export const LightUpBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
         timeSpentSec: timeSpent,
         conflictsCount: corrections,
         technique: 'RayCastingIlluminance',
-        isPureClear: corrections === 0,
+        isPureClear: corrections === 0 && hintLevel === 0,
       });
 
-      try {
-        const canonical = `${actualPuzzle.id}|${timeSpent}|${tier.toUpperCase()}|CERTIFIED`;
-        const enc = new TextEncoder();
-        window.crypto.subtle.digest('SHA-256', enc.encode(canonical)).then((buf) => {
-          const hex = Array.from(new Uint8Array(buf))
-            .map((b) => b.toString(16).padStart(2, '0'))
-            .join('');
-          setProofSignature(`VERIFIED_${hex.slice(0, 24).toUpperCase()}`);
-        });
-      } catch {
-        setProofSignature(`LOCAL_${Date.now()}`);
-      }
+      const signature = await generateAkariSignature(
+        `AKARI-${actualPuzzle.id}-${timeSpent}-${tier.toUpperCase()}`
+      );
+      setProofSignature(signature);
 
       if (timeSpent <= profile.personalBest.fastestTime) {
         setShowPBModal(true);
       }
     }
-  }, [actualPuzzle, corrections, tier, recordAttempt, profile.personalBest.fastestTime]);
+  }, [actualPuzzle, corrections, tier, recordAttempt, profile.personalBest.fastestTime, hintLevel]);
 
   const handleRequestHint = useCallback(() => {
-    if (isCompleted) return;
+    if (isCompleted || tournamentMode) return;
 
     const deductions = WebLightUpGenerator.getStrictDeductions(rows, cols, blackBlocks, board);
     if (deductions.size === 0) {
@@ -244,6 +264,7 @@ export const LightUpBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
     }
 
     const item = deductions.values().next().value;
+    if (!item) return;
     const { r, c, state, type, rationale, humanReadable } = item;
 
     if (!activeHintStep || activeHintStep.r !== r || activeHintStep.c !== c) {
@@ -258,7 +279,7 @@ export const LightUpBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
     } else {
       setHintLevel((prev) => Math.min(3, prev + 1));
     }
-  }, [isCompleted, rows, cols, blackBlocks, board, isEn, activeHintStep]);
+  }, [isCompleted, tournamentMode, rows, cols, blackBlocks, board, isEn, activeHintStep]);
 
   const toggleCell = (r: number, c: number) => {
     if (isCompleted || board[r][c] === 2) return;
@@ -287,7 +308,7 @@ export const LightUpBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
 
     const isHintExempt = activeHintStep && activeHintStep.r === r && activeHintStep.c === c;
 
-    if (isNoGuessMode && board[r][c] === 0 && !isHintExempt) {
+    if (isNoGuessMode && !tournamentMode && board[r][c] === 0 && !isHintExempt) {
       const deductions = WebLightUpGenerator.getStrictDeductions(rows, cols, blackBlocks, board);
       const deduction = deductions.get(`${r},${c}`);
 
@@ -323,14 +344,28 @@ export const LightUpBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
     if (navigator.vibrate) navigator.vibrate(8);
   };
 
+  const handleToggleFavorite = () => {
+    if (!actualPuzzle) return;
+    const nextFav = VaultManager.toggleFavorite({
+      id: actualPuzzle.id,
+      engine: 'lightup',
+      tier: String(tier),
+      seed: 12345,
+      steps: totalActions,
+      timeSpentSec: Math.round(elapsedMs / 1000),
+      date: new Date().toLocaleDateString(),
+    });
+    setIsFav(nextFav);
+  };
+
   const cci = useMemo(() => getCompositeCognitiveIndex(), [getCompositeCognitiveIndex, isCompleted]);
+  const sci = useMemo(() => getSpatialCompositeIndex(), [getSpatialCompositeIndex, isCompleted]);
 
   const eleganceIndex = useMemo(() => {
     if (totalActions === 0) return 100;
     return Math.max(0, Math.round(((totalActions - corrections * 1.5) / totalActions) * 100));
   }, [totalActions, corrections]);
 
-  // 進階定式診斷統計
   const techniqueCounts = useMemo(() => {
     const counts: Record<string, number> = {
       zero: 0,
@@ -365,8 +400,12 @@ export const LightUpBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
       {/* 頂部數據列 */}
       <div className="w-full grid grid-cols-3 gap-1 mb-1.5 text-[9px]">
         <div className="bg-slate-950 border border-slate-800 p-1.5 rounded text-center">
-          <div className="text-slate-500 text-[7px]">{isEn ? '⏱️ Speed' : '⏱️ 競速'}</div>
-          <div className="text-slate-200 font-bold">{(elapsedMs / 1000).toFixed(1)}s</div>
+          <div className="text-slate-500 text-[7px]">
+            {tournamentMode ? (isEn ? '⏱️ Countdown' : '⏱️ 倒數計時') : (isEn ? '⏱️ Speed' : '⏱️ 競速')}
+          </div>
+          <div className={`font-bold ${tournamentMode && remainingSec <= 20 ? 'text-rose-400 animate-pulse' : 'text-slate-200'}`}>
+            {tournamentMode ? `${remainingSec}s` : `${(elapsedMs / 1000).toFixed(1)}s`}
+          </div>
         </div>
         <div className="bg-slate-950 border border-slate-800 p-1.5 rounded text-center">
           <div className="text-slate-500 text-[7px]">{isEn ? '🎯 Elegance' : '🎯 優雅指數'}</div>
@@ -384,10 +423,29 @@ export const LightUpBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
         </div>
       </div>
 
-      {/* 難度階梯與縮放控制列 */}
+      {/* 難度階梯、傳奇收藏與縮放控制列 */}
       <div className="w-full flex items-center justify-between px-1 mb-1.5">
         <div className="flex items-center gap-1.5">
-          {tier === 'legendary' ? (
+          {tournamentMode ? (
+            <span className="px-2 py-0.5 rounded-full bg-amber-950 border border-amber-500 text-amber-300 text-[7.5px] font-extrabold flex items-center gap-1">
+              🏆 {isEn ? 'WPF Tournament Mode' : 'WPF 賽事鎖定'}
+            </span>
+          ) : (
+            <button
+              onClick={handleToggleFavorite}
+              className={`px-1.5 py-0.5 rounded text-[7.5px] border font-bold ${
+                isFav ? 'bg-amber-950 border-amber-500 text-amber-300' : 'bg-slate-900 border-slate-800 text-slate-500'
+              }`}
+            >
+              {isFav ? '★ 傳奇' : '☆ 收藏'}
+            </button>
+          )}
+
+          {tier === 'ultimate' ? (
+            <span className="px-2 py-0.5 rounded-full bg-purple-950 border border-purple-500 text-purple-300 text-[7.5px] font-extrabold flex items-center gap-1">
+              ⚡ {isEn ? 'Ultimate 10×10' : '極限級 10×10'}
+            </span>
+          ) : tier === 'legendary' ? (
             <span className="px-2 py-0.5 rounded-full bg-rose-950/80 border border-rose-500 text-rose-300 text-[7.5px] font-extrabold flex items-center gap-1 shadow-[0_0_8px_rgba(244,63,94,0.3)]">
               👑 {isEn ? 'Legendary 9×9' : '傳奇級 9×9'}
             </span>
@@ -396,6 +454,7 @@ export const LightUpBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
               ✨ {isEn ? '180° Balanced' : '180° 對稱'}
             </span>
           ) : null}
+
           <button
             onClick={() => setIsFocusDarkness((prev) => !prev)}
             className={`px-1.5 py-0.5 rounded text-[7px] border transition ${
@@ -407,6 +466,7 @@ export const LightUpBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
             🌑 {isEn ? 'Dark Focus' : '聚焦暗區'}
           </button>
         </div>
+
         <div className="flex items-center gap-1">
           <button
             onClick={() => setBoardScale((s) => Math.max(0.75, Number((s - 0.05).toFixed(2))))}
@@ -467,9 +527,7 @@ export const LightUpBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
           <div
             className="grid gap-1 bg-slate-900/90 p-1.5 rounded-lg border border-slate-800"
             style={{
-              gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
-              width: cols * cellSize + (cols - 1) * 4 + 12,
-              height: rows * cellSize + (rows - 1) * 4 + 12,
+              gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`
             }}
           >
             {board.map((row, r) =>
@@ -480,7 +538,6 @@ export const LightUpBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
                 const blockStatus = blockStatusMap.get(`${r},${c}`);
                 const hasPencilX = pencilNotes[r][c];
 
-                // 聚焦暗區模式高亮邏輯
                 const isDimmed = isFocusDarkness && cell !== 2 && isLit && cell !== 1;
 
                 return (
@@ -538,7 +595,7 @@ export const LightUpBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
       </div>
 
       {/* 3 階提示階梯訊息卡片 */}
-      {hintLevel > 0 && activeHintStep && (
+      {!tournamentMode && hintLevel > 0 && activeHintStep && (
         <div className="mt-2.5 p-2 bg-amber-950/70 border border-amber-500/60 rounded-lg text-[8px] text-amber-200 text-center max-w-xs animate-fade-in">
           <div className="font-bold flex items-center justify-center gap-1 mb-0.5">
             <span>💡 {isEn ? 'Hint Ladder' : '因果思考提示'}</span>
@@ -572,16 +629,19 @@ export const LightUpBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
       {/* 控制列 */}
       <div className="flex items-center justify-between w-full max-w-xs mt-2 px-1">
         <div className="flex gap-1.5">
-          <button
-            onClick={() => setIsNoGuessMode((prev) => !prev)}
-            className={`px-2 py-1 text-[8px] font-bold rounded-md border transition ${
-              isNoGuessMode
-                ? 'bg-emerald-500/20 border-emerald-400 text-emerald-300 shadow-[0_0_8px_rgba(16,185,129,0.3)]'
-                : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            🧠 {isNoGuessMode ? '無猜測 ON' : '無猜測'}
-          </button>
+          {!tournamentMode && (
+            <button
+              onClick={() => setIsNoGuessMode((prev) => !prev)}
+              className={`px-2 py-1 text-[8px] font-bold rounded-md border transition ${
+                isNoGuessMode
+                  ? 'bg-emerald-500/20 border-emerald-400 text-emerald-300 shadow-[0_0_8px_rgba(16,185,129,0.3)]'
+                  : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              🧠 {isNoGuessMode ? '無猜測 ON' : '無猜測'}
+            </button>
+          )}
+
           <button
             onClick={() => setIsNoteMode((prev) => !prev)}
             className={`px-2 py-1 text-[8px] font-bold rounded-md border transition ${
@@ -592,12 +652,15 @@ export const LightUpBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
           >
             ✏️ {isNoteMode ? '草稿 ✕ ON' : '草稿 ✕'}
           </button>
-          <button
-            onClick={handleRequestHint}
-            className="px-2 py-1 text-[8px] font-bold rounded-md border bg-slate-900 border-amber-500/50 text-amber-300 hover:bg-amber-950/40 transition flex items-center gap-0.5"
-          >
-            💡 {isEn ? 'Hint' : '提示'}
-          </button>
+
+          {!tournamentMode && (
+            <button
+              onClick={handleRequestHint}
+              className="px-2 py-1 text-[8px] font-bold rounded-md border bg-slate-900 border-amber-500/50 text-amber-300 hover:bg-amber-950/40 transition flex items-center gap-0.5"
+            >
+              💡 {isEn ? 'Hint' : '提示'}
+            </button>
+          )}
         </div>
         <span className="text-[7px] text-slate-400">
           {isNoteMode
@@ -610,6 +673,11 @@ export const LightUpBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
       {isCompleted && (
         <div className="mt-3 p-3 bg-slate-950/95 border border-amber-500/60 rounded-xl text-center w-full max-w-xs shadow-2xl animate-fade-in font-mono">
           <div className="text-amber-300 font-bold text-xs mb-0.5">✨ MUSEUM ILLUMINATED</div>
+          {tier === 'ultimate' && (
+            <div className="text-[8px] text-purple-400 font-extrabold mb-0.5">
+              ⚡ {isEn ? 'ULTIMATE 10×10 CONQUERED' : '極限級 10×10 完美通關'}
+            </div>
+          )}
           {tier === 'legendary' && (
             <div className="text-[8px] text-rose-400 font-extrabold mb-0.5">
               👑 {isEn ? 'LEGENDARY 9×9 CONQUERED' : '傳奇級 9×9 完美通關'}
@@ -621,7 +689,7 @@ export const LightUpBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
             </div>
           )}
           <div className="text-[9px] text-slate-400 mb-2">
-            {isEn ? 'Time' : '耗時'}: {(elapsedMs / 1000).toFixed(2)}s | Gf: IQ {cci.standardIQ}
+            {isEn ? 'Time' : '耗時'}: {(elapsedMs / 1000).toFixed(2)}s | Gf: IQ {cci.standardIQ} | 空間量尺: {sci.standardScore}/19
           </div>
 
           {/* 定式推理診斷清單 */}
@@ -636,6 +704,22 @@ export const LightUpBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
               <div>⚡ 1-2 XOR 複合: {techniqueCounts.xor} 次</div>
               <div>🔀 對角互斥定式: {techniqueCounts.diagonal} 次</div>
               <div>🔦 孤立光源收斂: {techniqueCounts.isolated} 次</div>
+            </div>
+          </div>
+
+          {/* 空間推理綜合指數 (SCI) 卡片 */}
+          <div className="bg-slate-900/90 border border-cyan-800/80 p-2 rounded-lg mb-2 text-left text-[7.5px]">
+            <div className="text-cyan-300 font-bold mb-1 flex justify-between">
+              <span>🧭 空間綜合能力指數 (SCI)</span>
+              <span className="text-emerald-400">PR {sci.spatialPercentile}%</span>
+            </div>
+            <div className="grid grid-cols-3 gap-1 text-center py-1 bg-slate-950/80 rounded mb-1 text-[7px]">
+              <div>迴路控制: <strong className="text-cyan-300">{sci.eulerianLoopControl}</strong></div>
+              <div>黑海分割: <strong className="text-cyan-300">{sci.planarPartitioning}</strong></div>
+              <div>射線投射: <strong className="text-amber-300">{sci.rayTracingControl}</strong></div>
+            </div>
+            <div className="text-[6.5px] text-slate-400 mt-1">
+              💡 {sci.recommendedDrill}
             </div>
           </div>
 
@@ -656,8 +740,8 @@ export const LightUpBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
               />
             </div>
             <div className="flex justify-between text-[7px] text-slate-400 mt-1">
-              <span>⬛ {isEn ? 'Block Clues' : '黑塊定式'}: {deductionStats.blockCount} {isEn ? '步' : '步'}</span>
-              <span>🔦 {isEn ? 'Ray Coverage' : '射線覆蓋'}: {deductionStats.rayCount} {isEn ? '步' : '步'}</span>
+              <span>⬛ {isEn ? 'Block Clues' : '黑塊定式'}: {deductionStats.blockCount} 步</span>
+              <span>🔦 {isEn ? 'Ray Coverage' : '射線覆蓋'}: {deductionStats.rayCount} 步</span>
             </div>
 
             <div className="mt-2 pt-1.5 border-t border-slate-800 flex justify-between items-center text-[7.5px]">
@@ -684,7 +768,7 @@ export const LightUpBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
           {proofSignature && (
             <div className="mt-2 p-1.5 bg-slate-900 border border-slate-800 rounded text-left">
               <div className="text-[6.5px] font-mono text-cyan-400/80 break-all select-all">
-                {proofSignature}
+                🛡️ SHA-256 賽事認證: {proofSignature}
               </div>
             </div>
           )}
