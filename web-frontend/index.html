@@ -9,14 +9,14 @@
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="theme-color" content="#090d14" />
 
-  <!-- 修正 CSP：允許 WASM 編譯、Blob 與 Worker -->
+  <!-- 修正 CSP：允許 WASM 編譯、Blob、Worker 與外聯 CDN -->
   <meta http-equiv="Content-Security-Policy" content="
     default-src 'self';
     script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' 'unsafe-eval' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net;
     style-src 'self' 'unsafe-inline';
-    img-src 'self' data: blob:;
+    img-src 'self' data: blob: https:;
     font-src 'self' data:;
-    connect-src 'self' data: blob:;
+    connect-src 'self' data: blob: https:;
     worker-src 'self' blob:;
     object-src 'none';
     base-uri 'self';
