@@ -21,11 +21,9 @@
 
 ## 📖 關於本專案 / About This Project
 
-> **這是一個為了給兒子伴隨成長而親手打造的遊戲專案。**  
-> 誠邀所有同好一同體驗、參與與交流，願我們都能重拾思維頓悟的純粹樂趣！
+> **這是一個為了給兒子伴隨成長而親手打造的遊戲專案。** > 誠邀所有同好一同體驗、參與與交流，願我們都能重拾思維頓悟的純粹樂趣！
 >
-> *A personal project handcrafted to accompany my son as he grows up.*  
-> *Warmly inviting all puzzle enthusiasts to play, explore, and share the pure joy of logical insight!*
+> *A personal project handcrafted to accompany my son as he grows up.* > *Warmly inviting all puzzle enthusiasts to play, explore, and share the pure joy of logical insight!*
 
 ---
 
@@ -87,23 +85,28 @@
 
 平台所有題型均錨定 **Cattell-Horn-Carroll (CHC) 認知能力模型**，即時計算動態認知負荷與難度量表：
 
+```mermaid
+flowchart TD
+    Gf["🧠 Gf (流體推理 / Fluid Intelligence)"]
 
-┌────────────────────────┐
-│      Gf (流體推理)      │
-│   Fluid Intelligence   │
-└───────────┬────────────┘
-│
-┌───────────────────────┼───────────────────────┐
-▼                       ▼                       ▼
-┌──────────────┐        ┌──────────────┐        ┌──────────────┐
-│  Gv (空間視覺) │        │  Nq (數量推理) │        │ Gwm (工作記憶)│
-│Visual-Spatial│        │ Quantitative │        │Working Memory│
-└───────┬──────┘        └───────┬──────┘        └───────┬──────┘
-│                       │                       │
-├─ Maze (心智導航)       ├─ Sudoku (交叉排他)     ├─ 候選數動態保留
-├─ Masyu (拓撲迴路)      ├─ Kakuro (整數分割)     ├─ 前瞻路徑模擬
-├─ Nurikabe (平面分割)   ├─ Futoshiki (DAG偏序)   └─ 錯誤時序監測
-└─ Light Up (射線投射)   └─ Dominoes (鋪砌全集)
+    Gf --> Gv["🧭 Gv (空間視覺 / Visual-Spatial)"]
+    Gf --> Nq["🔢 Nq (數量推理 / Quantitative)"]
+    Gf --> Gwm["⚡ Gwm (工作記憶 / Working Memory)"]
+
+    Gv --> M1["Maze (心智導航)"]
+    Gv --> M2["Masyu (拓撲迴路)"]
+    Gv --> M3["Nurikabe (平面分割)"]
+    Gv --> M4["Light Up (射線投射)"]
+
+    Nq --> N1["Sudoku (交叉排他)"]
+    Nq --> N2["Kakuro (整數分割)"]
+    Nq --> N3["Futoshiki (DAG偏序)"]
+    Nq --> N4["Dominoes (鋪砌全集)"]
+
+    Gwm --> W1["候選數動態保留"]
+    Gwm --> W2["前瞻路徑模擬"]
+    Gwm --> W3["錯誤時序監測"]
+```
 
 ---
 
@@ -126,8 +129,10 @@ npm run dev
 
 # 進行生產環境構建與型別檢查 / Production build & type-check
 npm run build
+```
 
-專案目錄結構 / Directory Layout
+### 專案目錄結構 / Directory Layout
+```text
 web-frontend/
 ├── public/                  # 靜態資源、PWA manifest 與 Service Worker (sw.js)
 ├── src/
@@ -138,7 +143,10 @@ web-frontend/
 │   ├── utils/               # Web Crypto 簽章、安全儲存 (SecureStorage)
 │   ├── App.tsx              # 主儀表板、非同步時間切片生成與賽事模式路由
 │   └── main.tsx             # 應用入口
+```
 
-授權條款 / License
-本專案採用 MIT License 授權開放開源社群交流使用。
+---
 
+## 授權條款 / License
+
+本專案採用 [MIT License](LICENSE) 授權開放開源社群交流使用。
