@@ -2,7 +2,6 @@
 <html lang="zh-HK">
 <head>
   <meta charset="UTF-8" />
-  <!-- 啟用 iOS/Android 沉浸式手機全螢幕設定 -->
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, shrink-to-fit=no, viewport-fit=cover" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
@@ -10,87 +9,64 @@
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="theme-color" content="#090d14" />
 
-  <!-- ============================================================
-       🔒 企業級安全策略 (Enterprise Security Policy)
-       ============================================================ -->
-  <!-- 1. Content Security Policy: 限制腳本、樣式與資料連線來源 -->
+  <!-- 修正 CSP：允許 WASM 編譯、Blob 與 Worker -->
   <meta http-equiv="Content-Security-Policy" content="
     default-src 'self';
-    script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net;
+    script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' 'unsafe-eval' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net;
     style-src 'self' 'unsafe-inline';
     img-src 'self' data: blob:;
-    font-src 'self';
-    connect-src 'self';
+    font-src 'self' data:;
+    connect-src 'self' data: blob:;
+    worker-src 'self' blob:;
     object-src 'none';
     base-uri 'self';
     form-action 'none';
   " />
-  <!-- 2. 防點擊劫持與 MIME 混淆 -->
-  <meta http-equiv="X-Frame-Options" content="DENY" />
   <meta http-equiv="X-Content-Type-Options" content="nosniff" />
   <meta name="referrer" content="strict-origin-when-cross-origin" />
 
-  <!-- ============================================================
-       🔍 Google 搜尋引擎優化 (Search Engine Optimization)
-       ============================================================ -->
-<meta name="google-site-verification" content="JZ5UohX-CcP_fQV0_DI9VadkKY4ZoTTkUifL88-fIcY" />
+  <meta name="google-site-verification" content="JZ5UohX-CcP_fQV0_DI9VadkKY4ZoTTkUifL88-fIcY" />
 
   <title>Lawgic 羅輯・遊戲 | 高精度邏輯推理、空間運算與競技解題平台</title>
-  <meta name="description" content="Lawgic (羅輯) 是一款純前端即時演算法益智競技平台。收錄空間迷宮 (Maze)、數獨魔陣 (Sudoku)、摩天透視 (Skyscraper) 與星際數橋 (Hashi)，提供自適應戰霧視野、因果提示鏈與零信任 SHA-256 賽事存證。" />
-  <meta name="keywords" content="Lawgic, 羅輯, 羅輯遊戲, Logic Games, 數獨, Sudoku, 空間迷宮, Maze, 摩天透視, Skyscraper Puzzle, 數橋, Hashiwokakero, 心理計量, 認知訓練, 智力運動, WPF, PWA" />
+  <meta name="description" content="Lawgic (羅輯) 是一款純前端即時演算法益智競技平台。收錄空間迷宮、數獨魔陣、摩天透視、星際數橋等，提供因果提示鏈與零信任存證。" />
+  <meta name="keywords" content="Lawgic, 羅輯, 數獨, Sudoku, 空間迷宮, Maze, 摩天透視, 數橋, PWA" />
   <meta name="author" content="羅子淇 Jacky Law" />
   <meta name="robots" content="index, follow" />
   <link rel="canonical" href="https://jackylawck.github.io/Lawgic/" />
 
-  <!-- PWA 與圖標鏈結 (注意相對路徑) -->
+  <!-- PWA 與圖標鏈結 -->
   <link rel="manifest" href="./manifest.json" />
   <link rel="apple-touch-icon" href="./Lawgic192icon.png" />
   <link rel="icon" type="image/png" sizes="192x192" href="./Lawgic192icon.png" />
 
-  <!-- ============================================================
-       📱 Open Graph (Facebook, LINE, WhatsApp, WeChat)
-       ============================================================ -->
+  <!-- Open Graph -->
   <meta property="og:type" content="website" />
   <meta property="og:url" content="https://jackylawck.github.io/Lawgic/" />
   <meta property="og:title" content="Lawgic 羅輯 | 專為思考者打造的純粹邏輯競技場" />
-  <meta property="og:description" content="無廣告、純前端現場演算法生成！體驗 3x3 自適應戰霧迷宮、因果提示階梯數獨與 180° 對稱星際數橋。" />
+  <meta property="og:description" content="無廣告、純前端現場演算法生成！" />
   <meta property="og:image" content="https://jackylawck.github.io/Lawgic/Lawgic512icon.png" />
-  <meta property="og:image:width" content="512" />
-  <meta property="og:image:height" content="512" />
 
-  <!-- ============================================================
-       🐦 Twitter / X Card
-       ============================================================ -->
+  <!-- Twitter Card -->
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:url" content="https://jackylawck.github.io/Lawgic/" />
   <meta name="twitter:title" content="Lawgic 羅輯 | Logic Games" />
-  <meta name="twitter:description" content="Deterministic procedural puzzle generator with zero-trust SHA-256 audit proofs. Featuring Sudoku, Maze, Skyscraper, and Hashi." />
+  <meta name="twitter:description" content="Deterministic procedural puzzle generator." />
   <meta name="twitter:image" content="https://jackylawck.github.io/Lawgic/Lawgic512icon.png" />
 
-  <!-- ============================================================
-       💡 Google 結構化資料 (Schema.org / JSON-LD for VideoGame/WebApplication)
-       ============================================================ -->
   <script type="application/ld+json">
   {
     "@context": "https://schema.org",
     "@type": "WebApplication",
     "name": "Lawgic 羅輯",
-    "alternateName": "Lawgic Logic Games",
     "url": "https://jackylawck.github.io/Lawgic/",
     "applicationCategory": "GameApplication",
-    "operatingSystem": "All",
-    "genre": "Puzzle, Logic, Cognitive Training",
-    "author": {
-      "@type": "Person",
-      "name": "羅子淇 Jacky Law"
-    },
-    "description": "High-precision logic puzzle platform engineered for puzzle enthusiasts and mental athletics. Includes Sudoku, Maze, Skyscraper, and Hashi."
+    "operatingSystem": "All"
   }
   </script>
 </head>
 <body class="bg-[#090d14] text-slate-200 overflow-x-hidden select-none">
   <div id="root"></div>
-  <script type="module" src="/src/main.tsx"></script>
+  <script type="module" src="./src/main.tsx"></script>
 
   <script>
     if ('serviceWorker' in navigator && window.location.protocol.startsWith('http')) {
