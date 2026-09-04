@@ -139,39 +139,95 @@ const MainDashboard: React.FC = () => {
   const [toastMsg, setToastMsg] = useState<string | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // 【核心優化】：輕量池，只儲存玩家實際生成過或導入的題目
-  const [dynamicPuzzles, setDynamicPuzzles] = useState<Record<string, PuzzleEntity[]>>({
-    maze: [],
-    sudoku: [],
-    nonogram: [],
-    nurikabe: [],
-    skyscraper: [],
-    hashi: [],
-    kropki: [],
-    slitherlink: [],
-    tents: [],
-    lightup: [],
+  // 防止同一難度與遊戲並行重複觸發批次生成的鎖定標記
+  const isGeneratingRef = useRef<boolean>(false);
+
+  // 初次啟動僅生成 1 題迷宮，其餘分類為空，確保 0ms 秒開
+  const [dynamicPuzzles, setDynamicPuzzles] = useState<Record<string, PuzzleEntity[]>>(() => {
+    const initialPool: Record<string, PuzzleEntity[]> = {
+      maze: [],
+      sudoku: [],
+      nonogram: [],
+      nurikabe: [],
+      skyscraper: [],
+      hashi: [],
+      kropki: [],
+      slitherlink: [],
+      tents: [],
+      lightup: [],
+    };
+
+    try {
+      const p = generateEnginePuzzle('maze', 'kids');
+      if (p) {
+        p.id = `maze_kids_init_0`;
+        initialPool.maze.push(p);
+      }
+    } catch (e) {
+      console.error('Initial puzzle gen error:', e);
+    }
+
+    return initialPool;
   });
 
-  // 【按需生成】：當前選中分類與難度若無題目，立即單獨生成 1 題
-  useEffect(() => {
-    const staticList = (PUZZLE_CATALOG[selectedType] || []).filter((p) => (p.tier || 'kids') === currentLevel);
-    const liveList = (dynamicPuzzles[selectedType] || []).filter((p) => (p.tier || 'kids') === currentLevel);
-
-    if (staticList.length === 0 && liveList.length === 0) {
-      const p = generateEnginePuzzle(selectedType, currentLevel);
-      if (p) {
-        p.id = `${selectedType}_${currentLevel}_live_${Date.now().toString(36)}`;
-        setDynamicPuzzles((prev) => ({
-          ...prev,
-          [selectedType]: [p, ...(prev[selectedType] || [])],
-        }));
-        setPuzzleIndex(0);
-      }
-    }
+  // 計算當前遊戲與難度下的題目列表
+  const activeList = useMemo(() => {
+    const staticList = PUZZLE_CATALOG[selectedType] || [];
+    const liveList = dynamicPuzzles[selectedType] || [];
+    const fullList = [...liveList, ...staticList];
+    return fullList.filter((p) => ((p.tier as ExtendedTierKey) || 'kids') === currentLevel);
   }, [selectedType, currentLevel, dynamicPuzzles]);
 
-  // 監聽外部導航
+  const activePuzzle = activeList.length > 0 ? activeList[puzzleIndex % activeList.length] : null;
+
+  // 核心邏輯：非同步批次追補題目（每次追補 5 題，間隔 30ms 確保主執行緒完全流暢）
+  const appendBatchPuzzles = useCallback(
+    async (gameId: string, tier: ExtendedTierKey, count: number = 5) => {
+      if (isGeneratingRef.current) return;
+      isGeneratingRef.current = true;
+
+      const generated: PuzzleEntity[] = [];
+      for (let i = 0; i < count; i++) {
+        try {
+          const p = generateEnginePuzzle(gameId, tier);
+          if (p) {
+            p.id = `${gameId}_${tier}_batch_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 5)}`;
+            generated.push(p);
+          }
+        } catch (err) {
+          console.warn(`Engine ${gameId} batch error:`, err);
+        }
+        // 讓出主執行緒，確保點擊與畫面更新不卡頓
+        await new Promise((resolve) => setTimeout(resolve, 30));
+      }
+
+      if (generated.length > 0) {
+        setDynamicPuzzles((prev) => ({
+          ...prev,
+          [gameId]: [...(prev[gameId] || []), ...generated],
+        }));
+      }
+
+      isGeneratingRef.current = false;
+    },
+    []
+  );
+
+  // 【規則一】：點進全新遊戲或切換難度時，若該分類題庫為空（或少於 2 題），自動補足 5 題
+  useEffect(() => {
+    if (activeList.length < 2 && !isGeneratingRef.current) {
+      appendBatchPuzzles(selectedType, currentLevel, 5);
+    }
+  }, [selectedType, currentLevel, activeList.length, appendBatchPuzzles]);
+
+  // 【規則二】：當做到第 5 題（或倒數最後 1 題）時，背景自動再追補 5 題
+  useEffect(() => {
+    if (activeList.length > 0 && puzzleIndex >= activeList.length - 1 && !isGeneratingRef.current) {
+      appendBatchPuzzles(selectedType, currentLevel, 5);
+    }
+  }, [puzzleIndex, activeList.length, selectedType, currentLevel, appendBatchPuzzles]);
+
+  // 外部導航事件
   useEffect(() => {
     const handleNav = (e: Event) => {
       const customEvent = e as CustomEvent<{ gameId?: string }>;
@@ -184,7 +240,7 @@ const MainDashboard: React.FC = () => {
     return () => window.removeEventListener('logicore:navigate-game', handleNav);
   }, []);
 
-  // 監聽挑戰碼 URL Hash
+  // 挑戰碼解析
   useEffect(() => {
     const checkHashChallenge = () => {
       const hash = window.location.hash;
@@ -230,16 +286,6 @@ const MainDashboard: React.FC = () => {
 
   const isSpatialExplorationType = selectedType === 'maze';
 
-  // 取得當前難度的題目列表
-  const activeList = useMemo(() => {
-    const staticList = PUZZLE_CATALOG[selectedType] || [];
-    const liveList = dynamicPuzzles[selectedType] || [];
-    const fullList = [...liveList, ...staticList];
-    return fullList.filter((p) => ((p.tier as ExtendedTierKey) || 'kids') === currentLevel);
-  }, [selectedType, currentLevel, dynamicPuzzles]);
-
-  const activePuzzle = activeList.length > 0 ? activeList[puzzleIndex % activeList.length] : null;
-
   const handlePrevPuzzle = useCallback(() => {
     if (navigator.vibrate) navigator.vibrate(8);
     setPuzzleIndex((prev) => (prev > 0 ? prev - 1 : Math.max(0, activeList.length - 1)));
@@ -255,7 +301,7 @@ const MainDashboard: React.FC = () => {
 
     const newPuzzle = generateEnginePuzzle(selectedType, currentLevel);
     if (newPuzzle) {
-      newPuzzle.id = `${selectedType}_${currentLevel}_live_${Date.now().toString(36)}`;
+      newPuzzle.id = `${selectedType}_${currentLevel}_manual_${Date.now().toString(36)}`;
       setDynamicPuzzles((prev) => ({
         ...prev,
         [selectedType]: [newPuzzle, ...(prev[selectedType] || [])],
@@ -331,7 +377,6 @@ const MainDashboard: React.FC = () => {
 
   return (
     <main className="min-h-screen bg-[#090d14] text-slate-200 flex flex-col items-center py-2 px-2 font-mono selection:bg-indigo-600">
-      {/* pointer-events-none 確保透明遮罩絕不阻擋點擊 */}
       {toastMsg && (
         <div className="fixed top-2 z-50 px-3 py-1.5 bg-cyan-600 border border-cyan-400 text-white font-bold text-xs rounded-full shadow-2xl animate-fade-in pointer-events-none">
           {toastMsg}
@@ -474,7 +519,7 @@ const MainDashboard: React.FC = () => {
         </section>
       ) : (
         <div className="mt-12 p-8 border border-slate-800 text-center max-w-sm rounded-xl">
-          <p className="text-slate-500 text-xs">{isEn ? 'Generating puzzle...' : '題目生成中...'}</p>
+          <p className="text-slate-500 text-xs">{isEn ? 'Generating puzzles...' : '題目載入生成中...'}</p>
         </div>
       )}
     </main>
