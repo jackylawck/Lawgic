@@ -23,6 +23,7 @@ import { WebLightUpGenerator } from './engines/lightupGenerator';
 import { WebFutoshikiGenerator } from './engines/futoshikiGenerator';
 import { WebHitoriGenerator } from './engines/hitoriGenerator';
 import { WebKakuroGenerator } from './engines/kakuroGenerator';
+import { WebMasyuGenerator } from './engines/masyuGenerator';
 
 export type ExtendedTierKey = TierKey | 'legendary' | 'ultimate';
 
@@ -47,6 +48,7 @@ const ALL_GAMES: PuzzleMeta[] = [
   { id: 'kakuro', nameZh: '數和密碼', nameEn: 'Kakuro', icon: '➕' },
   { id: 'hitori', nameZh: '孤島數壹', nameEn: 'Hitori', icon: '⬛' },
   { id: 'futoshiki', nameZh: '天平不等', nameEn: 'Futoshiki', icon: '⚖️' },
+  { id: 'masyu', nameZh: '珍珠迴路', nameEn: 'Masyu', icon: '⚪' },
   { id: 'jigsaw', nameZh: '幾何拼圖', nameEn: 'Jigsaw', icon: '🧩' },
   { id: 'dominoes', nameZh: '骨牌矩陣', nameEn: 'Dominoes', icon: '🀄' },
 ];
@@ -119,6 +121,9 @@ function generateEnginePuzzle(gameId: string, tier: ExtendedTierKey): PuzzleEnti
       case 'kakuro':
         puzzle = WebKakuroGenerator.generate(tier as any);
         break;
+      case 'masyu':
+        puzzle = WebMasyuGenerator.generate(tier as any);
+        break;
       default:
         return null;
     }
@@ -154,7 +159,6 @@ const MainDashboard: React.FC = () => {
 
   const isGeneratingRef = useRef<boolean>(false);
 
-  // 初次啟動僅生成 1 題迷宮，確保 0ms 開屏秒開
   const [dynamicPuzzles, setDynamicPuzzles] = useState<Record<string, PuzzleEntity[]>>(() => {
     const initialPool: Record<string, PuzzleEntity[]> = {
       maze: [],
@@ -170,6 +174,7 @@ const MainDashboard: React.FC = () => {
       futoshiki: [],
       hitori: [],
       kakuro: [],
+      masyu: [],
     };
 
     try {
@@ -194,7 +199,6 @@ const MainDashboard: React.FC = () => {
 
   const activePuzzle = activeList.length > 0 ? activeList[puzzleIndex % activeList.length] : null;
 
-  // 核心非同步批次生成邏輯
   const appendBatchPuzzles = useCallback(
     async (gameId: string, tier: ExtendedTierKey, count: number = 5) => {
       if (isGeneratingRef.current) return;
@@ -228,14 +232,12 @@ const MainDashboard: React.FC = () => {
     []
   );
 
-  // 切換至新遊戲或新階層時，自動補足 5 題
   useEffect(() => {
     if (activeList.length < 2 && !isGeneratingRef.current) {
       appendBatchPuzzles(selectedType, currentLevel, 5);
     }
   }, [selectedType, currentLevel, activeList.length, appendBatchPuzzles]);
 
-  // 做題推進至末尾時，背後自動追補 5 題
   useEffect(() => {
     if (activeList.length > 0 && puzzleIndex >= activeList.length - 1 && !isGeneratingRef.current) {
       appendBatchPuzzles(selectedType, currentLevel, 5);
@@ -397,14 +399,12 @@ const MainDashboard: React.FC = () => {
 
   return (
     <main className="min-h-screen bg-[#090d14] text-slate-200 flex flex-col items-center py-2 px-2 font-mono selection:bg-indigo-600">
-      {/* 提示訊息浮層 */}
       {toastMsg && (
         <div className="fixed top-2 z-50 px-3 py-1.5 bg-cyan-600 border border-cyan-400 text-white font-bold text-xs rounded-full shadow-2xl animate-fade-in pointer-events-none">
           {toastMsg}
         </div>
       )}
 
-      {/* 神經網絡演算法生成呼吸指示器 */}
       {isGenerating && (
         <div className="fixed top-1 left-1/2 -translate-x-1/2 z-50 flex items-center gap-1.5 px-3 py-1 bg-slate-900/95 border border-indigo-500/80 rounded-full text-indigo-300 text-[8px] font-mono shadow-2xl animate-pulse pointer-events-none">
           <div className="w-2 h-2 rounded-full border border-indigo-400 border-t-transparent animate-spin" />
