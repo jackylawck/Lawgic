@@ -9,7 +9,7 @@ import { VirtualGamepad } from './components/VirtualGamepad';
 import { useLearnerProfile, TierKey } from './hooks/useLearnerProfile';
 import { ChallengeCodec } from './utils/challengeCodec';
 
-// 匯入已完成的世界級演算法生成器
+// 匯入演算法生成器
 import { WebMazeGenerator } from './engines/mazeGenerator';
 import { WebSudokuGenerator } from './engines/sudokuGenerator';
 import { WebNonogramGenerator } from './engines/nonogramGenerator';
@@ -139,79 +139,39 @@ const MainDashboard: React.FC = () => {
   const [toastMsg, setToastMsg] = useState<string | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // 輕量化初始化：首屏僅生成當前顯示的迷宮，避免同步執行重度回溯導致主執行緒卡死
-  const [dynamicPuzzles, setDynamicPuzzles] = useState<Record<string, PuzzleEntity[]>>(() => {
-    const initialPool: Record<string, PuzzleEntity[]> = {
-      maze: [],
-      sudoku: [],
-      nonogram: [],
-      nurikabe: [],
-      skyscraper: [],
-      hashi: [],
-      kropki: [],
-      slitherlink: [],
-      tents: [],
-      lightup: [],
-    };
-
-    try {
-      const p = generateEnginePuzzle('maze', 'kids');
-      if (p) {
-        p.id = `maze_kids_init_1`;
-        initialPool.maze.push(p);
-      }
-    } catch (e) {
-      console.error('Initial puzzle gen error:', e);
-    }
-
-    return initialPool;
+  // 【核心優化】：輕量池，只儲存玩家實際生成過或導入的題目
+  const [dynamicPuzzles, setDynamicPuzzles] = useState<Record<string, PuzzleEntity[]>>({
+    maze: [],
+    sudoku: [],
+    nonogram: [],
+    nurikabe: [],
+    skyscraper: [],
+    hashi: [],
+    kropki: [],
+    slitherlink: [],
+    tents: [],
+    lightup: [],
   });
 
-  // 異步背景延遲排程生成其餘題目，給予 UI 讓出執行緒
+  // 【按需生成】：當前選中分類與難度若無題目，立即單獨生成 1 題
   useEffect(() => {
-    let isMounted = true;
-    const activeEngines = [
-      'maze',
-      'sudoku',
-      'nonogram',
-      'nurikabe',
-      'skyscraper',
-      'hashi',
-      'kropki',
-      'slitherlink',
-      'tents',
-      'lightup',
-    ];
+    const staticList = (PUZZLE_CATALOG[selectedType] || []).filter((p) => (p.tier || 'kids') === currentLevel);
+    const liveList = (dynamicPuzzles[selectedType] || []).filter((p) => (p.tier || 'kids') === currentLevel);
 
-    const fillPoolAsync = async () => {
-      for (const tier of LEVEL_KEYS) {
-        for (const engineId of activeEngines) {
-          if (!isMounted) return;
-          try {
-            const p = generateEnginePuzzle(engineId, tier);
-            if (p) {
-              p.id = `${engineId}_${tier}_bg_${Date.now().toString(36).slice(-4)}`;
-              setDynamicPuzzles((prev) => ({
-                ...prev,
-                [engineId]: [...(prev[engineId] || []), p],
-              }));
-            }
-          } catch (err) {
-            console.warn(`Engine ${engineId} skipped:`, err);
-          }
-          await new Promise((resolve) => setTimeout(resolve, 60));
-        }
+    if (staticList.length === 0 && liveList.length === 0) {
+      const p = generateEnginePuzzle(selectedType, currentLevel);
+      if (p) {
+        p.id = `${selectedType}_${currentLevel}_live_${Date.now().toString(36)}`;
+        setDynamicPuzzles((prev) => ({
+          ...prev,
+          [selectedType]: [p, ...(prev[selectedType] || [])],
+        }));
+        setPuzzleIndex(0);
       }
-    };
+    }
+  }, [selectedType, currentLevel, dynamicPuzzles]);
 
-    const timer = setTimeout(fillPoolAsync, 600);
-    return () => {
-      isMounted = false;
-      clearTimeout(timer);
-    };
-  }, []);
-
-  // 監聽外部導航自訂事件
+  // 監聽外部導航
   useEffect(() => {
     const handleNav = (e: Event) => {
       const customEvent = e as CustomEvent<{ gameId?: string }>;
@@ -224,7 +184,7 @@ const MainDashboard: React.FC = () => {
     return () => window.removeEventListener('logicore:navigate-game', handleNav);
   }, []);
 
-  // 監聽挑戰碼 URL Hash：好友挑戰即時解析與元數據快顯
+  // 監聽挑戰碼 URL Hash
   useEffect(() => {
     const checkHashChallenge = () => {
       const hash = window.location.hash;
@@ -233,6 +193,7 @@ const MainDashboard: React.FC = () => {
         const importedPuzzle = ChallengeCodec.decode(code);
         if (importedPuzzle) {
           setSelectedType(importedPuzzle.engine_type);
+          setCurrentLevel((importedPuzzle.tier as ExtendedTierKey) || 'kids');
           setDynamicPuzzles((prev) => ({
             ...prev,
             [importedPuzzle.engine_type]: [importedPuzzle, ...(prev[importedPuzzle.engine_type] || [])],
@@ -260,7 +221,6 @@ const MainDashboard: React.FC = () => {
     return () => window.removeEventListener('hashchange', checkHashChallenge);
   }, [isEn]);
 
-  // 動態設置頁面標題
   useEffect(() => {
     const activeGame = ALL_GAMES.find((g) => g.id === selectedType);
     const gameName = activeGame ? (isEn ? activeGame.nameEn : activeGame.nameZh) : 'Cognitive Arena';
@@ -270,28 +230,14 @@ const MainDashboard: React.FC = () => {
 
   const isSpatialExplorationType = selectedType === 'maze';
 
-  const filteredPuzzles = useMemo(() => {
+  // 取得當前難度的題目列表
+  const activeList = useMemo(() => {
     const staticList = PUZZLE_CATALOG[selectedType] || [];
     const liveList = dynamicPuzzles[selectedType] || [];
     const fullList = [...liveList, ...staticList];
+    return fullList.filter((p) => ((p.tier as ExtendedTierKey) || 'kids') === currentLevel);
+  }, [selectedType, currentLevel, dynamicPuzzles]);
 
-    const grouped: Record<ExtendedTierKey, PuzzleEntity[]> = {
-      kids: [],
-      intermediate: [],
-      expert: [],
-      master: [],
-      legendary: [],
-      ultimate: [],
-    };
-
-    fullList.forEach((p) => {
-      const tier = (p.tier as ExtendedTierKey) || 'kids';
-      if (grouped[tier]) grouped[tier].push(p);
-    });
-    return grouped;
-  }, [selectedType, dynamicPuzzles]);
-
-  const activeList = filteredPuzzles[currentLevel] || [];
   const activePuzzle = activeList.length > 0 ? activeList[puzzleIndex % activeList.length] : null;
 
   const handlePrevPuzzle = useCallback(() => {
@@ -308,8 +254,8 @@ const MainDashboard: React.FC = () => {
     if (navigator.vibrate) navigator.vibrate(20);
 
     const newPuzzle = generateEnginePuzzle(selectedType, currentLevel);
-
     if (newPuzzle) {
+      newPuzzle.id = `${selectedType}_${currentLevel}_live_${Date.now().toString(36)}`;
       setDynamicPuzzles((prev) => ({
         ...prev,
         [selectedType]: [newPuzzle, ...(prev[selectedType] || [])],
@@ -385,7 +331,7 @@ const MainDashboard: React.FC = () => {
 
   return (
     <main className="min-h-screen bg-[#090d14] text-slate-200 flex flex-col items-center py-2 px-2 font-mono selection:bg-indigo-600">
-      {/* 加入 pointer-events-none 確保 Toast 浮層絕不阻擋任何按鈕點擊 */}
+      {/* pointer-events-none 確保透明遮罩絕不阻擋點擊 */}
       {toastMsg && (
         <div className="fixed top-2 z-50 px-3 py-1.5 bg-cyan-600 border border-cyan-400 text-white font-bold text-xs rounded-full shadow-2xl animate-fade-in pointer-events-none">
           {toastMsg}
@@ -427,14 +373,11 @@ const MainDashboard: React.FC = () => {
             }}
             className="flex-1 min-w-0 bg-slate-900 border border-slate-700 text-slate-200 text-xs rounded px-2 py-1 outline-none focus:border-indigo-500 cursor-pointer"
           >
-            {ALL_GAMES.map((game) => {
-              const count = (PUZZLE_CATALOG[game.id]?.length || 0) + (dynamicPuzzles[game.id]?.length || 0);
-              return (
-                <option key={game.id} value={game.id} disabled={count === 0} className="bg-slate-900 text-slate-200">
-                  {game.icon} {isEn ? game.nameEn : game.nameZh} ({count})
-                </option>
-              );
-            })}
+            {ALL_GAMES.map((game) => (
+              <option key={game.id} value={game.id} className="bg-slate-900 text-slate-200">
+                {game.icon} {isEn ? game.nameEn : game.nameZh}
+              </option>
+            ))}
           </select>
 
           <select
@@ -445,14 +388,11 @@ const MainDashboard: React.FC = () => {
             }}
             className="w-28 shrink-0 bg-slate-900 border border-slate-700 text-cyan-300 text-xs font-bold rounded px-2 py-1 outline-none focus:border-cyan-500 cursor-pointer"
           >
-            {LEVEL_KEYS.map((tierKey) => {
-              const count = filteredPuzzles[tierKey]?.length || 0;
-              return (
-                <option key={tierKey} value={tierKey} className="bg-slate-900 text-cyan-300">
-                  {isEn ? TIER_NAMES[tierKey].en : TIER_NAMES[tierKey].zh} ({count})
-                </option>
-              );
-            })}
+            {LEVEL_KEYS.map((tierKey) => (
+              <option key={tierKey} value={tierKey} className="bg-slate-900 text-cyan-300">
+                {isEn ? TIER_NAMES[tierKey].en : TIER_NAMES[tierKey].zh}
+              </option>
+            ))}
           </select>
         </div>
 
@@ -534,7 +474,7 @@ const MainDashboard: React.FC = () => {
         </section>
       ) : (
         <div className="mt-12 p-8 border border-slate-800 text-center max-w-sm rounded-xl">
-          <p className="text-slate-500 text-xs">{isEn ? 'No puzzles in this tier' : '本階梯暫無題目'}</p>
+          <p className="text-slate-500 text-xs">{isEn ? 'Generating puzzle...' : '題目生成中...'}</p>
         </div>
       )}
     </main>
