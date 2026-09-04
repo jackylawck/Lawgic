@@ -28,12 +28,15 @@ interface ProcessTelemetry {
   cognitiveAdvantage: number;
 }
 
-const getDefaultViewMode = (tier: TierKey): ViewMode => {
+// 預設視野：專家、大師、傳奇、終極開局皆為 3x3 戰霧
+const getDefaultViewMode = (tier: string): ViewMode => {
   switch (tier) {
     case 'kids': return 'full';
     case 'intermediate': return 5;
-    case 'expert': return 3;
-    case 'master': return 3;
+    case 'expert':
+    case 'master':
+    case 'legendary':
+    case 'ultimate': return 3;
     default: return 'full';
   }
 };
@@ -52,7 +55,14 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode 
   const isEn = lang === 'en';
 
   const currentTier = (actualPuzzle?.tier as TierKey) || 'kids';
-  const isMaster = currentTier === 'master';
+  // 取得真實階梯（優先讀取實際 tier，以相容傳奇與終極）
+  const actualTier =
+    (actualPuzzle as any)?.puzzle?.actualTier ||
+    (actualPuzzle as any)?.metrics?.actualTier ||
+    currentTier;
+
+  // 只有終極難度強制鎖死迷霧
+  const isUltimate = actualTier === 'ultimate';
 
   const rawData = (actualPuzzle as any)?.puzzle || (actualPuzzle as any)?.spec || (actualPuzzle as any);
   const baseGrid: number[][] = rawData?.grid || [];
@@ -107,7 +117,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode 
   const [isWallBlockedPulse, setIsWallBlockedPulse] = useState<boolean>(false);
 
   // 自適應戰霧視野狀態
-  const [viewMode, setViewMode] = useState<ViewMode>(() => getDefaultViewMode(currentTier));
+  const [viewMode, setViewMode] = useState<ViewMode>(() => getDefaultViewMode(actualTier));
   const [isCompleted, setIsCompleted] = useState<boolean>(false);
   const [showPBModal, setShowPBModal] = useState<boolean>(false);
   const [showSubmitModal, setShowSubmitModal] = useState<boolean>(false);
@@ -136,7 +146,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode 
     setVisitedSet(new Set([`${startPos[0]},${startPos[1]}`]));
     setBreadcrumbs(new Set());
     setLookOffset({ x: 0, y: 0 });
-    setViewMode(getDefaultViewMode(currentTier));
+    setViewMode(getDefaultViewMode(actualTier));
     setIsCompleted(false);
     setIsReplaying(false);
     setReplayStep(0);
@@ -153,7 +163,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode 
     hasRecordedRef.current = false;
 
     if (replayTimerRef.current) clearInterval(replayTimerRef.current);
-  }, [actualPuzzle?.id, startPos, currentTier]);
+  }, [actualPuzzle?.id, startPos, actualTier]);
 
   useEffect(() => {
     if (isCompleted) return;
@@ -166,16 +176,18 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode 
     return () => cancelAnimationFrame(frameId);
   }, [isCompleted]);
 
+  // 視野切換控制器：只有終極（Ultimate）難度完全鎖死，其他階梯均可切換
   const handleCycleViewMode = () => {
-    if (isMaster || isCompleted || isReplaying) return;
+    if (isUltimate || isCompleted || isReplaying) return;
     if (navigator.vibrate) navigator.vibrate(10);
 
     setViewMode((prev) => {
-      if (currentTier === 'kids') {
+      if (actualTier === 'kids') {
         return prev === 'full' ? 3 : 'full';
-      } else if (currentTier === 'intermediate') {
+      } else if (actualTier === 'intermediate') {
         return prev === 5 ? 'full' : 5;
       } else {
+        // 專家、大師、傳奇：3x3 戰霧 與 全見視野 雙向自由切換
         return prev === 3 ? 'full' : 3;
       }
     });
@@ -251,7 +263,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode 
 
           if (!hasRecordedRef.current && actualPuzzle) {
             hasRecordedRef.current = true;
-            
+
             const baseIrt = (actualPuzzle.metrics as any)?.irt_logit_difficulty || 0.0;
             const viewBonus = viewMode === 3 ? 0.6 : viewMode === 5 ? 0.3 : 0.0;
             const weightedIrt = Number((baseIrt + viewBonus).toFixed(2));
@@ -271,7 +283,8 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode 
               conflictsCount: wallHitsRef.current + backtrackCountRef.current,
               technique: 'TopologicalLookahead',
               irtDifficulty: weightedIrt,
-              isPureClear: backtrackCountRef.current === 0 && (isMaster || viewMode !== 'full'),
+              // 終極鎖定或主動開啟戰霧且零回溯視為完美通關
+              isPureClear: backtrackCountRef.current === 0 && (isUltimate || viewMode !== 'full'),
             });
 
             try {
@@ -296,7 +309,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode 
         return newPos;
       });
     },
-    [grid, endPos, isCompleted, isReplaying, visitedSet, actualPuzzle, currentTier, viewMode, isMaster, recordAttempt, profile.personalBest.fastestTime]
+    [grid, endPos, isCompleted, isReplaying, visitedSet, actualPuzzle, currentTier, viewMode, isUltimate, recordAttempt, profile.personalBest.fastestTime]
   );
 
   // 鍵盤移動監聽
@@ -342,7 +355,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode 
     };
   }, [movePlayer, toggleBreadcrumb]);
 
-  // 手勢滑動處理（阻止瀏覽器滾動爭搶）
+  // 手勢滑動處理
   const handleTouchStart = (e: React.TouchEvent) => {
     if (e.touches.length > 0) {
       touchStartRef.current = {
@@ -496,21 +509,22 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode 
           </div>
         </div>
 
+        {/* 視野切換按鈕：僅終極鎖定，大師與傳奇均可點選切換 */}
         <button
           onClick={handleCycleViewMode}
-          disabled={isMaster}
+          disabled={isUltimate}
           className={`p-1 rounded border text-center transition ${
-            isMaster
+            isUltimate
               ? 'bg-purple-950/80 border-purple-500 text-purple-300 cursor-not-allowed shadow-xs font-bold'
               : viewMode !== 'full'
               ? 'bg-indigo-950/90 border-indigo-500 text-indigo-300 font-bold shadow-xs'
               : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'
           }`}
-          title={isMaster ? (isEn ? 'Master tier locks 3x3 fog' : '魔王階梯強制鎖定 3x3 戰霧') : (isEn ? 'Cycle vision mode' : '切換視野模式')}
+          title={isUltimate ? (isEn ? 'Ultimate tier locks 3x3 fog' : '終極階梯強制鎖定 3x3 戰霧') : (isEn ? 'Cycle vision mode' : '切換視野模式')}
         >
           <div className="text-[6.5px]">👁️ {isEn ? 'Vision' : '視野'}</div>
           <div className="text-[7.5px] truncate">
-            {isMaster
+            {isUltimate
               ? (isEn ? '3x3 (Lock)' : '3x3 鎖定')
               : viewMode === 'full'
               ? (isEn ? 'Full View' : '全見視野')
@@ -521,7 +535,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode 
         </button>
       </div>
 
-      {/* 迷宮主盤面（加入 touch-action: none 與撞牆震動樣式） */}
+      {/* 迷宮主盤面 */}
       <div
         className={`relative overflow-hidden p-1 rounded-xl bg-slate-950 border-2 transition-all duration-150 shadow-2xl ${
           isWallBlockedPulse ? 'border-rose-500 ring-2 ring-rose-500/50 scale-[0.99]' : 'border-slate-800'
