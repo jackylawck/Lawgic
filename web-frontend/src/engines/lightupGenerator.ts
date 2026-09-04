@@ -1,7 +1,7 @@
 // web-frontend/src/engines/lightupGenerator.ts
 import { PuzzleEntity, TierKey } from '../generated';
 
-export type ExtendedTierKey = TierKey | 'legendary';
+export type ExtendedTierKey = TierKey | 'legendary' | 'ultimate';
 
 export interface LightUpCoord {
   r: number;
@@ -58,7 +58,18 @@ const TIER_SPECS: Record<ExtendedTierKey, TierConfig> = {
   expert: { rows: 7, cols: 7, blackBlockRatio: 0.24, clueRatio: 0.6, minForcedChain: 9, baseIrt: 1.2 },
   master: { rows: 8, cols: 8, blackBlockRatio: 0.25, clueRatio: 0.5, minForcedChain: 13, baseIrt: 2.2 },
   legendary: { rows: 9, cols: 9, blackBlockRatio: 0.26, clueRatio: 0.45, minForcedChain: 18, baseIrt: 3.0 },
+  ultimate: { rows: 10, cols: 10, blackBlockRatio: 0.28, clueRatio: 0.40, minForcedChain: 24, baseIrt: 4.0 },
 };
+
+export async function generateAkariSignature(payload: string): Promise<string> {
+  if (typeof window !== 'undefined' && window.crypto?.subtle) {
+    const msgBuffer = new TextEncoder().encode(payload);
+    const hashBuffer = await window.crypto.subtle.digest('SHA-256', msgBuffer);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('').slice(0, 16).toUpperCase();
+  }
+  return 'AKARI-' + Math.random().toString(36).substring(2, 10).toUpperCase();
+}
 
 export class WebLightUpGenerator {
   private static inBounds(r: number, c: number, rows: number, cols: number): boolean {
@@ -435,6 +446,7 @@ export class WebLightUpGenerator {
 
       if (deductions.size > 0) {
         const item = deductions.values().next().value;
+        if (!item) break;
         const { r, c, state, type, rationale, humanReadable } = item;
 
         curBoard[r][c] = state === 1 ? 1 : 3;
@@ -475,7 +487,7 @@ export class WebLightUpGenerator {
       const { blackBlocks, solutionBulbs } = groundTruth;
       const { steps, maxForcedChain, pureRate } = this.traceSolvingProcess(rows, cols, blackBlocks);
 
-      if ((tier === 'master' || tier === 'legendary') && (maxForcedChain < minForcedChain || pureRate < 0.88)) {
+      if ((tier === 'master' || tier === 'legendary' || tier === 'ultimate') && (maxForcedChain < minForcedChain || pureRate < 0.88)) {
         continue;
       }
 
@@ -487,7 +499,7 @@ export class WebLightUpGenerator {
         id: puzzleId,
         category: 'spatial_logic' as any,
         engine_type: 'lightup',
-        tier: (tier === 'legendary' ? 'master' : tier) as TierKey,
+        tier: (tier === 'ultimate' || tier === 'legendary' ? 'master' : tier) as TierKey,
         checksum: `LIGHTUP_${rows}x${cols}_${tier.toUpperCase()}_${Date.now().toString(36)}`,
         puzzle: {
           rows,
@@ -525,7 +537,7 @@ export class WebLightUpGenerator {
       id: `lightup_${tier}_fallback_${Date.now()}`,
       category: 'spatial_logic' as any,
       engine_type: 'lightup',
-      tier: (tier === 'legendary' ? 'master' : tier) as TierKey,
+      tier: (tier === 'ultimate' || tier === 'legendary' ? 'master' : tier) as TierKey,
       checksum: `LIGHTUP_FALLBACK_${rows}x${cols}`,
       puzzle: {
         rows, cols,
