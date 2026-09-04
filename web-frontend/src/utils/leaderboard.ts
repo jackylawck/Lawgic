@@ -26,12 +26,10 @@ export class LeaderboardManager {
     const base = Math.max(50, Math.round(100 + irtDifficulty * 40));
     const speedRatio = Math.max(0, (timeLimitSec - timeSpentSec) / timeLimitSec);
     const speedBonus = Math.round(speedRatio * 50);
-    // 每次提示扣減 15 分，最低保留 30 分基礎分
     const penalty = hintsUsed * 15;
     return Math.max(30, base + speedBonus - penalty);
   }
 
-  // 納入 hintsUsed 的防篡改數位簽名
   public static generateSignature(
     checksum: string,
     points: number,
