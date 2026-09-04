@@ -3,6 +3,8 @@ import React, { Suspense } from 'react';
 import { PuzzleEntity } from '../generated';
 import { MazeBoard } from '../components/MazeBoard';
 import { SudokuBoard } from '../components/SudokuBoard';
+import { NonogramBoard } from '../components/NonogramBoard';
+import { NurikabeBoard } from '../components/NurikabeBoard';
 import { SkyscraperBoard } from '../components/SkyscraperBoard';
 import { HashiBoard } from '../components/HashiBoard';
 import { KropkiBoard } from '../components/KropkiBoard';
@@ -10,10 +12,13 @@ import { SlitherlinkBoard } from '../components/SlitherlinkBoard';
 import { TentsBoard } from '../components/TentsBoard';
 import { LightUpBoard } from '../components/LightUpBoard';
 
-// 8 大世界級神作級引擎映射表 (支援引擎別名容錯)
+// 10 大世界級經典引擎映射表 (支援引擎別名容錯)
 export const RENDERERS: Record<string, React.ComponentType<any>> = {
   maze: MazeBoard,
   sudoku: SudokuBoard,
+  nonogram: NonogramBoard,
+  picross: NonogramBoard,
+  nurikabe: NurikabeBoard,
   skyscraper: SkyscraperBoard,
   hashi: HashiBoard,
   hashiwokakero: HashiBoard,
@@ -38,7 +43,6 @@ const LoadingSkeleton: React.FC = () => (
 );
 
 export const PuzzleRenderer: React.FC<PuzzleRendererProps> = ({ puzzle, tournamentMode = false }) => {
-  // 雙向相容 engine_type (snake_case) 與 engineType (camelCase)
   const rawEngine = puzzle?.engine_type || (puzzle as any)?.engineType;
 
   if (!puzzle || !rawEngine) {
@@ -49,7 +53,6 @@ export const PuzzleRenderer: React.FC<PuzzleRendererProps> = ({ puzzle, tourname
     );
   }
 
-  // 正規化引擎字串，避免大小寫或多餘空白導致找不到組件
   const normalizedKey = String(rawEngine).trim().toLowerCase();
   const Component = RENDERERS[normalizedKey];
 
