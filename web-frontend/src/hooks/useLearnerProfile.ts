@@ -59,6 +59,15 @@ export interface BookmarkRecord {
   bookmarkedAt: string;
 }
 
+export interface SpatialCompositeIndex {
+  standardScore: number;       // 常模標度分 (Scaled 1~19)
+  spatialPercentile: number;   // PR 百分位數 (1~99)
+  eulerianLoopControl: number; // 拓撲迴路掌控力 (0~100)
+  planarPartitioning: number;  // 平面分割適應力 (0~100)
+  rayTracingControl: number;   // 正交射線覆蓋力 (0~100)
+  recommendedDrill: string;    // 個人化空間專項訓練建議
+}
+
 export interface LearnerProfileState {
   totalAttempts: number;
   currentStreak: number;
@@ -478,6 +487,55 @@ export const useLearnerProfile = () => {
     };
   }, [profile]);
 
+  // 空間推理綜合指數 (Spatial Composite Index, SCI)
+  const getSpatialCompositeIndex = useCallback((): SpatialCompositeIndex => {
+    const history = profile.recentRecords || profile.history || [];
+    const masyuRecords = history.filter((a) => a.engineType === 'masyu' && a.isSuccess);
+    const nurikabeRecords = history.filter((a) => a.engineType === 'nurikabe' && a.isSuccess);
+    const lightupRecords = history.filter((a) => a.engineType === 'lightup' && a.isSuccess);
+
+    const calcControl = (records: AttemptPayload[], baseWeight: number) => {
+      if (records.length === 0) return 72;
+      const avgScore = records.reduce((acc, cur) => {
+        const pureBonus = cur.isPureClear ? 100 : 80;
+        const penalty = Math.min(30, (cur.conflictsCount || 0) * 5);
+        return acc + pureBonus - penalty;
+      }, 0) / records.length;
+      return Math.min(100, Math.max(30, Math.round(avgScore)));
+    };
+
+    const eulerianLoopControl = calcControl(masyuRecords, 0.35);
+    const planarPartitioning = calcControl(nurikabeRecords, 0.35);
+    const rayTracingControl = calcControl(lightupRecords, 0.30);
+
+    const weightedScore = Math.round(
+      eulerianLoopControl * 0.35 +
+      planarPartitioning * 0.35 +
+      rayTracingControl * 0.30
+    );
+
+    const standardScore = Math.min(19, Math.max(1, Math.round(10 + (weightedScore - 75) / 4.5)));
+    const spatialPercentile = Math.min(99, Math.max(1, Math.round(100 / (1 + Math.exp(-(standardScore - 10) / 1.8)))));
+
+    let recommendedDrill = '空間推理能力三項均衡，建議挑戰 Master 級題目以突破更高難度維度！';
+    if (eulerianLoopControl < planarPartitioning - 6 && eulerianLoopControl < rayTracingControl - 6) {
+      recommendedDrill = '弱點定位：白黑珍珠幾何轉折前瞻力偏弱，建議強化 Masyu 相鄰黑珍珠排斥與閉環練習。';
+    } else if (planarPartitioning < eulerianLoopControl - 6 && planarPartitioning < rayTracingControl - 6) {
+      recommendedDrill = '弱點定位：平面連通黑海分割容易遭遇池塘阻滯，建議強化 Nurikabe 2×2 禁池與孤島收斂練習。';
+    } else if (rayTracingControl < eulerianLoopControl - 6 && rayTracingControl < planarPartitioning - 6) {
+      recommendedDrill = '弱點定位：正交射線互斥與光源覆蓋意識需提升，建議練習 Light Up 1-2 黑塊 XOR 與走廊投射。';
+    }
+
+    return {
+      standardScore,
+      spatialPercentile,
+      eulerianLoopControl,
+      planarPartitioning,
+      rayTracingControl,
+      recommendedDrill,
+    };
+  }, [profile]);
+
   const getBenchmarkMetrics = useCallback(
     (technique: string, defaultTime: number, currentEngineType?: string): BenchmarkMetrics => {
       const stat = profile.techniqueStats[technique];
@@ -548,13 +606,15 @@ export const useLearnerProfile = () => {
 
   const exportLongitudinalDataset = useCallback(() => {
     const cci = getCompositeCognitiveIndex();
-    const dataDictionaryMd = `# LogiCore 認知評估數據集 — 數據字典 (Data Dictionary v2.7.0)
+    const sci = getSpatialCompositeIndex();
+    const dataDictionaryMd = `# LogiCore 認知評估數據集 — 數據字典 (Data Dictionary v2.8.0)
 
 ## 1. 全域指標 (Global Psychometrics)
 - **estimatedStandardIQ**: Wechsler 標準量尺 IQ (μ=100, σ=15)。
 - **pureStreak**: 當前純挑戰 (Pure Mode) 連續通關場次。
 - **hintTrend**: 長期提示調用分佈 (T1: 0~30s, T2: 30~60s, T3: 60s+)。
 - **compositeGf**: 原始流體智力估計值 (0.000 ~ 1.000)。
+- **spatialCompositeIndex**: 空間拓撲與射線投射能力綜合量尺 (Scaled 1~19, PR 1~99)。
 - **csem**: 條件測量標準誤。
 - **confidenceInterval95**: [整數, 整數]。95% 信賴區間。
 - **ageNorm**: 年齡分層常模對照。
@@ -562,18 +622,18 @@ export const useLearnerProfile = () => {
 - **splitHalfReliability**: Spearman-Brown 分半信度。
 
 ## 2. 五維認知能力負荷 (CHC Taxonomy)
-- **spatial**: 空間表徵與 3D 心理旋轉 (25%)。
-- **numeric**: 數理約束傳播與邏輯演繹 (25%)。
+- **spatial**: 空間表徵、3D 心理旋轉與射線追蹤 (25%)。
+- **numeric**: 數理約束傳播與整數分割 (25%)。
 - **workingMemory**: 候選數保留與拓撲記憶 (20%)。
-- **inhibition**: 衝動決策抑制 (15%)。
+- **inhibition**: 衝動決策與 2×2 禁池抑制 (15%)。
 - **processingSpeed**: 視知覺運動辨別速度 (15%)。
 `;
 
     const exportBundle = {
-      $schema: 'https://logicore.app/schemas/psychometrics-v2.7.json',
+      $schema: 'https://logicore.app/schemas/psychometrics-v2.8.json',
       metadata: {
         platform: 'LogiCore Clinical-Grade Cognitive Engine',
-        version: '2.7.0',
+        version: '2.8.0',
         exportedAt: new Date().toISOString(),
         userAge: profile.userAge,
         totalEvaluatedSessions: profile.totalAttempts,
@@ -589,6 +649,7 @@ export const useLearnerProfile = () => {
         confidenceInterval95: cci.ci95IQ,
         ageStratifiedComparison: cci.ageNorm,
         psychometricReliability: cci.reliability,
+        spatialComposite: sci,
         longitudinalHintTrend: profile.hintTrend,
       },
       fiveDimensionsProfile: profile.cognitiveDimensions,
@@ -601,11 +662,11 @@ export const useLearnerProfile = () => {
     const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(exportBundle, null, 2));
     const downloadAnchor = document.createElement('a');
     downloadAnchor.setAttribute('href', dataStr);
-    downloadAnchor.setAttribute('download', `LogiCore_Psychometrics_Dataset_v2.7_${Date.now()}.json`);
+    downloadAnchor.setAttribute('download', `LogiCore_Psychometrics_Dataset_v2.8_${Date.now()}.json`);
     document.body.appendChild(downloadAnchor);
     downloadAnchor.click();
     downloadAnchor.remove();
-  }, [profile, getCompositeCognitiveIndex]);
+  }, [profile, getCompositeCognitiveIndex, getSpatialCompositeIndex]);
 
   return {
     profile,
@@ -616,6 +677,7 @@ export const useLearnerProfile = () => {
     getBenchmarkMetrics,
     getBenchmarkTime,
     getCompositeCognitiveIndex,
+    getSpatialCompositeIndex,
     exportLongitudinalDataset,
   };
 };
