@@ -35,6 +35,13 @@ export interface MasyuSpec {
   avgSegmentLength: number;
 }
 
+export interface MasyuErrorDiagnostics {
+  degreeOverflowCount: number;
+  subloopCount: number;
+  whiteViolationCount: number;
+  blackViolationCount: number;
+}
+
 export function mulberry32(a: number) {
   return function () {
     let t = (a += 0x6d2b79f5);
@@ -81,7 +88,6 @@ export class WebMasyuGenerator {
     return r >= 0 && r < size && c >= 0 && c < size;
   }
 
-  // 驗證給定線段集合是否構成完全符合規則的單一歐拉閉環
   public static validateSolution(
     grid: PearlType[][],
     edges: Set<string>,
@@ -98,12 +104,10 @@ export class WebMasyuGenerator {
       adj.get(v)!.push(u);
     }
 
-    // 1. 度數檢驗：經過的所有節點度數必須恰好為 2
     for (const neighbors of adj.values()) {
       if (neighbors.length !== 2) return false;
     }
 
-    // 2. 嚴格連通性檢驗：必須恰好構成一個完整的閉合環
     const allActiveNodes = Array.from(adj.keys());
     const visited = new Set<string>();
     const startNode = allActiveNodes[0];
@@ -127,14 +131,13 @@ export class WebMasyuGenerator {
       return edges.has(this.makeEdgeKey(r1, c1, r2, c2));
     };
 
-    // 3. 白黑珍珠幾何定式檢驗
     for (let r = 0; r < size; r++) {
       for (let c = 0; c < size; c++) {
         const pearl = grid[r][c];
         if (pearl === 'none') continue;
 
         const key = `${r},${c}`;
-        if (!adj.has(key)) return false; // 珍珠不可被忽略
+        if (!adj.has(key)) return false;
 
         const neighbors = adj.get(key)!;
         const [nr1, nc1] = neighbors[0].split(',').map(Number);
@@ -177,7 +180,6 @@ export class WebMasyuGenerator {
     return true;
   }
 
-  // 生成真正隨機蜿蜒的自避單一閉合迴路
   public static generateRandomWindingLoop(size: number, rnd: () => number): [number, number][] | null {
     const visited = Array.from({ length: size }, () => Array(size).fill(false));
     const path: [number, number][] = [[0, 0]];
@@ -219,7 +221,6 @@ export class WebMasyuGenerator {
     return null;
   }
 
-  // CSP 唯一解回溯求解器
   public static countSolutions(grid: PearlType[][], size: number, limit: number = 2): number {
     const allEdges: [number, number, number, number][] = [];
     for (let r = 0; r < size; r++) {
@@ -251,7 +252,6 @@ export class WebMasyuGenerator {
       const d1 = degrees.get(k1)!;
       const d2 = degrees.get(k2)!;
 
-      // 剪枝：頂點度數不可大於 2
       if (d1 < 2 && d2 < 2) {
         const eKey = this.makeEdgeKey(r1, c1, r2, c2);
         currentEdges.add(eKey);
@@ -272,17 +272,14 @@ export class WebMasyuGenerator {
     return solutions;
   }
 
-  // 高階定式引擎：涵蓋相鄰黑珍珠排斥與 2x2 白珍珠互斥
   public static getNextForcedDeduction(
     grid: PearlType[][],
     currentEdges: Set<string>,
     size: number
   ): MasyuHintStep | null {
-    // 定式 1：相鄰黑珍珠排斥
     for (let r = 0; r < size; r++) {
       for (let c = 0; c < size; c++) {
         if (grid[r][c] === 'black') {
-          // 水平相鄰黑珍珠
           if (c + 1 < size && grid[r][c + 1] === 'black') {
             const betweenEdge = this.makeEdgeKey(r, c, r, c + 1);
             if (!currentEdges.has(betweenEdge)) {
@@ -302,7 +299,6 @@ export class WebMasyuGenerator {
               };
             }
           }
-          // 垂直相鄰黑珍珠
           if (r + 1 < size && grid[r + 1][c] === 'black') {
             const betweenEdge = this.makeEdgeKey(r, c, r + 1, c);
             if (!currentEdges.has(betweenEdge)) {
@@ -326,7 +322,6 @@ export class WebMasyuGenerator {
       }
     }
 
-    // 定式 2：貼邊黑珍珠
     for (let r = 0; r < size; r++) {
       for (let c = 0; c < size; c++) {
         if (grid[r][c] === 'black') {
@@ -368,7 +363,6 @@ export class WebMasyuGenerator {
       }
     }
 
-    // 定式 3：白珍珠直線貫穿
     for (let r = 0; r < size; r++) {
       for (let c = 0; c < size; c++) {
         if (grid[r][c] === 'white') {
@@ -395,7 +389,6 @@ export class WebMasyuGenerator {
     return null;
   }
 
-  // 賽事級題目生成
   public static generate(tier: ExtendedTierKey = 'kids', inputSeed?: number): PuzzleEntity {
     const config = TIER_SPECS[tier] || TIER_SPECS.kids;
     const { size, minWhite, minBlack, baseIrt, timeLimitSec } = config;
@@ -459,7 +452,6 @@ export class WebMasyuGenerator {
       if (blackCount < minBlack || whiteCount < minWhite) continue;
       if (!this.validateSolution(grid, solutionEdges, size)) continue;
 
-      // 嚴格唯一解檢驗 (<= 7 階盤面做深度檢查)
       if (size <= 7 && this.countSolutions(grid, size, 2) !== 1) continue;
 
       const turnDensity = Number((turnsCount / path.length).toFixed(2));
@@ -540,6 +532,47 @@ export class WebMasyuGenerator {
       solution: fallbackEdges as any,
       cognitiveLoad: { spatial: 0.9, numeric: 0.1, workingMemory: 0.6, inhibition: 0.85 },
       metrics: { estimated_time_sec: 90, irt_logit_difficulty: config.baseIrt, seed: actualSeed, isSymmetric: true } as any,
+    };
+  }
+
+  // 診斷輔助分析函式
+  public static diagnoseErrors(grid: PearlType[][], edges: Set<string>, size: number): MasyuErrorDiagnostics {
+    const adj = new Map<string, string[]>();
+    for (const edge of edges) {
+      const [u, v] = edge.split('-');
+      if (!adj.has(u)) adj.set(u, []);
+      if (!adj.has(v)) adj.set(v, []);
+      adj.get(u)!.push(v);
+      adj.get(v)!.push(u);
+    }
+
+    let degreeOverflowCount = 0;
+    for (const neighbors of adj.values()) {
+      if (neighbors.length > 2) degreeOverflowCount++;
+    }
+
+    const visited = new Set<string>();
+    let subloops = 0;
+    for (const node of adj.keys()) {
+      if (!visited.has(node)) {
+        subloops++;
+        let curr: string | null = node;
+        let prev: string | null = null;
+        while (curr && !visited.has(curr)) {
+          visited.add(curr);
+          const nexts = adj.get(curr) || [];
+          const nextNode: string | undefined = nexts[0] === prev ? nexts[1] : nexts[0];
+          prev = curr;
+          curr = nextNode || null;
+        }
+      }
+    }
+
+    return {
+      degreeOverflowCount,
+      subloopCount: Math.max(0, subloops - 1),
+      whiteViolationCount: 0,
+      blackViolationCount: 0,
     };
   }
 }
