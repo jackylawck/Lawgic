@@ -1,17 +1,33 @@
 // web-frontend/src/engines/mazeGenerator.ts
 import { PuzzleEntity, TierKey } from '../generated';
 
+export type ExtendedTierKey = TierKey | 'legendary' | 'ultimate';
 export type StrategyPersona = 'Macro-Planner' | 'Wall-Follower' | 'Intuitive-Explorer';
 
+// 32-bit 高品質確定性 PRNG
+function mulberry32(a: number) {
+  return function () {
+    let t = (a += 0x6d2b79f5);
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
 export class WebMazeGenerator {
-  static generate(tier: TierKey, personaBias?: StrategyPersona): PuzzleEntity {
-    // 嚴格奇數網格尺寸階梯 (保證牆壁與通道的嚴格交替幾何結構)
-    const sizeMap: Record<TierKey, number> = {
+  static generate(tier: ExtendedTierKey, personaBias?: StrategyPersona, inputSeed?: number): PuzzleEntity {
+    // 嚴格奇數網格尺寸階梯 (確保壁/道精確交替，完整涵蓋 6 大難度)
+    const sizeMap: Record<ExtendedTierKey, number> = {
       kids: 11,
       intermediate: 17,
       expert: 23,
       master: 29,
+      legendary: 35,
+      ultimate: 41,
     };
+
+    const actualSeed = inputSeed !== undefined ? inputSeed : Math.floor(Math.random() * 0x7fffffff);
+    const rnd = mulberry32(actualSeed);
 
     const size = sizeMap[tier] || 17;
     const width = size;
@@ -46,8 +62,7 @@ export class WebMazeGenerator {
       }
 
       if (neighbors.length > 0) {
-        // 依照玩家特質施加方向慣性偏置
-        let chosenIdx = Math.floor(Math.random() * neighbors.length);
+        let chosenIdx = Math.floor(rnd() * neighbors.length);
         if (personaBias === 'Macro-Planner' && neighbors.length > 1) {
           chosenIdx = 0; // 偏好長直道生成
         }
@@ -60,29 +75,37 @@ export class WebMazeGenerator {
       }
     }
 
-    // 3. 圖論樹直徑搜尋：尋找拓撲距離最長之雙端葉節點作為起訖點
+    // 3. 圖論樹直徑搜尋：雙重 BFS 確保取得整張地圖拓撲距離最長之雙端點
     const { start, end } = this._findTopologicalDiameterEndpoints(grid, width, height);
 
-    // 4. 受控欺騙性死胡同注入 (嚴格不破壞唯一最優解)
-    let distractorCount = tier === 'kids' ? 0 : tier === 'intermediate' ? 3 : tier === 'expert' ? 6 : 10;
+    // 4. 受控欺騙性死胡同注入 (嚴格不破壞唯一解拓撲結構)
+    const distractorBaseMap: Record<ExtendedTierKey, number> = {
+      kids: 0,
+      intermediate: 3,
+      expert: 6,
+      master: 10,
+      legendary: 15,
+      ultimate: 22,
+    };
+    let distractorCount = distractorBaseMap[tier] ?? 4;
     if (personaBias === 'Intuitive-Explorer') distractorCount = Math.round(distractorCount * 1.5);
-    this._injectControlledBlindAlleys(grid, width, height, start, end, distractorCount);
+    this._injectControlledBlindAlleys(grid, width, height, start, end, distractorCount, rnd);
 
-    // 5. 最優解計算 (BFS Shortest & Unique Path)
+    // 5. 最優解計算 (BFS 最短唯一路徑)
     const solution = this._bfs(grid, width, height, start, end);
 
-    // 6. 人類工作記憶與直覺尋路模擬 (FOV=3, Memory Decay=0.7)
+    // 6. 人類工作記憶衰減尋路模擬 (FOV=3, Decay=0.7)
     const limitedHumanPath = this._simulateHumanPathLimited(grid, width, height, start, end, 3, 0.7);
     const baselineWallFollow = this._simulateHumanPath(grid, width, height, start, end);
     const cognitiveGap = Math.max(0, limitedHumanPath.length - solution.length);
 
-    // 7. 心理計量學指標精算
+    // 7. 心理計量學與拓撲指標精算
     const turnCount = this._countTurns(solution);
     const realDeadEndDepth = this._computeRealDeadEndDepth(grid, width, height);
     const pathEntropy = this._computePathEntropy(grid, width, height, solution);
     const tortuosity = this._computeTortuosity(solution);
 
-    // 認知負荷建模 (CHC Gv 空間與 Gs 處理速度)
+    // 認知負荷建模 (CHC Gv 空間與 Gwm 工作記憶)
     const spatialLoad = Math.min(
       1.0,
       0.30 + (tortuosity / 2.5) * 0.40 + (turnCount / Math.max(8, width * 1.2)) * 0.30
@@ -91,34 +114,35 @@ export class WebMazeGenerator {
       1.0,
       0.25 + (pathEntropy / 3.0) * 0.45 + (realDeadEndDepth / 7.0) * 0.30
     );
+    const isHardcore = ['master', 'legendary', 'ultimate'].includes(tier);
     const inhibitionLoad = Math.min(
       1.0,
-      0.25 + (realDeadEndDepth / 6.0) * 0.45 + (tier === 'master' ? 0.30 : 0.15)
+      0.25 + (realDeadEndDepth / 6.0) * 0.45 + (isHardcore ? 0.30 : 0.15)
     );
 
-    // 嚴謹 IRT Logit 難度 (-2.5 ~ +2.5)
+    // 嚴謹 IRT Logit 難度 (-2.5 ~ +4.5)
     const normalizedSteps = limitedHumanPath.length / (width * height);
     const rawDifficulty = pathEntropy * 0.35 + realDeadEndDepth * 0.25 + normalizedSteps * 1.1;
-    const irtLogitDifficulty = Number(Math.max(-2.5, Math.min(2.5, (rawDifficulty - 1.8) * 1.25)).toFixed(2));
+    const tierBonus = tier === 'ultimate' ? 1.8 : tier === 'legendary' ? 1.2 : isHardcore ? 0.6 : 0;
+    const irtLogitDifficulty = Number(Math.max(-2.5, Math.min(4.5, (rawDifficulty - 1.8) * 1.25 + tierBonus)).toFixed(2));
 
     const estimatedTimeSec = Math.round(
-      12 + limitedHumanPath.length * 0.55 + turnCount * 0.8 + (tier === 'master' ? 35 : 0)
+      12 + limitedHumanPath.length * 0.55 + turnCount * 0.8 + (isHardcore ? 40 : 0)
     );
 
-    // 生成結構化推導技巧鏈條 (Solving Path)
     const solvingPath = [
       `Topological Spanning Diameter (${solution.length} steps)`,
       `Decision Entropy Junctions (Entropy: ${pathEntropy.toFixed(1)})`,
       `Inhibition Filter (${Math.round(realDeadEndDepth)} avg dead-end depth)`,
     ];
 
-    const id = `maze_${tier}_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+    const id = `maze_${tier}_s${actualSeed}`;
 
     return {
       id,
       category: 'topological',
       engine_type: 'maze',
-      tier,
+      tier: (tier === 'ultimate' || tier === 'legendary' ? 'master' : tier) as TierKey,
       puzzle: {
         width,
         height,
@@ -127,6 +151,7 @@ export class WebMazeGenerator {
         end,
         goal: end,
         grid,
+        seed: actualSeed,
         visualNoise: tier === 'kids' ? 0.15 : tier === 'intermediate' ? 0.45 : tier === 'expert' ? 0.75 : 0.95,
         adaptedFor: personaBias || 'standard',
         solving_path: solvingPath,
@@ -144,6 +169,7 @@ export class WebMazeGenerator {
         irt_logit_difficulty: irtLogitDifficulty,
         estimated_time_sec: estimatedTimeSec,
         solving_path: solvingPath,
+        seed: actualSeed,
       } as any,
       cognitiveLoad: {
         spatial: Number(spatialLoad.toFixed(2)),
@@ -151,19 +177,15 @@ export class WebMazeGenerator {
         workingMemory: Number(workingMemoryLoad.toFixed(2)),
         inhibition: Number(inhibitionLoad.toFixed(2)),
       },
-      checksum: `maze_${id}`,
+      checksum: `MAZE_${size}x${size}_S${actualSeed}`,
     };
   }
 
-  /**
-   * 圖論樹直徑搜尋演算法：雙重 BFS 獲取整座迷宮拓撲最遠的雙端點
-   */
   private static _findTopologicalDiameterEndpoints(
     grid: number[][],
     width: number,
     height: number
   ): { start: [number, number]; end: [number, number] } {
-    // 尋找第一個通道點
     let firstNode: [number, number] = [1, 1];
     outer: for (let y = 1; y < height - 1; y++) {
       for (let x = 1; x < width - 1; x++) {
@@ -174,9 +196,7 @@ export class WebMazeGenerator {
       }
     }
 
-    // 第一次 BFS：找到距離 firstNode 最遠的葉節點 A
     const furthestA = this._bfsFurthestNode(grid, width, height, firstNode);
-    // 第二次 BFS：找到距離 A 最遠的葉節點 B，形成最大拓撲直徑
     const furthestB = this._bfsFurthestNode(grid, width, height, furthestA);
 
     return { start: furthestA, end: furthestB };
@@ -219,35 +239,45 @@ export class WebMazeGenerator {
     return furthest;
   }
 
-  /**
-   * 受控深層盲巷注入 (嚴格保持唯一最優解不變)
-   */
   private static _injectControlledBlindAlleys(
     grid: number[][],
     width: number,
     height: number,
     start: [number, number],
     end: [number, number],
-    count: number
+    count: number,
+    rnd: () => number
   ): void {
+    if (count <= 0) return;
     const mainSolution = new Set(
       this._bfs(grid, width, height, start, end).map(([x, y]) => `${x},${y}`)
     );
 
     let added = 0;
-    for (let attempt = 0; attempt < count * 30 && added < count; attempt++) {
-      const rx = 1 + 2 * Math.floor(Math.random() * ((width - 3) / 2));
-      const ry = 1 + 2 * Math.floor(Math.random() * ((height - 3) / 2));
+    const candidates: [number, number][] = [];
+    for (let y = 1; y < height - 1; y += 2) {
+      for (let x = 1; x < width - 1; x += 2) {
+        if (mainSolution.has(`${x},${y}`)) candidates.push([x, y]);
+      }
+    }
 
-      // 挑選在主路徑上但有實心外側牆的分岔點
-      if (!mainSolution.has(`${rx},${ry}`)) continue;
+    // 隨機洗牌候選節點
+    for (let i = candidates.length - 1; i > 0; i--) {
+      const j = Math.floor(rnd() * (i + 1));
+      [candidates[i], candidates[j]] = [candidates[j], candidates[i]];
+    }
 
-      for (const [dx, dy] of [
-        [0, 1],
-        [0, -1],
-        [1, 0],
-        [-1, 0],
-      ]) {
+    const dirs = [
+      [0, 1],
+      [0, -1],
+      [1, 0],
+      [-1, 0],
+    ];
+
+    for (const [rx, ry] of candidates) {
+      if (added >= count) break;
+
+      for (const [dx, dy] of dirs) {
         const wallX = rx + dx;
         const wallY = ry + dy;
         const blindX = rx + dx * 2;
@@ -261,11 +291,19 @@ export class WebMazeGenerator {
           grid[wallY][wallX] === 1 &&
           grid[blindY][blindX] === 1
         ) {
-          // 打開盲巷入口與內部一格，不打通對向
-          grid[wallY][wallX] = 0;
-          grid[blindY][blindX] = 0;
-          added++;
-          break;
+          // 確保盲巷內部不連通其他通道
+          const hasLeak = dirs.some(([ddx, ddy]) => {
+            const tx = blindX + ddx;
+            const ty = blindY + ddy;
+            return !(tx === wallX && ty === wallY) && grid[ty]?.[tx] === 0;
+          });
+
+          if (!hasLeak) {
+            grid[wallY][wallX] = 0;
+            grid[blindY][blindX] = 0;
+            added++;
+            break;
+          }
         }
       }
     }
