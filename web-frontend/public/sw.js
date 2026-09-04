@@ -1,5 +1,5 @@
 // web-frontend/public/sw.js
-const CACHE_NAME = 'lawgic-v3';
+const CACHE_NAME = 'lawgic-v4';
 
 self.addEventListener('install', (event) => {
   self.skipWaiting();
@@ -24,6 +24,7 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
+  // 靜態資源優先從網路取得，失敗時回退至快取 (Network-first with cache fallback)
   event.respondWith(
     fetch(event.request)
       .then((response) => {
