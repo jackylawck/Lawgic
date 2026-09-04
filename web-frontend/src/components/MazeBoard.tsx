@@ -55,13 +55,13 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode 
   const isEn = lang === 'en';
 
   const currentTier = (actualPuzzle?.tier as TierKey) || 'kids';
-  // 取得真實階梯（優先讀取實際 tier，以相容傳奇與終極）
+  // 取得真實階梯（相容傳奇與終極）
   const actualTier =
     (actualPuzzle as any)?.puzzle?.actualTier ||
     (actualPuzzle as any)?.metrics?.actualTier ||
     currentTier;
 
-  // 只有終極難度強制鎖死迷霧
+  // 僅終極難度 (Ultimate) 鎖死戰霧
   const isUltimate = actualTier === 'ultimate';
 
   const rawData = (actualPuzzle as any)?.puzzle || (actualPuzzle as any)?.spec || (actualPuzzle as any);
@@ -94,7 +94,6 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode 
     ey = Math.max(1, Math.min(h - 2, ey));
 
     nextGrid[ey][ex] = 0;
-    // 保障終點至少有一個可通行入口
     if (ey > 1 && nextGrid[ey - 1][ex] === 1 && nextGrid[ey][ex - 1] === 1) {
       nextGrid[ey - 1][ex] = 0;
     }
@@ -140,6 +139,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode 
   const [replayStep, setReplayStep] = useState<number>(0);
   const replayTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  // 初始化重置
   useEffect(() => {
     setPlayerPos(startPos);
     setTrail([startPos]);
@@ -176,7 +176,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode 
     return () => cancelAnimationFrame(frameId);
   }, [isCompleted]);
 
-  // 視野切換控制器：只有終極（Ultimate）難度完全鎖死，其他階梯均可切換
+  // 視野切換：僅終極鎖定，其餘均可自由切換
   const handleCycleViewMode = () => {
     if (isUltimate || isCompleted || isReplaying) return;
     if (navigator.vibrate) navigator.vibrate(10);
@@ -187,7 +187,6 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode 
       } else if (actualTier === 'intermediate') {
         return prev === 5 ? 'full' : 5;
       } else {
-        // 專家、大師、傳奇：3x3 戰霧 與 全見視野 雙向自由切換
         return prev === 3 ? 'full' : 3;
       }
     });
@@ -205,10 +204,15 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode 
     if (navigator.vibrate) navigator.vibrate(20);
   }, [playerPos, isCompleted, isReplaying]);
 
-  // 核心移動邏輯
+  // 核心移動邏輯（嚴格整數步進）
   const movePlayer = useCallback(
-    (dx: number, dy: number) => {
+    (rawDx: number, rawDy: number) => {
       if (isCompleted || isReplaying || !grid || grid.length === 0) return;
+
+      // 強制整數投影，防止浮點座標造成判定失效
+      const dx = rawDx > 0 ? 1 : rawDx < 0 ? -1 : 0;
+      const dy = rawDy > 0 ? 1 : rawDy < 0 ? -1 : 0;
+      if (dx === 0 && dy === 0) return;
 
       const now = Date.now();
       const stepDuration = now - lastStepTimeRef.current;
@@ -217,7 +221,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode 
         const nextX = currX + dx;
         const nextY = currY + dy;
 
-        // 越界或撞牆判定
+        // 越界或撞牆
         if (
           nextY < 0 ||
           nextY >= grid.length ||
@@ -283,7 +287,6 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode 
               conflictsCount: wallHitsRef.current + backtrackCountRef.current,
               technique: 'TopologicalLookahead',
               irtDifficulty: weightedIrt,
-              // 終極鎖定或主動開啟戰霧且零回溯視為完美通關
               isPureClear: backtrackCountRef.current === 0 && (isUltimate || viewMode !== 'full'),
             });
 
@@ -326,13 +329,34 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode 
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [movePlayer, toggleBreadcrumb, isCompleted, isReplaying]);
 
-  // 全域虛擬手把事件監聽
+  // 全域虛擬手把事件監聽（增設防抖冷卻與向量離散轉換）
   useEffect(() => {
+    let moveThrottle = false;
+
     const handleCustomMove = (e: any) => {
-      if (e.detail) {
-        movePlayer(e.detail.dx, e.detail.dy);
+      if (!e.detail) return;
+      const { dx, dy } = e.detail;
+
+      if (moveThrottle) return;
+
+      // 4 向吸附轉換
+      let stepX = 0;
+      let stepY = 0;
+      if (Math.abs(dx) > Math.abs(dy)) {
+        if (Math.abs(dx) > 0.2) stepX = dx > 0 ? 1 : -1;
+      } else {
+        if (Math.abs(dy) > 0.2) stepY = dy > 0 ? 1 : -1;
+      }
+
+      if (stepX !== 0 || stepY !== 0) {
+        moveThrottle = true;
+        movePlayer(stepX, stepY);
+        setTimeout(() => {
+          moveThrottle = false;
+        }, 120);
       }
     };
+
     const handleCustomLook = (e: any) => {
       if (e.detail) {
         const maxOffsetPx = 28;
@@ -342,6 +366,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode 
         });
       }
     };
+
     const handleCustomAction = () => toggleBreadcrumb();
 
     window.addEventListener('logicore:joystick-move', handleCustomMove);
@@ -509,7 +534,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode 
           </div>
         </div>
 
-        {/* 視野切換按鈕：僅終極鎖定，大師與傳奇均可點選切換 */}
+        {/* 視野切換按鈕：僅終極鎖死，大師與傳奇均可點擊切換 */}
         <button
           onClick={handleCycleViewMode}
           disabled={isUltimate}
@@ -535,7 +560,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode 
         </button>
       </div>
 
-      {/* 迷宮主盤面 */}
+      {/* 迷宮主盤面（加入 touchAction: none 防止手勢被 iOS 搶佔） */}
       <div
         className={`relative overflow-hidden p-1 rounded-xl bg-slate-950 border-2 transition-all duration-150 shadow-2xl ${
           isWallBlockedPulse ? 'border-rose-500 ring-2 ring-rose-500/50 scale-[0.99]' : 'border-slate-800'
@@ -543,15 +568,17 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode 
       >
         <div
           onTouchStart={handleTouchStart}
+          onTouchMove={(e) => e.preventDefault()}
           onTouchEnd={handleTouchEnd}
-          className="grid gap-[1px] bg-slate-900 select-none touch-none transition-transform duration-100 ease-out"
           style={{
             gridTemplateColumns: `repeat(${w}, minmax(0, 1fr))`,
             gridTemplateRows: `repeat(${h}, minmax(0, 1fr))`,
             width: 'min(88vw, 42vh)',
             height: 'min(88vw, 42vh)',
             transform: `translate(${lookOffset.x}px, ${lookOffset.y}px)`,
+            touchAction: 'none',
           }}
+          className="grid gap-[1px] bg-slate-900 select-none touch-none transition-transform duration-100 ease-out"
         >
           {grid.map((row, rIdx) =>
             row.map((cell, cIdx) => {
