@@ -9,7 +9,7 @@ export const RENDERERS: Record<string, React.ComponentType<any>> = {
   futoshiki: FutoshikiBoard,
   hitori: HitoriBoard,
   kakuro: KakuroBoard,
-  masyu: MasyuBoard, // <-- 註冊珍珠迴路
+  masyu: MasyuBoard,
   skyscraper: SkyscraperBoard,
   hashi: HashiBoard,
   hashiwokakero: HashiBoard,
