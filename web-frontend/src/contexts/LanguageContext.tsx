@@ -3,13 +3,32 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 
 export type Language = 'zh' | 'en';
 
+export interface TranslationDictionary {
+  difficulty: Record<string, string>;
+  common: {
+    speed: string;
+    steps: string;
+    backtrack: string;
+    wallHits: string;
+    vision: string;
+    hint: string;
+    hintLadder: string;
+    tournamentMode: string;
+    exportDataset: string;
+    submitResult: string;
+    ghostReplay: string;
+    replaying: string;
+    fullView: string;
+    locked: string;
+    cleared: string;
+  };
+}
+
 interface LanguageContextType {
   lang: Language;
   setLang: (lang: Language) => void;
   toggleLang: () => void;
-  t: {
-    difficulty: Record<string, string>;
-  };
+  t: TranslationDictionary;
 }
 
 const LanguageContext = createContext<LanguageContextType | undefined>(undefined);
@@ -25,15 +44,38 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   };
 
   const toggleLang = () => {
-    setLang(lang === 'zh' ? 'en' : 'zh');
+    setLangState((prev) => {
+      const next = prev === 'zh' ? 'en' : 'zh';
+      localStorage.setItem('logicore_lang', next);
+      return next;
+    });
   };
 
-  const t = {
+  const t: TranslationDictionary = {
     difficulty: {
-      kids: lang === 'en' ? '4x4 Basics' : '4x4 奠基',
-      intermediate: lang === 'en' ? '6x6 Advance' : '6x6 突破',
-      expert: lang === 'en' ? '9x9 Mastery' : '9x9 精通',
-      master: lang === 'en' ? 'Abyss' : '變體深淵',
+      kids: lang === 'en' ? 'Basics' : '兒童奠基',
+      intermediate: lang === 'en' ? 'Intermediate' : '進階突破',
+      expert: lang === 'en' ? 'Expert' : '專家精通',
+      master: lang === 'en' ? 'Master' : '大師魔王',
+      legendary: lang === 'en' ? 'Legendary' : '傳奇巔峰',
+      ultimate: lang === 'en' ? 'Ultimate' : '極限深淵',
+    },
+    common: {
+      speed: lang === 'en' ? 'Speed' : '競速',
+      steps: lang === 'en' ? 'Steps' : '步數',
+      backtrack: lang === 'en' ? 'Backtrack' : '回溯',
+      wallHits: lang === 'en' ? 'Wall Hits' : '觸壁',
+      vision: lang === 'en' ? 'Vision' : '視野',
+      hint: lang === 'en' ? 'Hint' : '提示',
+      hintLadder: lang === 'en' ? 'Hint Ladder' : '因果提示階梯',
+      tournamentMode: lang === 'en' ? 'WPF Tournament' : 'WPF 賽事鎖定',
+      exportDataset: lang === 'en' ? 'Export Dataset' : '匯出數據',
+      submitResult: lang === 'en' ? 'Submit Result' : '賽事提交',
+      ghostReplay: lang === 'en' ? 'Ghost Replay' : '幽靈重播',
+      replaying: lang === 'en' ? 'Replaying...' : '重播中...',
+      fullView: lang === 'en' ? 'Full View' : '全見視野',
+      locked: lang === 'en' ? 'Locked' : '鎖定',
+      cleared: lang === 'en' ? 'CLEARED!' : '挑戰成功！',
     },
   };
 
