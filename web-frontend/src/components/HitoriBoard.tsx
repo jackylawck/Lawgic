@@ -143,3 +143,588 @@ export const HitoriBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMod
             const nc = c + dc;
             if (WebHitoriGenerator.inBounds(nr, nc, size) && state[nr][nc] === 1) {
               set.add(`${r},${c}`);
+              set.add(`${nr},${nc}`);
+            }
+          }
+        }
+      }
+    }
+
+    for (let r = 0; r < size; r++) {
+      for (let c = 0; c < size; c++) {
+        if (state[r][c] === 2) {
+          const v = board[r]?.[c];
+          for (let oc = c + 1; oc < size; oc++) {
+            if (state[r][oc] === 2 && board[r]?.[oc] === v) {
+              set.add(`${r},${c}`);
+              set.add(`${r},${oc}`);
+            }
+          }
+        }
+      }
+    }
+    for (let c = 0; c < size; c++) {
+      for (let r = 0; r < size; r++) {
+        if (state[r][c] === 2) {
+          const v = board[r]?.[c];
+          for (let or = r + 1; or < size; or++) {
+            if (state[or][c] === 2 && board[or]?.[c] === v) {
+              set.add(`${r},${c}`);
+              set.add(`${or},${c}`);
+            }
+          }
+        }
+      }
+    }
+
+    return set;
+  }, [state, board, size]);
+
+  const isDisconnected = useMemo(() => {
+    return !WebHitoriGenerator.isWhiteConnected(state, size);
+  }, [state, size]);
+
+  const currentBlackCount = useMemo(() => {
+    return state.flat().filter((v) => v === 1).length;
+  }, [state]);
+
+  const targetBlackCount = useMemo(() => {
+    return size % 2 === 0 ? size * 2 - 2 : size * 2 - 1;
+  }, [size]);
+
+  const scratchpadData = useMemo(() => {
+    if (!pureInferenceMode) return null;
+    const [selR, selC] = selectedCell;
+
+    const rowCounts = new Map<number, number>();
+    const rowCommittedWhites = new Set<number>();
+    for (let c = 0; c < size; c++) {
+      const val = board[selR]?.[c];
+      rowCounts.set(val, (rowCounts.get(val) || 0) + 1);
+      if (state[selR][c] === 2) rowCommittedWhites.add(val);
+    }
+    const rowDuplicates = Array.from(rowCounts.entries())
+      .filter(([_, count]) => count > 1)
+      .map(([val]) => val);
+
+    const colCounts = new Map<number, number>();
+    const colCommittedWhites = new Set<number>();
+    for (let r = 0; r < size; r++) {
+      const val = board[r]?.[selC];
+      colCounts.set(val, (colCounts.get(val) || 0) + 1);
+      if (state[r][selC] === 2) colCommittedWhites.add(val);
+    }
+    const colDuplicates = Array.from(colCounts.entries())
+      .filter(([_, count]) => count > 1)
+      .map(([val]) => val);
+
+    return {
+      selVal: board[selR]?.[selC],
+      rowDuplicates,
+      colDuplicates,
+      rowCommittedWhites: Array.from(rowCommittedWhites),
+      colCommittedWhites: Array.from(colCommittedWhites),
+    };
+  }, [pureInferenceMode, selectedCell, board, state, size]);
+
+  const checkVictory = useCallback(
+    (curState: CellState[][]): boolean => {
+      for (let r = 0; r < size; r++) {
+        for (let c = 0; c < size; c++) {
+          if (curState[r][c] === 0) return false;
+        }
+      }
+      return WebHitoriGenerator.isValidSolution(board, curState, size);
+    },
+    [board, size]
+  );
+
+  const toggleCell = useCallback(
+    (r: number, c: number, overrideState?: CellState) => {
+      if (isCompleted || isTimeOut) return;
+
+      setHintLevel(0);
+      setActiveHint(null);
+
+      setState((prev) => {
+        const next = prev.map((row) => [...row]);
+        next[r][c] = overrideState !== undefined ? overrideState : next[r][c] === 0 ? 1 : next[r][c] === 1 ? 2 : 0;
+
+        if (r === cruxCoords[0] && c === cruxCoords[1] && next[r][c] !== 0 && next[r][c] === solution[r]?.[c]) {
+          setCruxBreakthrough(true);
+          setTimeout(() => setCruxBreakthrough(false), 1500);
+        }
+
+        if (checkVictory(next)) {
+          setIsCompleted(true);
+          const timeSpent = Math.max(1, Math.round(accumulatedMs / 1000));
+          const isPure = hintsTriggeredCount === 0;
+
+          if (actualPuzzle) {
+            recordAttempt({
+              puzzleId: actualPuzzle.id,
+              engineType: 'hitori',
+              tier: (actualPuzzle.tier as TierKey) || 'kids',
+              cognitiveLoad: {
+                spatial: 0.9,
+                numeric: displayMode === 'numeric' ? 0.8 : 0.45,
+                workingMemory: pureInferenceMode ? 0.3 : 0.85,
+                inhibition: 0.95,
+              },
+              isSuccess: true,
+              timeSpentSec: timeSpent,
+              conflictsCount: conflicts.size,
+              technique: 'NegativeElimination',
+              isPureClear: isPure,
+            });
+          }
+        }
+        return next;
+      });
+    },
+    [
+      isCompleted,
+      isTimeOut,
+      checkVictory,
+      accumulatedMs,
+      hintsTriggeredCount,
+      cruxCoords,
+      solution,
+      actualPuzzle,
+      recordAttempt,
+      displayMode,
+      pureInferenceMode,
+      conflicts.size,
+    ]
+  );
+
+  const handleCopySeed = () => {
+    if (tournamentMode) return;
+    navigator.clipboard.writeText(`HITORI-S${seed}-T${actualPuzzle?.tier || 'kids'}`);
+    setSeedCopied(true);
+    setTimeout(() => setSeedCopied(false), 2000);
+  };
+
+  const handleToggleFavorite = () => {
+    if (!actualPuzzle) return;
+    const nextFav = VaultManager.toggleFavorite({
+      id: actualPuzzle.id,
+      engine: 'hitori',
+      tier: String(actualPuzzle.tier || 'kids'),
+      seed: Number(seed),
+      rhythmType: String(rhythmType),
+      steps: Number(estSteps),
+      timeSpentSec: Math.round(accumulatedMs / 1000),
+      date: new Date().toLocaleDateString(),
+    });
+    setIsFav(nextFav);
+  };
+
+  const handleCopyAsciiBadge = () => {
+    const cardText = VaultManager.generateAsciiBadge({
+      engine: 'hitori',
+      tier: String(actualPuzzle?.tier || 'kids'),
+      seed: Number(seed),
+      steps: Number(estSteps),
+      timeSpentSec: Math.round(accumulatedMs / 1000),
+      iq: cci.standardIQ,
+      rhythm: String(rhythmType),
+    });
+    navigator.clipboard.writeText(cardText);
+    setBadgeCopied(true);
+    setTimeout(() => setBadgeCopied(false), 2000);
+  };
+
+  const handleRequestHint = useCallback(() => {
+    if (isCompleted || isTimeOut) return;
+    const step = WebHitoriGenerator.getNextForcedDeduction(board, state, size);
+    if (!step) return;
+
+    if (!activeHint || activeHint.r !== step.r || activeHint.c !== step.c) {
+      setActiveHint(step);
+      setHintLevel(1);
+      setHintsTriggeredCount((prev) => prev + 1);
+      setSelectedCell([step.r, step.c]);
+    } else {
+      setHintLevel((prev) => Math.min(3, prev + 1));
+    }
+  }, [isCompleted, isTimeOut, board, state, size, activeHint]);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (isCompleted || isTimeOut) return;
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+
+      const [r, c] = selectedCell;
+      switch (e.key.toLowerCase()) {
+        case 'w':
+        case 'arrowup':
+          e.preventDefault();
+          setSelectedCell([Math.max(0, r - 1), c]);
+          break;
+        case 's':
+        case 'arrowdown':
+          e.preventDefault();
+          setSelectedCell([Math.min(size - 1, r + 1), c]);
+          break;
+        case 'a':
+        case 'arrowleft':
+          e.preventDefault();
+          setSelectedCell([r, Math.max(0, c - 1)]);
+          break;
+        case 'd':
+        case 'arrowright':
+          e.preventDefault();
+          setSelectedCell([r, Math.min(size - 1, c + 1)]);
+          break;
+        case '1':
+        case 'j':
+          e.preventDefault();
+          toggleCell(r, c, 1);
+          break;
+        case '2':
+        case 'k':
+          e.preventDefault();
+          toggleCell(r, c, 2);
+          break;
+        case '0':
+        case 'backspace':
+        case 'delete':
+        case ' ':
+          e.preventDefault();
+          toggleCell(r, c, 0);
+          break;
+        case 'h':
+          e.preventDefault();
+          handleRequestHint();
+          break;
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [selectedCell, size, isCompleted, isTimeOut, toggleCell, handleRequestHint]);
+
+  const cellSize = Math.min(230 / size, 40);
+  const cci = useMemo(() => getCompositeCognitiveIndex(), [getCompositeCognitiveIndex, isCompleted]);
+
+  const RHYTHM_MAP: Record<string, { icon: string; name: string; desc: string }> = {
+    peaked: { icon: '⛰️', name: isEn ? 'Peaked' : '高峰型', desc: 'Crux 居中破局' },
+    climbing: { icon: '📈', name: isEn ? 'Climbing' : '漸進型', desc: '阻力攀升，尾盤決戰' },
+    wavy: { icon: '🌊', name: isEn ? 'Wavy' : '波浪型', desc: '多重等價類交鋒' },
+  };
+  const curRhythm = RHYTHM_MAP[rhythmType] || RHYTHM_MAP.peaked;
+
+  return (
+    <div
+      ref={boardContainerRef}
+      tabIndex={0}
+      className="relative flex flex-col items-center justify-center p-2 select-none font-mono outline-none w-full max-w-[360px] mx-auto"
+    >
+      {cruxBreakthrough && (
+        <div className="fixed top-3 z-50 px-3.5 py-1.5 bg-gradient-to-r from-amber-500 to-yellow-400 text-slate-950 font-black text-xs rounded-full shadow-[0_0_20px_rgba(251,191,36,0.8)] animate-bounce flex items-center gap-1.5 border border-white">
+          <span>✨</span>
+          <span>{isEn ? 'CRUX BREACHED!' : '攻克關鍵邏輯華點！'}</span>
+        </div>
+      )}
+
+      {/* 頂部操作與節奏指標列 */}
+      <div className="w-full flex items-center justify-between gap-1 mb-2 px-1 text-[7.5px]">
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() =>
+              setDisplayMode((prev) =>
+                prev === 'numeric' ? 'symbolic_dots' : prev === 'symbolic_dots' ? 'symbolic_geo' : 'numeric'
+              )
+            }
+            className="px-2 py-1 bg-slate-900 border border-slate-700 hover:border-cyan-400 rounded text-cyan-300 font-bold"
+          >
+            {displayMode === 'numeric' && '🔢 數字'}
+            {displayMode === 'symbolic_dots' && '⚪ 點陣'}
+            {displayMode === 'symbolic_geo' && '▲ 圖形'}
+          </button>
+          
+          <button
+            onClick={() => setPureInferenceMode((prev) => !prev)}
+            className={`px-2 py-1 rounded border font-bold transition ${
+              pureInferenceMode
+                ? 'bg-purple-950 border-purple-500 text-purple-300 shadow-[0_0_8px_rgba(168,85,247,0.4)]'
+                : 'bg-slate-900 border-slate-700 text-slate-400'
+            }`}
+          >
+            🧠 純推理: {pureInferenceMode ? 'ON' : 'OFF'}
+          </button>
+        </div>
+
+        <div className="flex items-center gap-1 text-slate-400 font-semibold">
+          {/* 開局節奏預判 */}
+          <span className="px-1.5 py-0.5 bg-slate-900 border border-slate-700 rounded text-amber-300 font-bold" title={curRhythm.desc}>
+            {curRhythm.icon} {curRhythm.name}
+          </span>
+          <span className="px-1.5 py-0.5 bg-slate-900 border border-slate-700 rounded text-cyan-300 font-mono" title="預估推導步數">
+            📏 ~{estSteps} 步
+          </span>
+          {/* 傳奇庫收藏按鈕 */}
+          <button
+            onClick={handleToggleFavorite}
+            className={`px-1.5 py-0.5 rounded border transition font-bold ${
+              isFav ? 'bg-amber-950 border-amber-500 text-amber-300' : 'bg-slate-900 border-slate-700 text-slate-500 hover:text-slate-300'
+            }`}
+            title={isFav ? '已在傳奇庫' : '收藏到傳奇庫'}
+          >
+            {isFav ? '★' : '☆'}
+          </button>
+        </div>
+      </div>
+
+      {/* 狀態進度看板 */}
+      <div className="w-full grid grid-cols-3 gap-1 mb-2 text-[8px]">
+        <div className="bg-slate-950 border border-slate-800 p-1 rounded text-center">
+          <div className="text-slate-500 text-[6.5px]">{tournamentMode ? '倒數' : '耗時'}</div>
+          <div className={`font-bold ${tournamentMode && remainingSec <= 30 ? 'text-rose-400 animate-pulse' : 'text-slate-200'}`}>
+            {tournamentMode ? `${remainingSec}s` : `${(accumulatedMs / 1000).toFixed(1)}s`}
+          </div>
+        </div>
+        <div className="bg-slate-950 border border-slate-800 p-1 rounded text-center">
+          <div className="text-slate-500 text-[6.5px]">黑格指標 (配額)</div>
+          <div className={`font-bold ${currentBlackCount === targetBlackCount ? 'text-emerald-400' : 'text-amber-300'}`}>
+            {currentBlackCount} / {targetBlackCount}
+          </div>
+        </div>
+        <div className="bg-slate-950 border border-slate-800 p-1 rounded text-center">
+          <div className="text-slate-500 text-[6.5px]">網絡韌性</div>
+          <div className={`font-bold ${conflicts.size > 0 || isDisconnected ? 'text-rose-400' : 'text-emerald-400'}`}>
+            {conflicts.size > 0 ? '衝突違規' : isDisconnected ? '白格斷流' : '🛡️ 2-Edge'}
+          </div>
+        </div>
+      </div>
+
+      {/* 純推理視覺暫存區 */}
+      {pureInferenceMode && scratchpadData && (
+        <div className="w-full mb-2 p-2 bg-slate-950/90 border border-purple-700/60 rounded-xl text-[7.5px] text-slate-300 animate-fade-in shadow-lg">
+          <div className="flex justify-between items-center pb-1 mb-1 border-b border-purple-950">
+            <span className="font-bold text-purple-400 flex items-center gap-1">
+              <span>🧠 視覺暫存區</span>
+              <span className="text-slate-500 font-normal">焦點格: [{selectedCell[0] + 1}, {selectedCell[1] + 1}] ({renderValue(scratchpadData.selVal)})</span>
+            </span>
+            <span className="text-[6.5px] text-purple-300 bg-purple-950 px-1 py-0.2 rounded border border-purple-800">記憶負荷卸載中</span>
+          </div>
+
+          <div className="grid grid-cols-2 gap-1.5">
+            <div className="bg-slate-900/60 p-1.5 rounded border border-slate-800">
+              <div className="text-slate-400 font-bold mb-0.5">列 {selectedCell[0] + 1} 衝突狀態:</div>
+              <div className="flex items-center gap-1 mb-0.5">
+                <span className="text-rose-400 font-semibold">重複:</span>
+                {scratchpadData.rowDuplicates.length > 0 ? (
+                  scratchpadData.rowDuplicates.map((v) => (
+                    <span key={`rd-${v}`} className="px-1 bg-rose-950/80 border border-rose-800 text-rose-300 rounded font-bold">
+                      {renderValue(v)}
+                    </span>
+                  ))
+                ) : (
+                  <span className="text-emerald-400 font-normal">無</span>
+                )}
+              </div>
+              <div className="flex items-center gap-1">
+                <span className="text-cyan-400 font-semibold">已決白格:</span>
+                {scratchpadData.rowCommittedWhites.length > 0 ? (
+                  scratchpadData.rowCommittedWhites.map((v) => (
+                    <span key={`rw-${v}`} className="px-1 bg-cyan-950/80 border border-cyan-800 text-cyan-300 rounded font-bold">
+                      {renderValue(v)}
+                    </span>
+                  ))
+                ) : (
+                  <span className="text-slate-500">無</span>
+                )}
+              </div>
+            </div>
+
+            <div className="bg-slate-900/60 p-1.5 rounded border border-slate-800">
+              <div className="text-slate-400 font-bold mb-0.5">行 {selectedCell[1] + 1} 衝突狀態:</div>
+              <div className="flex items-center gap-1 mb-0.5">
+                <span className="text-rose-400 font-semibold">重複:</span>
+                {scratchpadData.colDuplicates.length > 0 ? (
+                  scratchpadData.colDuplicates.map((v) => (
+                    <span key={`cd-${v}`} className="px-1 bg-rose-950/80 border border-rose-800 text-rose-300 rounded font-bold">
+                      {renderValue(v)}
+                    </span>
+                  ))
+                ) : (
+                  <span className="text-emerald-400 font-normal">無</span>
+                )}
+              </div>
+              <div className="flex items-center gap-1">
+                <span className="text-cyan-400 font-semibold">已決白格:</span>
+                {scratchpadData.colCommittedWhites.length > 0 ? (
+                  scratchpadData.colCommittedWhites.map((v) => (
+                    <span key={`cw-${v}`} className="px-1 bg-cyan-950/80 border border-cyan-800 text-cyan-300 rounded font-bold">
+                      {renderValue(v)}
+                    </span>
+                  ))
+                ) : (
+                  <span className="text-slate-500">無</span>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 棋盤主體 */}
+      <div className="p-3 bg-slate-950 border-2 border-slate-800 rounded-xl shadow-2xl flex flex-col items-center">
+        <div
+          className="grid gap-[3px] p-[2px] rounded border border-slate-800 bg-slate-900/60"
+          style={{ gridTemplateColumns: `repeat(${size}, minmax(0, 1fr))` }}
+        >
+          {state.map((row, r) =>
+            row.map((val, c) => {
+              const num = board[r]?.[c] ?? '';
+              const isSelected = selectedCell[0] === r && selectedCell[1] === c;
+              const isConflict = conflicts.has(`${r},${c}`);
+              const isHintTarget = activeHint?.r === r && activeHint?.c === c && hintLevel === 3;
+              const isCruxCell = r === cruxCoords[0] && c === cruxCoords[1];
+
+              let bgClass = 'bg-slate-950 text-slate-300 hover:bg-slate-900 border border-slate-800';
+              if (val === 1) bgClass = 'bg-slate-800 text-slate-500 font-black shadow-inner border border-slate-700';
+              if (val === 2) bgClass = 'bg-slate-950 text-cyan-300 font-extrabold ring-2 ring-cyan-500/70 shadow-[0_0_8px_rgba(34,211,238,0.4)] border border-cyan-400';
+
+              if (isConflict) bgClass += ' ring-2 ring-rose-500 bg-rose-950/50 text-rose-300';
+              if (isHintTarget) bgClass += ' ring-2 ring-amber-400 bg-amber-500/30 animate-pulse';
+
+              return (
+                <div
+                  key={`${r}-${c}`}
+                  onClick={() => { setSelectedCell([r, c]); toggleCell(r, c); }}
+                  onContextMenu={(e) => { e.preventDefault(); setSelectedCell([r, c]); toggleCell(r, c, 1); }}
+                  className={`relative flex items-center justify-center font-bold text-sm cursor-pointer rounded transition select-none ${bgClass} ${
+                    isSelected ? 'ring-2 ring-cyan-400 z-10 shadow-[0_0_8px_rgba(34,211,238,0.8)]' : ''
+                  }`}
+                  style={{ width: cellSize, height: cellSize }}
+                >
+                  <span className={val === 1 ? 'line-through opacity-50 text-xs' : ''}>{renderValue(num)}</span>
+
+                  {isCruxCell && (
+                    <div className="absolute inset-0 ring-2 ring-amber-400/70 animate-pulse rounded pointer-events-none" />
+                  )}
+                  {isCruxCell && cruxBreakthrough && (
+                    <div className="absolute inset-0 ring-4 ring-yellow-300 animate-ping rounded pointer-events-none" />
+                  )}
+                  {isCruxCell && val === 0 && (
+                    <span className="absolute -top-1 -right-1 text-[7px] text-amber-400 font-black">
+                      ★
+                    </span>
+                  )}
+                </div>
+              );
+            })
+          )}
+        </div>
+      </div>
+
+      {/* 快捷操作指示 */}
+      <div className="w-full max-w-[280px] flex items-center justify-between px-1 mt-1.5 text-[7px] text-slate-500 font-mono">
+        <span>WASD: 移動</span>
+        <span>1/J: 塗黑 (■)</span>
+        <span>2/K: 圈白 (•)</span>
+        <span>Space: 清空</span>
+      </div>
+
+      {/* 三階因果提示 */}
+      {hintLevel > 0 && activeHint && (
+        <div className="mt-2 p-2 rounded-xl text-center w-full max-w-[280px] font-mono border bg-slate-900/90 border-amber-500/60 text-slate-200 text-[8px]">
+          <div className="text-[7.5px] font-bold text-amber-300 mb-0.5">
+            🔮 {isEn ? 'NEGATIVE ELIMINATION' : '反向排除・因果推導'}
+          </div>
+          <div>
+            {hintLevel === 1 && <span>🔍 審視坐標 [{activeHint.r + 1}, {activeHint.c + 1}] 的連通與排他關係</span>}
+            {hintLevel === 2 && <span className="text-cyan-300 font-bold">⚡ {activeHint.humanReadable.zh}</span>}
+            {hintLevel === 3 && (
+              <span className="text-rose-400 font-extrabold">
+                🎯 目標格必然{activeHint.forcedState === 1 ? '塗黑 (■)' : '圈白 (•)'}！
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+
+      <div className="flex items-center justify-between w-full max-w-[280px] mt-2 gap-1.5">
+        <button
+          onClick={handleRequestHint}
+          disabled={isCompleted || isTimeOut}
+          className="w-full py-1.5 text-xs font-bold rounded-lg border bg-slate-900 border-amber-500/50 text-amber-300 hover:bg-amber-950/40 transition flex items-center justify-center gap-1 shadow disabled:opacity-40"
+        >
+          💡 {isEn ? 'Hint Ladder [H]' : '因果提示階梯 [H]'}
+        </button>
+      </div>
+
+      {/* 結算面板：榮譽卡、覆盤波形與傳奇庫操作 */}
+      {isCompleted && (
+        <div className="mt-2.5 p-3 bg-slate-950 border border-emerald-500/80 rounded-xl text-center w-full max-w-[280px] shadow-2xl font-mono animate-fade-in">
+          <div className="text-emerald-400 font-bold text-xs mb-0.5">HITORI CLEARED!</div>
+
+          {depthProfile.length > 0 && (
+            <div className="my-2 p-2 bg-slate-900/80 border border-slate-800 rounded-lg text-left">
+              <div className="flex items-center justify-between text-[7px] text-slate-400 mb-1">
+                <span>🧠 推理節奏圖 (Deduction Flow)</span>
+                <span className="text-emerald-400 font-bold">韌性: 2-Edge-Connected</span>
+              </div>
+              <svg width="100%" height="22" viewBox="0 0 200 22" className="overflow-visible">
+                <polyline
+                  fill="none"
+                  stroke="#a855f7"
+                  strokeWidth="1.5"
+                  points={depthProfile
+                    .map((val: number, idx: number) => `${idx * 45 + 10},${Math.max(2, 20 - (val / 4) * 16)}`)
+                    .join(' ')}
+                />
+                {depthProfile.map((depth: number, idx: number) => (
+                  <circle
+                    key={`dot-${idx}`}
+                    cx={idx * 45 + 10}
+                    cy={Math.max(2, 20 - (depth / 4) * 16)}
+                    r={idx === 2 ? '4' : '3'}
+                    fill={idx === 2 ? '#f59e0b' : depth >= 3 ? '#60a5fa' : '#64748b'}
+                  />
+                ))}
+              </svg>
+              <div className="flex justify-between text-[6px] text-slate-500 mt-1 px-1">
+                <span>鋪陳</span>
+                <span>爬坡</span>
+                <span className="text-amber-400 font-bold">⚡Crux</span>
+                <span>收割</span>
+                <span>尾聲</span>
+              </div>
+            </div>
+          )}
+
+          <div className="text-[8.5px] text-slate-300 mb-1">
+            耗時: {(accumulatedMs / 1000).toFixed(2)}s | 黑格: {currentBlackCount} (標稱 {targetBlackCount}) | Gf: IQ {cci.standardIQ}
+          </div>
+
+          <div className="mt-2 pt-2 border-t border-slate-800 flex items-center justify-between gap-1">
+            <button
+              onClick={handleToggleFavorite}
+              className={`px-2 py-1 rounded border text-[8px] font-bold transition flex items-center gap-1 ${
+                isFav
+                  ? 'bg-amber-500 text-slate-950 border-amber-300'
+                  : 'bg-slate-900 border-slate-700 text-amber-300 hover:bg-slate-800'
+              }`}
+            >
+              <span>{isFav ? '★' : '☆'}</span>
+              <span>{isFav ? '已在傳奇庫' : '收藏高光題'}</span>
+            </button>
+
+            <button
+              onClick={handleCopyAsciiBadge}
+              className="px-2 py-1 rounded border border-slate-700 hover:border-cyan-400 bg-slate-900 text-cyan-300 text-[8px] font-mono transition flex items-center gap-1"
+              title="複製 Discord/社群純文字戰績卡"
+            >
+              <span>📜</span>
+              <span>{badgeCopied ? '已複製!' : '榮譽卡'}</span>
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
