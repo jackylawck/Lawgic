@@ -7,6 +7,7 @@ import { PUZZLE_CATALOG, PuzzleEntity } from './generated';
 import { LangSwitcher } from './components/LangSwitcher';
 import { VirtualGamepad } from './components/VirtualGamepad';
 import { useLearnerProfile, TierKey } from './hooks/useLearnerProfile';
+import { ChallengeCodec } from './utils/challengeCodec';
 
 // 匯入已完成的世界級演算法生成器
 import { WebMazeGenerator } from './engines/mazeGenerator';
@@ -167,6 +168,7 @@ const MainDashboard: React.FC = () => {
     return initialPool;
   });
 
+  // 異步背景填充題目池
   useEffect(() => {
     let isMounted = true;
     const activeEngines = [
@@ -206,6 +208,7 @@ const MainDashboard: React.FC = () => {
     };
   }, []);
 
+  // 監聽外部導航自訂事件
   useEffect(() => {
     const handleNav = (e: Event) => {
       const customEvent = e as CustomEvent<{ gameId?: string }>;
@@ -218,6 +221,43 @@ const MainDashboard: React.FC = () => {
     return () => window.removeEventListener('logicore:navigate-game', handleNav);
   }, []);
 
+  // 監聽挑戰碼 URL Hash：好友挑戰即時解析與元數據快顯
+  useEffect(() => {
+    const checkHashChallenge = () => {
+      const hash = window.location.hash;
+      if (hash.startsWith('#challenge=')) {
+        const code = hash.replace('#challenge=', '');
+        const importedPuzzle = ChallengeCodec.decode(code);
+        if (importedPuzzle) {
+          setSelectedType(importedPuzzle.engine_type);
+          setDynamicPuzzles((prev) => ({
+            ...prev,
+            [importedPuzzle.engine_type]: [importedPuzzle, ...(prev[importedPuzzle.engine_type] || [])],
+          }));
+          setPuzzleIndex(0);
+
+          const pRows = importedPuzzle.puzzle?.rows || '?';
+          const pCols = importedPuzzle.puzzle?.cols || '?';
+          const pIrt = importedPuzzle.metrics?.irt_logit_difficulty || '1.0';
+          const gameMeta = ALL_GAMES.find((g) => g.id === importedPuzzle.engine_type);
+          const name = isEn ? gameMeta?.nameEn || 'Puzzle' : gameMeta?.nameZh || '益智謎題';
+
+          setToastMsg(
+            isEn
+              ? `🎯 Challenge Loaded! [${name} · ${pRows}×${pCols} · IRT ${pIrt}]`
+              : `🎯 賽事挑戰載入！【${name} · ${pRows}×${pCols} · 難度 IRT ${pIrt}】`
+          );
+          setTimeout(() => setToastMsg(null), 3000);
+        }
+      }
+    };
+
+    checkHashChallenge();
+    window.addEventListener('hashchange', checkHashChallenge);
+    return () => window.removeEventListener('hashchange', checkHashChallenge);
+  }, [isEn]);
+
+  // 動態設置頁面標題
   useEffect(() => {
     const activeGame = ALL_GAMES.find((g) => g.id === selectedType);
     const gameName = activeGame ? (isEn ? activeGame.nameEn : activeGame.nameZh) : 'Cognitive Arena';
