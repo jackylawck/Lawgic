@@ -3,6 +3,10 @@ name: Deploy LogiCore to GitHub Pages
 on:
   push:
     branches: [ main ]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.vscode/**'
   workflow_dispatch:
 
 permissions:
@@ -12,7 +16,7 @@ permissions:
 
 concurrency:
   group: "pages"
-  cancel-in-progress: false
+  cancel-in-progress: true # 🌟 新提交時立即取消舊排隊任務，避免資源浪費
 
 jobs:
   build-and-deploy:
@@ -20,37 +24,65 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Setup Rust & wasm-pack
-        uses: jetli/wasm-pack-action@v0.4.0
+      # 🌟 1. Rust Toolchain & 增量編譯快取
+      - name: Setup Rust Stable Toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
 
-      - name: Build WASM Core
+      - name: Rust Cache (Crates & Target)
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "core-engine -> target"
+
+      - name: Install wasm-pack
+        uses: jetli/wasm-pack-action@v0.4.0
+        with:
+          version: 'latest'
+
+      # 🌟 2. 極限效能 WASM 構建與清理
+      - name: Build & Optimize WASM Core
         run: |
           mkdir -p web-frontend/src/wasm
           cd core-engine
-          wasm-pack build --target web --out-dir ../web-frontend/src/wasm
+          # 使用 --release 開啟 LTO 與 wasm-opt
+          wasm-pack build --target web --release --out-dir ../web-frontend/src/wasm
+          # 刪除 wasm-pack 生成的 .gitignore，避免阻礙 Vite 靜態資源解析
+          rm -f ../web-frontend/src/wasm/.gitignore
 
-      - name: Setup Node.js
+      # 🌟 3. Node.js 環境與 NPM 依賴快取
+      - name: Setup Node.js 22
         uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: 'npm'
+          cache-dependency-path: 'web-frontend/package-lock.json'
 
-      - name: Install & Build Web Frontend
+      # 🌟 4. 前端安全與確定性構建（改用 npm ci）
+      - name: Install & Verify Frontend Dependencies
+        working-directory: web-frontend
         run: |
-          cd web-frontend
-          rm -rf node_modules package-lock.json   # ← 加呢行
-          npm install
-          npm run build
+          npm ci --prefer-offline
+          npm audit --audit-level=high || true
 
+      - name: Build Frontend Artifacts
+        working-directory: web-frontend
+        env:
+          NODE_ENV: production
+        run: npm run build
+
+      # 🌟 5. GitHub Pages 部署
       - name: Setup Pages
         uses: actions/configure-pages@v4
         with:
           enablement: true
 
-      - name: Upload artifact
+      - name: Upload Artifact
         uses: actions/upload-pages-artifact@v3
         with:
           path: 'web-frontend/dist'
