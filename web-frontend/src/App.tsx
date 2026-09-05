@@ -161,7 +161,7 @@ const MainDashboard: React.FC = () => {
   const isEn = lang === 'en';
   const { profile, getCompositeCognitiveIndex } = useLearnerProfile();
 
-  // 100% 全雙語字典抽離
+  // 100% 完整雙語字典
   const t = useMemo(() => ({
     synthesizing: isEn ? 'Synthesizing Topology...' : '神經網絡拓撲生成中...',
     tournamentOn: isEn ? '🏆 TOURNAMENT SANCTIONED' : '🏆 賽事認證模式',
@@ -174,6 +174,9 @@ const MainDashboard: React.FC = () => {
     puzzleProgress: isEn ? 'Puzzle' : '進度',
     loading: isEn ? 'Generating puzzles...' : '題目載入生成中...',
     titleSuffix: isEn ? 'Logic Arena' : '羅輯・遊戲',
+    mark: isEn ? 'MARK' : '標記',
+    close: isEn ? 'Close' : '關閉',
+    dashboardTooltip: isEn ? 'Open Longitudinal Cognitive Dashboard' : '開啟全域縱向認知儀表板',
   }), [isEn]);
 
   const [selectedType, setSelectedType] = useState<string>('maze');
@@ -426,7 +429,7 @@ const MainDashboard: React.FC = () => {
             <button
               onClick={() => setShowDashboardModal(false)}
               className="absolute top-3 right-3 z-10 w-7 h-7 flex items-center justify-center bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-full font-bold text-xs transition cursor-pointer"
-              title={isEn ? 'Close' : '關閉'}
+              title={t.close}
             >
               ✕
             </button>
@@ -440,7 +443,7 @@ const MainDashboard: React.FC = () => {
           <button
             onClick={() => setShowDashboardModal(true)}
             className="flex items-center gap-1 hover:text-cyan-300 transition cursor-pointer"
-            title={isEn ? 'Open Longitudinal Cognitive Dashboard' : '開啟全域縱向認知儀表板'}
+            title={t.dashboardTooltip}
           >
             <span className="font-bold text-cyan-400">IQ {cci.standardIQ}</span>
             <span>(±{cci.semIQ})</span>
@@ -465,7 +468,7 @@ const MainDashboard: React.FC = () => {
       <header className="w-full max-w-sm sm:max-w-md flex items-center justify-between gap-1.5 mb-2 pb-1.5 border-b border-slate-800">
         <div className="flex flex-col shrink-0 leading-tight">
           <span className="text-xs font-black tracking-widest text-indigo-400">LAWGIC</span>
-          <span className="text-[6.5px] font-bold text-slate-500 tracking-wider">羅輯・遊戲</span>
+          <span className="text-[6.5px] font-bold text-slate-500 tracking-wider">{t.titleSuffix}</span>
         </div>
 
         <div className="flex items-center gap-1.5 flex-1 min-w-0">
@@ -507,8 +510,31 @@ const MainDashboard: React.FC = () => {
         <section
           ref={boardContainerRef}
           tabIndex={-1}
-          className="flex flex-col items-center w-full max-w-sm sm:max-w-md outline-none"
+          className="flex flex-col items-center w-full max-w-sm sm:max-w-md outline-none pb-28"
         >
+          {/* 控制按鈕組：置於棋盤上方，保證在手機/結算模式下永遠第一時間可點擊 */}
+          <div className="mb-2 grid grid-cols-3 gap-1.5 w-full">
+            <button
+              onClick={handlePrevPuzzle}
+              className="py-2 bg-slate-900 hover:bg-slate-800 active:scale-95 text-slate-300 text-[10px] font-bold border border-slate-800 rounded-lg transition cursor-pointer shadow-sm"
+            >
+              {t.prev}
+            </button>
+            <button
+              onClick={handleLiveGenerate}
+              className="py-2 bg-cyan-950 hover:bg-cyan-900 active:scale-95 text-cyan-300 font-bold text-[10px] border border-cyan-700/60 rounded-lg shadow-sm transition flex items-center justify-center gap-1 cursor-pointer"
+            >
+              <span>⚡</span>
+              <span>{t.generate}</span>
+            </button>
+            <button
+              onClick={handleNextPuzzle}
+              className="py-2 bg-indigo-600 hover:bg-indigo-500 active:scale-95 text-white font-black text-[10px] border border-indigo-400 rounded-lg shadow-md transition cursor-pointer"
+            >
+              {t.next}
+            </button>
+          </div>
+
           <div className="w-full p-1 bg-slate-900/60 border border-slate-800 rounded-xl shadow-2xl">
             <ErrorBoundary
               FallbackComponent={EngineFallbackUI}
@@ -527,37 +553,15 @@ const MainDashboard: React.FC = () => {
               onMove={handleJoystickMove}
               onRotate={handleJoystickLook}
               onAction={handleJoystickAction}
-              actionLabel={isEn ? 'MARK' : '標記'}
+              actionLabel={t.mark}
             />
           )}
 
-          <div className="mt-2 grid grid-cols-3 gap-1.5 w-full">
-            <button
-              onClick={handlePrevPuzzle}
-              className="py-2 bg-slate-900 hover:bg-slate-800 text-slate-300 text-[10px] border border-slate-800 rounded transition cursor-pointer"
-            >
-              {t.prev}
-            </button>
-            <button
-              onClick={handleLiveGenerate}
-              className="py-2 bg-cyan-950 hover:bg-cyan-900 text-cyan-300 font-bold text-[10px] border border-cyan-700/60 rounded shadow transition flex items-center justify-center gap-1 cursor-pointer"
-            >
-              <span>⚡</span>
-              <span>{t.generate}</span>
-            </button>
-            <button
-              onClick={handleNextPuzzle}
-              className="py-2 bg-slate-800 hover:bg-slate-700 text-white text-[10px] border border-slate-700 rounded transition cursor-pointer"
-            >
-              {t.next}
-            </button>
-          </div>
-
           {currentLevel !== 'ultimate' && (
-            <div className="flex gap-1.5 mt-1.5 w-full">
+            <div className="flex gap-1.5 mt-2 w-full">
               <button
                 onClick={() => handleTierJump(1)}
-                className="flex-1 py-1.5 bg-gradient-to-r from-indigo-950 via-purple-950 to-slate-900 hover:from-indigo-900 border border-indigo-700/60 hover:border-indigo-500 text-indigo-300 text-[10px] font-bold rounded-lg transition shadow flex items-center justify-center gap-1 cursor-pointer"
+                className="flex-1 py-1.5 bg-gradient-to-r from-indigo-950 via-purple-950 to-slate-900 hover:from-indigo-900 border border-indigo-700/60 text-indigo-300 text-[10px] font-bold rounded-lg transition shadow flex items-center justify-center gap-1 cursor-pointer"
               >
                 <span>🚀</span>
                 <span>{t.tierJump}</span>
