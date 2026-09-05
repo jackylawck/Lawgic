@@ -1,6 +1,8 @@
 // web-frontend/src/engines/skyscraperGenerator.ts
 import { PuzzleEntity, TierKey } from '../generated';
 
+export type ExtendedTierKey = TierKey | 'legendary' | 'ultimate';
+
 export interface SkyscraperClues {
   top: number[];
   bottom: number[];
@@ -18,32 +20,62 @@ export interface SkyscraperHintStep {
   messageEn: string;
 }
 
-export class WebSkyscraperGenerator {
-  static generate(tier: TierKey): PuzzleEntity {
-    // Kids: 4x4, Intermediate: 4x4, Expert: 5x5, Master: 5x5
-    const size = tier === 'kids' || tier === 'intermediate' ? 4 : 5;
-    const configMap: Record<TierKey, { keepRate: number; minDepth: number; baseIrt: number; maxRetries: number }> = {
-      kids: { keepRate: 0.85, minDepth: 2, baseIrt: -1.8, maxRetries: 8 },
-      intermediate: { keepRate: 0.65, minDepth: 3, baseIrt: -0.2, maxRetries: 12 },
-      expert: { keepRate: 0.50, minDepth: 4, baseIrt: 1.3, maxRetries: 16 },
-      master: { keepRate: 0.38, minDepth: 5, baseIrt: 2.4, maxRetries: 24 },
-    };
+export interface SkyscraperSpec {
+  size: number;
+  grid: number[][];
+  clues: SkyscraperClues;
+  hints: SkyscraperHintStep[];
+  symmetry: string;
+  seed: number;
+}
 
-    const config = configMap[tier] || configMap.intermediate;
+interface TierConfig {
+  size: number;
+  keepRate: number;
+  minDepth: number;
+  baseIrt: number;
+  maxRetries: number;
+}
+
+const TIER_SPECS: Record<ExtendedTierKey, TierConfig> = {
+  kids: { size: 4, keepRate: 0.85, minDepth: 2, baseIrt: -1.8, maxRetries: 15 },
+  intermediate: { size: 4, keepRate: 0.65, minDepth: 3, baseIrt: -0.2, maxRetries: 20 },
+  expert: { size: 5, keepRate: 0.52, minDepth: 4, baseIrt: 1.3, maxRetries: 25 },
+  master: { size: 5, keepRate: 0.40, minDepth: 5, baseIrt: 2.3, maxRetries: 30 },
+  legendary: { size: 6, keepRate: 0.35, minDepth: 7, baseIrt: 3.2, maxRetries: 35 },
+  ultimate: { size: 7, keepRate: 0.30, minDepth: 9, baseIrt: 4.1, maxRetries: 40 },
+};
+
+function mulberry32(a: number) {
+  return function () {
+    let t = (a += 0x6d2b79f5);
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+export class WebSkyscraperGenerator {
+  static generate(tier: ExtendedTierKey = 'kids', inputSeed?: number): PuzzleEntity {
+    const config = TIER_SPECS[tier] || TIER_SPECS.intermediate;
+    const { size } = config;
+
+    const actualSeed = inputSeed !== undefined ? inputSeed : Math.floor(Math.random() * 0x7fffffff);
+    const rnd = mulberry32(actualSeed);
 
     for (let attempt = 0; attempt < config.maxRetries; attempt++) {
-      const solution = this._generateLatinSquare(size);
+      const solution = this._generateLatinSquare(size, rnd);
       const fullClues = this._computeClues(solution, size);
 
-      // 1. 180° 中心對稱安全挖除線索（保證唯一解）
-      const puzzleClues = this._maskCluesSymmetrically(fullClues, size, config.keepRate);
+      // 1. 180° 對稱安全挖除線索
+      const puzzleClues = this._maskCluesSymmetrically(fullClues, size, config.keepRate, rnd);
 
       const initialGrid = Array.from({ length: size }, () => Array(size).fill(0));
       if (tier === 'kids') {
         initialGrid[0][0] = solution[0][0];
       }
 
-      // 2. 模擬視線約束推導深度與生成提示階梯
+      // 2. 模擬視線推導深度
       const depthMetrics = this._computePerspectiveDepth(initialGrid, puzzleClues, size);
       if (depthMetrics.depth < config.minDepth && attempt < config.maxRetries - 1) {
         continue;
@@ -62,31 +94,34 @@ export class WebSkyscraperGenerator {
       const normalizedDepth = depthMetrics.depth / (size * size);
 
       const irtLogit = Number(
-        Math.max(-2.8, Math.min(2.8, config.baseIrt + (1 - clueDensity) * 1.5 + (normalizedDepth - 0.5) * 1.2)).toFixed(2)
+        Math.max(-2.8, Math.min(4.5, config.baseIrt + (1 - clueDensity) * 1.5 + (normalizedDepth - 0.5) * 1.2)).toFixed(2)
       );
 
       const spatialLoad = Number(Math.min(0.98, 0.45 + (1 - clueDensity) * 0.35 + normalizedDepth * 0.2).toFixed(2));
-      const workingMemory = Number(Math.min(0.95, 0.4 + normalizedDepth * 0.4 + (size === 5 ? 0.15 : 0)).toFixed(2));
+      const workingMemory = Number(Math.min(0.95, 0.4 + normalizedDepth * 0.4 + (size >= 5 ? 0.15 : 0)).toFixed(2));
       const inhibition = Number(Math.min(0.92, 0.35 + (1 - clueDensity) * 0.45).toFixed(2));
 
       const estimatedTime = Math.round(
         35 + size * size * 4 + depthMetrics.depth * 14 + (1 - clueDensity) * 75
       );
 
-      const id = `skyscraper_${tier}_${Date.now()}_${Math.floor(Math.random() * 10000)}`;
+      const id = `skyscraper_${tier}_s${actualSeed}`;
+
+      const spec: SkyscraperSpec = {
+        size,
+        grid: initialGrid,
+        clues: puzzleClues,
+        hints,
+        symmetry: 'rotational_180',
+        seed: actualSeed,
+      };
 
       return {
         id,
-        category: ('spatial' as any),
+        category: 'spatial' as any,
         engine_type: 'skyscraper',
-        tier,
-        puzzle: {
-          size,
-          grid: initialGrid,
-          clues: puzzleClues,
-          hints,
-          symmetry: 'rotational_180',
-        } as any,
+        tier: (tier === 'ultimate' || tier === 'legendary' ? 'master' : tier) as TierKey,
+        puzzle: spec as any,
         solution: solution as any,
         metrics: {
           grid_size: size,
@@ -98,6 +133,8 @@ export class WebSkyscraperGenerator {
           mrt_correlation_anchor: Number((0.55 + normalizedDepth * 0.25).toFixed(2)),
           primary_perspective_lines: depthMetrics.keyLinesCount,
           solving_path: depthMetrics.path,
+          seed: actualSeed,
+          actualTier: tier,
         } as any,
         cognitiveLoad: {
           spatial: spatialLoad,
@@ -105,15 +142,15 @@ export class WebSkyscraperGenerator {
           workingMemory,
           inhibition,
         },
-        checksum: `spatial_${id}`,
+        checksum: `SKYSCRAPER_${size}x${size}_S${actualSeed}`,
       };
     }
 
-    const fallbackSol = this._generateLatinSquare(size);
-    return this._createFallback(tier, size, fallbackSol, this._computeClues(fallbackSol, size));
+    const fallbackSol = this._generateLatinSquare(size, rnd);
+    return this._createFallback(tier, size, fallbackSol, this._computeClues(fallbackSol, size), actualSeed);
   }
 
-  private static _generateLatinSquare(size: number): number[][] {
+  private static _generateLatinSquare(size: number, rnd: () => number): number[][] {
     const board: number[][] = Array.from({ length: size }, () => Array(size).fill(0));
 
     const solve = (r: number, c: number): boolean => {
@@ -121,7 +158,11 @@ export class WebSkyscraperGenerator {
       const nextR = c === size - 1 ? r + 1 : r;
       const nextC = c === size - 1 ? 0 : c + 1;
 
-      const nums = Array.from({ length: size }, (_, i) => i + 1).sort(() => Math.random() - 0.5);
+      const nums = Array.from({ length: size }, (_, i) => i + 1);
+      for (let i = nums.length - 1; i > 0; i--) {
+        const j = Math.floor(rnd() * (i + 1));
+        [nums[i], nums[j]] = [nums[j], nums[i]];
+      }
 
       for (const num of nums) {
         let valid = true;
@@ -178,10 +219,12 @@ export class WebSkyscraperGenerator {
     return { top, bottom, left, right };
   }
 
-  /**
-   * 180° 對稱式安全挖除線索（保證唯一解）
-   */
-  private static _maskCluesSymmetrically(clues: SkyscraperClues, size: number, keepRate: number): SkyscraperClues {
+  private static _maskCluesSymmetrically(
+    clues: SkyscraperClues,
+    size: number,
+    keepRate: number,
+    rnd: () => number
+  ): SkyscraperClues {
     const copy: SkyscraperClues = {
       top: [...clues.top],
       bottom: [...clues.bottom],
@@ -201,7 +244,11 @@ export class WebSkyscraperGenerator {
       pairs.push({ d1: 'top', i1: i, d2: 'bottom', i2: size - 1 - i });
       pairs.push({ d1: 'left', i1: i, d2: 'right', i2: size - 1 - i });
     }
-    pairs.sort(() => Math.random() - 0.5);
+
+    for (let i = pairs.length - 1; i > 0; i--) {
+      const j = Math.floor(rnd() * (i + 1));
+      [pairs[i], pairs[j]] = [pairs[j], pairs[i]];
+    }
 
     const totalClues = size * 4;
     const targetKeep = Math.max(size + 2, Math.round(totalClues * keepRate));
@@ -228,7 +275,7 @@ export class WebSkyscraperGenerator {
   }
 
   /**
-   * 前綴視野動態剪枝極速回溯求解器（保證 < 80ms 內完成 5x5 檢驗）
+   * 雙向界限預判前綴視野剪枝回溯求解器
    */
   private static _countSolutionsFast(clues: SkyscraperClues, size: number): number {
     const board: number[][] = Array.from({ length: size }, () => Array(size).fill(0));
@@ -237,23 +284,28 @@ export class WebSkyscraperGenerator {
     const rowUsed = Array.from({ length: size }, () => new Uint8Array(size + 1));
     const colUsed = Array.from({ length: size }, () => new Uint8Array(size + 1));
 
-    // 前綴視野檢查：已填入的部分是否已經超越線索限制
     const canPrefixSatisfy = (line: number[], clue: number): boolean => {
       if (clue === 0) return true;
       let visible = 0;
       let maxH = 0;
+      let emptyCount = 0;
+
       for (const h of line) {
-        if (h === 0) break;
-        if (h > maxH) {
+        if (h === 0) {
+          emptyCount++;
+        } else if (h > maxH) {
           visible++;
           maxH = h;
         }
       }
-      if (visible > clue) return false;
 
-      // 檢查若填滿是否仍能達到線索期望
-      const filledCount = line.filter((v) => v !== 0).length;
-      if (filledCount === size && visible !== clue) return false;
+      // 當前可見數已超標
+      if (visible > clue) return false;
+      // 剩餘未填格全部貢獻新可見數，仍無法達到線索要求
+      if (visible + emptyCount < clue) return false;
+
+      // 若全部填滿，必須嚴格等於線索
+      if (emptyCount === 0 && visible !== clue) return false;
 
       return true;
     };
@@ -276,13 +328,11 @@ export class WebSkyscraperGenerator {
         colUsed[c][num] = 1;
 
         let ok = true;
-        // 檢查行前綴視線
         if (clues.left[r] > 0 && !canPrefixSatisfy(board[r], clues.left[r])) ok = false;
         if (ok && c === size - 1 && clues.right[r] > 0) {
           const rev = [...board[r]].reverse();
           if (!canPrefixSatisfy(rev, clues.right[r])) ok = false;
         }
-        // 檢查列前綴視線
         if (ok && clues.top[c] > 0) {
           const col = board.map((rowArr) => rowArr[c]);
           if (!canPrefixSatisfy(col, clues.top[c])) ok = false;
@@ -371,9 +421,6 @@ export class WebSkyscraperGenerator {
     return { depth: Math.max(1, depth), keyLinesCount, path };
   }
 
-  /**
-   * 建立漸進式三階提示階梯（因果邏輯 + 手動落子座標）
-   */
   private static _buildHintLadder(
     grid: number[][],
     clues: SkyscraperClues,
@@ -382,7 +429,6 @@ export class WebSkyscraperGenerator {
   ): SkyscraperHintStep[] {
     const hints: SkyscraperHintStep[] = [];
 
-    // 優先策略 1：尋找線索 1（必然最高樓 size）
     for (let i = 0; i < size; i++) {
       if (clues.top[i] === 1 && grid[0][i] === 0) {
         hints.push({
@@ -436,7 +482,6 @@ export class WebSkyscraperGenerator {
       }
     }
 
-    // 優先策略 2：尋找線索 N（全排列 1,2,...,N 階梯）
     for (let i = 0; i < size; i++) {
       if (clues.top[i] === size && grid[0][i] === 0) {
         hints.push({
@@ -465,7 +510,6 @@ export class WebSkyscraperGenerator {
       }
     }
 
-    // 兜底提示：尋找第一格空白
     for (let r = 0; r < size; r++) {
       for (let c = 0; c < size; c++) {
         if (grid[r][c] === 0) {
@@ -501,17 +545,18 @@ export class WebSkyscraperGenerator {
   }
 
   private static _createFallback(
-    tier: TierKey,
+    tier: ExtendedTierKey,
     size: number,
     solution: number[][],
-    clues: SkyscraperClues
+    clues: SkyscraperClues,
+    seed: number
   ): PuzzleEntity {
-    const id = `sky_fb_${tier}_${Date.now()}`;
+    const id = `sky_fb_${tier}_s${seed}`;
     return {
       id,
-      category: ('spatial' as any),
+      category: 'spatial' as any,
       engine_type: 'skyscraper',
-      tier,
+      tier: (tier === 'ultimate' || tier === 'legendary' ? 'master' : tier) as TierKey,
       puzzle: {
         size,
         grid: Array.from({ length: size }, () => Array(size).fill(0)),
@@ -521,6 +566,8 @@ export class WebSkyscraperGenerator {
           { level: 2, row: 0, col: 0, messageZh: '由遮擋原理收斂首格候選數。', messageEn: 'Deduce candidate by occlusion.' },
           { level: 3, row: 0, col: 0, targetNum: solution[0][0], messageZh: `👉 手動填入 ${solution[0][0]}。`, messageEn: `👉 Place ${solution[0][0]}.` },
         ],
+        symmetry: 'rotational_180',
+        seed,
       } as any,
       solution: solution as any,
       metrics: {
@@ -531,9 +578,10 @@ export class WebSkyscraperGenerator {
         estimated_time_sec: 120,
         mrt_correlation_anchor: 0.6,
         solving_path: ['Extreme Line (1/N)', 'Cross-axis Elimination'],
+        seed,
       } as any,
       cognitiveLoad: { spatial: 0.7, numeric: 0.4, workingMemory: 0.7, inhibition: 0.6 },
-      checksum: `fb_${id}`,
+      checksum: `SKYSCRAPER_FB_${size}x${size}_S${seed}`,
     };
   }
 }
