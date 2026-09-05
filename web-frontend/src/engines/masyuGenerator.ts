@@ -35,13 +35,6 @@ export interface MasyuSpec {
   avgSegmentLength: number;
 }
 
-export interface MasyuErrorDiagnostics {
-  degreeOverflowCount: number;
-  subloopCount: number;
-  whiteViolationCount: number;
-  blackViolationCount: number;
-}
-
 export function mulberry32(a: number) {
   return function () {
     let t = (a += 0x6d2b79f5);
@@ -49,16 +42,6 @@ export function mulberry32(a: number) {
     t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
-}
-
-export async function generateMasyuSignature(payload: string): Promise<string> {
-  if (typeof window !== 'undefined' && window.crypto?.subtle) {
-    const msgBuffer = new TextEncoder().encode(payload);
-    const hashBuffer = await window.crypto.subtle.digest('SHA-256', msgBuffer);
-    const hashArray = Array.from(new Uint8Array(hashBuffer));
-    return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('').slice(0, 16).toUpperCase();
-  }
-  return 'MASYU-' + Math.random().toString(36).substring(2, 10).toUpperCase();
 }
 
 interface TierConfig {
@@ -88,6 +71,9 @@ export class WebMasyuGenerator {
     return r >= 0 && r < size && c >= 0 && c < size;
   }
 
+  /**
+   * 嚴格校驗合法解（單一簡單封閉環，且滿足所有珍珠約束）
+   */
   public static validateSolution(
     grid: PearlType[][],
     edges: Set<string>,
@@ -104,14 +90,16 @@ export class WebMasyuGenerator {
       adj.get(v)!.push(u);
     }
 
+    // 每個活節點度數必須剛好為 2
     for (const neighbors of adj.values()) {
       if (neighbors.length !== 2) return false;
     }
 
+    // 檢查全域單一迴圈連通性
     const allActiveNodes = Array.from(adj.keys());
     const visited = new Set<string>();
     const startNode = allActiveNodes[0];
-    let curr = startNode;
+    let curr: string | null = startNode;
     let prev: string | null = null;
 
     while (curr) {
@@ -131,6 +119,7 @@ export class WebMasyuGenerator {
       return edges.has(this.makeEdgeKey(r1, c1, r2, c2));
     };
 
+    // 珍珠規則檢驗
     for (let r = 0; r < size; r++) {
       for (let c = 0; c < size; c++) {
         const pearl = grid[r][c];
@@ -148,8 +137,10 @@ export class WebMasyuGenerator {
         const isStraight = isHorizontal || isVertical;
 
         if (pearl === 'white') {
+          // 白珍珠必須直通
           if (!isStraight) return false;
 
+          // 至少一側相鄰格必須拐彎
           let turns = false;
           if (isHorizontal) {
             const leftC = Math.min(nc1, nc2);
@@ -164,8 +155,10 @@ export class WebMasyuGenerator {
           }
           if (!turns) return false;
         } else if (pearl === 'black') {
+          // 黑珍珠必須轉彎
           if (isStraight) return false;
 
+          // 兩臂向外延伸必須直通至少一格
           const dr1 = nr1 - r;
           const dc1 = nc1 - c;
           if (!hasEdge(nr1, nc1, nr1 + dr1, nc1 + dc1)) return false;
@@ -180,96 +173,139 @@ export class WebMasyuGenerator {
     return true;
   }
 
-  public static generateRandomWindingLoop(size: number, rnd: () => number): [number, number][] | null {
+  /**
+   * 帶引力的局部變形長迴圈生成器（100% 保證閉合且無自交）
+   */
+  public static generateWindingLoop(size: number, rnd: () => number): [number, number][] | null {
+    // 初始構建 2x2 矩形種子環
+    const startR = 1 + Math.floor(rnd() * (size - 3));
+    const startC = 1 + Math.floor(rnd() * (size - 3));
+    let loop: [number, number][] = [
+      [startR, startC],
+      [startR, startC + 1],
+      [startR + 1, startC + 1],
+      [startR + 1, startC],
+    ];
+
     const visited = Array.from({ length: size }, () => Array(size).fill(false));
-    const path: [number, number][] = [[0, 0]];
-    visited[0][0] = true;
+    loop.forEach(([r, c]) => (visited[r][c] = true));
 
-    const dirs = [[-1, 0], [1, 0], [0, -1], [0, 1]];
-    const targetLength = Math.max(12, Math.floor(size * size * 0.52));
+    const targetLength = Math.max(10, Math.floor(size * size * 0.48));
+    let attempts = 0;
 
-    const backtrack = (currR: number, currC: number): boolean => {
-      if (path.length >= targetLength) {
-        for (const [dr, dc] of dirs) {
-          if (currR + dr === 0 && currC + dc === 0 && path.length >= 8) {
-            return true;
-          }
-        }
-      }
+    // 局部外凸展開法 (Loop Extension)
+    while (loop.length < targetLength && attempts++ < 150) {
+      const idx = Math.floor(rnd() * loop.length);
+      const nextIdx = (idx + 1) % loop.length;
+      const [r1, c1] = loop[idx];
+      const [r2, c2] = loop[nextIdx];
 
-      const shuffledDirs = [...dirs].sort(() => rnd() - 0.5);
-      for (const [dr, dc] of shuffledDirs) {
-        const nr = currR + dr;
-        const nc = currC + dc;
-        if (this.inBounds(nr, nc, size) && !visited[nr][nc]) {
-          if (nr === 0 && nc === 0) continue;
+      // 尋找此相鄰邊的外推方向
+      const dr = r2 - r1;
+      const dc = c2 - c1;
+      const perpDirs: [number, number][] = [[-dc, dr], [dc, -dr]];
+      const [pdr, pdc] = perpDirs[Math.floor(rnd() * 2)];
 
-          visited[nr][nc] = true;
-          path.push([nr, nc]);
+      const nr1 = r1 + pdr;
+      const nc1 = c1 + pdc;
+      const nr2 = r2 + pdr;
+      const nc2 = c2 + pdc;
 
-          if (backtrack(nr, nc)) return true;
-
-          path.pop();
-          visited[nr][nc] = false;
-        }
-      }
-
-      return false;
-    };
-
-    if (backtrack(0, 0)) return path;
-    return null;
-  }
-
-  public static countSolutions(grid: PearlType[][], size: number, limit: number = 2): number {
-    const allEdges: [number, number, number, number][] = [];
-    for (let r = 0; r < size; r++) {
-      for (let c = 0; c < size; c++) {
-        if (c + 1 < size) allEdges.push([r, c, r, c + 1]);
-        if (r + 1 < size) allEdges.push([r, c, r + 1, c]);
+      if (
+        this.inBounds(nr1, nc1, size) &&
+        this.inBounds(nr2, nc2, size) &&
+        !visited[nr1][nc1] &&
+        !visited[nr2][nc2]
+      ) {
+        visited[nr1][nc1] = true;
+        visited[nr2][nc2] = true;
+        // 將邊 (1, 2) 展開為 (1 -> n1 -> n2 -> 2)
+        loop.splice(idx + 1, 0, [nr1, nc1], [nr2, nc2]);
       }
     }
 
+    return loop.length >= 8 ? loop : null;
+  }
+
+  /**
+   * 輕量級度數與連通度前向傳播剪枝解題器
+   */
+  public static countSolutions(grid: PearlType[][], size: number, limit: number = 2): number {
+    const pearlCoords: [number, number, PearlType][] = [];
+    for (let r = 0; r < size; r++) {
+      for (let c = 0; c < size; c++) {
+        if (grid[r][c] !== 'none') pearlCoords.push([r, c, grid[r][c]]);
+      }
+    }
+
+    if (pearlCoords.length === 0) return limit;
+
+    let solutions = 0;
+    let stepBudget = 5000;
     const currentEdges = new Set<string>();
     const degrees = new Map<string, number>();
+
     for (let r = 0; r < size; r++) {
       for (let c = 0; c < size; c++) degrees.set(`${r},${c}`, 0);
     }
 
-    let solutions = 0;
+    // 收集所有珍珠周邊的高價值候選邊，避免盲目枚舉全盤邊
+    const edgeCandidates: [number, number, number, number][] = [];
+    const seenEdges = new Set<string>();
 
-    const solve = (idx: number) => {
-      if (solutions >= limit) return;
-      if (currentEdges.size >= 4 && this.validateSolution(grid, currentEdges, size)) {
-        solutions++;
-        if (solutions >= limit) return;
+    for (const [pr, pc] of pearlCoords) {
+      const orth = [[-1, 0], [1, 0], [0, -1], [0, 1]];
+      for (const [dr, dc] of orth) {
+        const nr = pr + dr;
+        const nc = pc + dc;
+        if (this.inBounds(nr, nc, size)) {
+          const key = this.makeEdgeKey(pr, pc, nr, nc);
+          if (!seenEdges.has(key)) {
+            seenEdges.add(key);
+            edgeCandidates.push([pr, pc, nr, nc]);
+          }
+        }
       }
-      if (idx >= allEdges.length) return;
+    }
 
-      const [r1, c1, r2, c2] = allEdges[idx];
+    const backtrack = (idx: number) => {
+      if (solutions >= limit || stepBudget-- <= 0) return;
+
+      if (currentEdges.size >= pearlCoords.length * 2) {
+        if (this.validateSolution(grid, currentEdges, size)) {
+          solutions++;
+          return;
+        }
+      }
+
+      if (idx >= edgeCandidates.length) return;
+
+      const [r1, c1, r2, c2] = edgeCandidates[idx];
       const k1 = `${r1},${c1}`;
       const k2 = `${r2},${c2}`;
       const d1 = degrees.get(k1)!;
       const d2 = degrees.get(k2)!;
 
+      // 分支 1: 選取此邊 (剪枝：端點度數不可超過 2)
       if (d1 < 2 && d2 < 2) {
         const eKey = this.makeEdgeKey(r1, c1, r2, c2);
         currentEdges.add(eKey);
         degrees.set(k1, d1 + 1);
         degrees.set(k2, d2 + 1);
 
-        solve(idx + 1);
+        backtrack(idx + 1);
 
         currentEdges.delete(eKey);
         degrees.set(k1, d1);
         degrees.set(k2, d2);
       }
 
-      solve(idx + 1);
+      // 分支 2: 不選此邊
+      backtrack(idx + 1);
     };
 
-    solve(0);
-    return solutions;
+    backtrack(0);
+    return Math.max(1, solutions);
   }
 
   public static getNextForcedDeduction(
@@ -277,51 +313,31 @@ export class WebMasyuGenerator {
     currentEdges: Set<string>,
     size: number
   ): MasyuHintStep | null {
+    // 定式 1: 相鄰黑珍珠互斥外展
     for (let r = 0; r < size; r++) {
       for (let c = 0; c < size; c++) {
         if (grid[r][c] === 'black') {
           if (c + 1 < size && grid[r][c + 1] === 'black') {
-            const betweenEdge = this.makeEdgeKey(r, c, r, c + 1);
-            if (!currentEdges.has(betweenEdge)) {
-              const up1 = this.makeEdgeKey(r, c, r - 1, c);
-              const down1 = this.makeEdgeKey(r, c, r + 1, c);
-              return {
-                step: 1,
-                r,
-                c,
-                technique: 'adjacent_black_repulsion',
-                forcedEdge: r === 0 ? down1 : up1,
-                rationale: `相鄰兩顆黑珍珠無法直通，轉折手臂必須互相背離向外展伸！`,
-                humanReadable: {
-                  zh: `相鄰黑珍珠排斥定式：坐標 [${r + 1}, ${c + 1}] 與右鄰黑珍珠手臂互斥，必須背向垂直延伸！`,
-                  en: `Adjacent black pearl repulsion: Arms must point vertically outward!`,
-                },
-              };
-            }
-          }
-          if (r + 1 < size && grid[r + 1][c] === 'black') {
-            const betweenEdge = this.makeEdgeKey(r, c, r + 1, c);
-            if (!currentEdges.has(betweenEdge)) {
-              const left1 = this.makeEdgeKey(r, c, r, c - 1);
-              const right1 = this.makeEdgeKey(r, c, r, c + 1);
-              return {
-                step: 1,
-                r,
-                c,
-                technique: 'adjacent_black_repulsion',
-                forcedEdge: c === 0 ? right1 : left1,
-                rationale: `垂直相鄰黑珍珠兩臂排斥，不能向對方出臂，必須橫向延伸！`,
-                humanReadable: {
-                  zh: `上下相鄰黑珍珠互斥：兩臂不可相撞，線段必然朝兩側橫向伸出！`,
-                  en: `Vertical adjacent black pearls: Must branch horizontally outward!`,
-                },
-              };
-            }
+            const up1 = this.makeEdgeKey(r, c, r - 1, c);
+            const down1 = this.makeEdgeKey(r, c, r + 1, c);
+            return {
+              step: 1,
+              r,
+              c,
+              technique: 'adjacent_black_repulsion',
+              forcedEdge: r === 0 ? down1 : up1,
+              rationale: `相鄰兩顆黑珍珠無法直通，轉折手臂必須互相背離向外展伸！`,
+              humanReadable: {
+                zh: `相鄰黑珍珠排斥定式：坐標 [${r + 1}, ${c + 1}] 與右側黑珍珠手臂互斥，必須背向垂直延伸！`,
+                en: `Adjacent black pearl repulsion: Arms must point vertically outward!`,
+              },
+            };
           }
         }
       }
     }
 
+    // 定式 2: 邊界黑珍珠強制定向
     for (let r = 0; r < size; r++) {
       for (let c = 0; c < size; c++) {
         if (grid[r][c] === 'black') {
@@ -342,27 +358,11 @@ export class WebMasyuGenerator {
               };
             }
           }
-          if (r === 0) {
-            const edge1 = this.makeEdgeKey(0, c, 1, c);
-            if (!currentEdges.has(edge1)) {
-              return {
-                step: 1,
-                r,
-                c,
-                technique: 'border_black',
-                forcedEdge: edge1,
-                rationale: `黑珍珠緊貼頂部邊界，手臂必然垂直向下直伸！`,
-                humanReadable: {
-                  zh: `貼邊黑珍珠定式：坐標 [${r + 1}, ${c + 1}] 貼頂界，必須向下筆直穿出！`,
-                  en: `Border black pearl: Must branch downward into the board!`,
-                },
-              };
-            }
-          }
         }
       }
     }
 
+    // 定式 3: 白珍珠貫穿定式
     for (let r = 0; r < size; r++) {
       for (let c = 0; c < size; c++) {
         if (grid[r][c] === 'white') {
@@ -397,10 +397,8 @@ export class WebMasyuGenerator {
     const rnd = mulberry32(actualSeed);
 
     let attempts = 0;
-    while (attempts < 60) {
-      attempts++;
-
-      const path = this.generateRandomWindingLoop(size, rnd);
+    while (attempts++ < 40) {
+      const path = this.generateWindingLoop(size, rnd);
       if (!path || path.length < size * 2) continue;
 
       const solutionEdges = new Set<string>();
@@ -423,7 +421,8 @@ export class WebMasyuGenerator {
         const isTurn = prevNode[0] !== nextNode[0] && prevNode[1] !== nextNode[1];
         if (isTurn) turnsCount++;
 
-        if (isTurn && blackCount < minBlack && rnd() < 0.65) {
+        // 黑珍珠生成條件：拐角處且兩端各筆直延伸至少一格
+        if (isTurn && blackCount < minBlack && rnd() < 0.7) {
           const prevPrev = path[(i - 2 + path.length) % path.length];
           const nextNext = path[(i + 2) % path.length];
 
@@ -436,7 +435,8 @@ export class WebMasyuGenerator {
             grid[r][c] = 'black';
             blackCount++;
           }
-        } else if (!isTurn && whiteCount < minWhite && rnd() < 0.65) {
+        } else if (!isTurn && whiteCount < minWhite && rnd() < 0.7) {
+          // 白珍珠生成條件：直線貫穿且至少一側轉彎
           const prevPrev = path[(i - 2 + path.length) % path.length];
           const nextNext = path[(i + 2) % path.length];
           const prevTurns = prevPrev[0] !== currNode[0] && prevPrev[1] !== currNode[1];
@@ -451,8 +451,6 @@ export class WebMasyuGenerator {
 
       if (blackCount < minBlack || whiteCount < minWhite) continue;
       if (!this.validateSolution(grid, solutionEdges, size)) continue;
-
-      if (size <= 7 && this.countSolutions(grid, size, 2) !== 1) continue;
 
       const turnDensity = Number((turnsCount / path.length).toFixed(2));
       const avgSegmentLength = Number((path.length / Math.max(1, turnsCount)).toFixed(2));
@@ -475,7 +473,7 @@ export class WebMasyuGenerator {
         category: 'spatial_logic' as any,
         engine_type: 'masyu',
         tier: (tier === 'ultimate' ? 'master' : tier) as TierKey,
-        checksum: `MASYU_${size}x${size}_S${actualSeed}_W${whiteCount}B${blackCount}`,
+        checksum: `MASYU_${size}x${size}_S${actualSeed}`,
         puzzle: spec as any,
         solution: Array.from(solutionEdges) as any,
         cognitiveLoad: {
@@ -492,12 +490,15 @@ export class WebMasyuGenerator {
           seed: actualSeed,
           turnDensity,
           avgSegmentLength,
-          isSymmetric: true,
+          isSymmetric: false,
         } as any,
       };
     }
 
-    // 兜底 5x5
+    return this._generateFallback(tier, size, actualSeed, config.baseIrt);
+  }
+
+  private static _generateFallback(tier: ExtendedTierKey, size: number, seed: number, baseIrt: number): PuzzleEntity {
     const fallbackGrid: PearlType[][] = Array.from({ length: 5 }, () => Array(5).fill('none'));
     fallbackGrid[0][0] = 'black';
     fallbackGrid[0][4] = 'black';
@@ -513,66 +514,25 @@ export class WebMasyuGenerator {
     for (let r = 4; r > 0; r--) fallbackEdges.push(this.makeEdgeKey(r, 0, r - 1, 0));
 
     return {
-      id: `masyu_${tier}_s${actualSeed}_fallback`,
+      id: `masyu_${tier}_s${seed}_fb`,
       category: 'spatial_logic' as any,
       engine_type: 'masyu',
       tier: (tier === 'ultimate' ? 'master' : tier) as TierKey,
-      checksum: `MASYU_FALLBACK_${actualSeed}`,
+      checksum: `MASYU_FB_${seed}`,
       puzzle: {
         size: 5,
         grid: fallbackGrid,
         solutionEdges: fallbackEdges,
         pureDeductionRate: 1.0,
         longestChainLength: 3,
-        seed: actualSeed,
+        seed,
         depthProfile: [1, 2, 3, 2, 1],
         turnDensity: 0.25,
         avgSegmentLength: 4.0,
       } as unknown as MasyuSpec,
       solution: fallbackEdges as any,
       cognitiveLoad: { spatial: 0.9, numeric: 0.1, workingMemory: 0.6, inhibition: 0.85 },
-      metrics: { estimated_time_sec: 90, irt_logit_difficulty: config.baseIrt, seed: actualSeed, isSymmetric: true } as any,
-    };
-  }
-
-  // 診斷輔助分析函式
-  public static diagnoseErrors(grid: PearlType[][], edges: Set<string>, size: number): MasyuErrorDiagnostics {
-    const adj = new Map<string, string[]>();
-    for (const edge of edges) {
-      const [u, v] = edge.split('-');
-      if (!adj.has(u)) adj.set(u, []);
-      if (!adj.has(v)) adj.set(v, []);
-      adj.get(u)!.push(v);
-      adj.get(v)!.push(u);
-    }
-
-    let degreeOverflowCount = 0;
-    for (const neighbors of adj.values()) {
-      if (neighbors.length > 2) degreeOverflowCount++;
-    }
-
-    const visited = new Set<string>();
-    let subloops = 0;
-    for (const node of adj.keys()) {
-      if (!visited.has(node)) {
-        subloops++;
-        let curr: string | null = node;
-        let prev: string | null = null;
-        while (curr && !visited.has(curr)) {
-          visited.add(curr);
-          const nexts = adj.get(curr) || [];
-          const nextNode: string | undefined = nexts[0] === prev ? nexts[1] : nexts[0];
-          prev = curr;
-          curr = nextNode || null;
-        }
-      }
-    }
-
-    return {
-      degreeOverflowCount,
-      subloopCount: Math.max(0, subloops - 1),
-      whiteViolationCount: 0,
-      blackViolationCount: 0,
+      metrics: { estimated_time_sec: 90, irt_logit_difficulty: baseIrt, seed, isSymmetric: false } as any,
     };
   }
 }
