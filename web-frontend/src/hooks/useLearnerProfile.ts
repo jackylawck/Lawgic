@@ -2,7 +2,9 @@
 import { useState, useCallback, useEffect } from 'react';
 import { SecureStorage } from '../utils/secureStorage';
 
-export type TierKey = 'kids' | 'intermediate' | 'expert' | 'master' | 'legendary' | 'ultimate';
+// 保持與 generated/index.ts 一致的核心 4 種難度
+export type TierKey = 'kids' | 'intermediate' | 'expert' | 'master';
+export type ExtendedTierKey = TierKey | 'legendary' | 'ultimate';
 export type CognitiveDimension = 'spatial' | 'numeric' | 'workingMemory' | 'inhibition' | 'processingSpeed';
 
 export interface HintDistributionTrend {
@@ -15,7 +17,7 @@ export interface HintDistributionTrend {
 export interface AttemptPayload {
   puzzleId: string;
   engineType: string;
-  tier: TierKey;
+  tier: TierKey | ExtendedTierKey;
   cognitiveLoad: {
     spatial: number;
     numeric: number;
@@ -57,7 +59,7 @@ export interface PersonalBest {
 export interface BookmarkRecord {
   puzzleId: string;
   engineType: string;
-  tier: TierKey;
+  tier: TierKey | ExtendedTierKey;
   boardState: any;
   elapsedSec: number;
   bookmarkedAt: string;
