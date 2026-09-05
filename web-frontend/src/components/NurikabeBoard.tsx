@@ -58,7 +58,7 @@ export const NurikabeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
   const [history, setHistory] = useState<CellDelta[]>([]);
   const [redoStack, setRedoStack] = useState<CellDelta[]>([]);
 
-  // 2. 輔助功能狀態 (新增高對比模式)
+  // 2. 輔助功能狀態
   const [noGuessMode, setNoGuessMode] = useState<boolean>(false);
   const [highContrast, setHighContrast] = useState<boolean>(false);
   const [noGuessWarning, setNoGuessWarning] = useState<string | null>(null);
@@ -66,7 +66,7 @@ export const NurikabeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
   const [hintLadderLevel, setHintLadderLevel] = useState<1 | 2 | 3>(1);
   const [animatedEvidenceSet, setAnimatedEvidenceSet] = useState<Set<string>>(new Set());
 
-  // 3. 覆盤播放器狀態（變速與原盤面還原）
+  // 3. 覆盤播放器狀態
   const [isReplaying, setIsReplaying] = useState<boolean>(false);
   const [replaySpeed, setReplaySpeed] = useState<1 | 2 | 4>(1);
   const [replayStepIndex, setReplayStepIndex] = useState<number>(0);
@@ -83,7 +83,7 @@ export const NurikabeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
   const [elapsedMs, setElapsedMs] = useState<number>(0);
   const conflictCountRef = useRef<number>(0);
   const [conflictDisplay, setConflictDisplay] = useState<number>(0);
-  const movesCountRef = useRef<number>(0); // ✅ 已修復語法錯誤
+  const movesCountRef = useRef<number>(0);
   const hasRecordedRef = useRef<boolean>(false);
 
   useEffect(() => {
@@ -102,7 +102,7 @@ export const NurikabeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
     setElapsedMs(0);
     conflictCountRef.current = 0;
     setConflictDisplay(0);
-    movesCountRef.current = 0; // ✅ 已正確在此重置
+    movesCountRef.current = 0;
     hasRecordedRef.current = false;
   }, [actualPuzzle?.id, rows, cols]);
 
@@ -117,7 +117,7 @@ export const NurikabeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
     return () => cancelAnimationFrame(frameId);
   }, [isCompleted, isReplaying]);
 
-  // 即時 2x2 黑海池預警
+  // 2x2 黑海池與島嶼大小狀態即時分析
   const analysis = useMemo(() => {
     const twoByTwoPools = new Set<string>();
 
@@ -247,6 +247,7 @@ export const NurikabeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
 
   useEffect(() => {
     if (isCompleted || isReplaying || analysis.totalConflicts > 0) return;
+    if (movesCountRef.current === 0 || history.length === 0) return;
 
     const effectiveBoard = board.map((row, r) =>
       row.map((val, c) => (grid[r]?.[c] !== null ? 2 : val))
@@ -297,7 +298,7 @@ export const NurikabeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
         }
       }
     }
-  }, [board, grid, analysis.totalConflicts, isCompleted, isReplaying, actualPuzzle, rows, cols, currentTier, recordAttempt, profile.personalBest.fastestTime, activeHint, tournamentMode]);
+  }, [board, grid, analysis.totalConflicts, isCompleted, isReplaying, actualPuzzle, rows, cols, currentTier, recordAttempt, profile.personalBest.fastestTime, activeHint, tournamentMode, history.length]);
 
   const handleRequestHint = () => {
     if (isCompleted || tournamentMode || isReplaying) return;
@@ -374,7 +375,6 @@ export const NurikabeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
     setTimeout(() => setCopyToast(null), 2400);
   };
 
-  // 📸 生成高光戰績卡（純前端 Canvas 匯出圖片）
   const handleGenerateCard = () => {
     const canvas = document.createElement('canvas');
     canvas.width = 600;
@@ -382,19 +382,16 @@ export const NurikabeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    // 背景漸層
     const bgGrad = ctx.createLinearGradient(0, 0, 600, 320);
     bgGrad.addColorStop(0, '#020617');
     bgGrad.addColorStop(1, '#0f172a');
     ctx.fillStyle = bgGrad;
     ctx.fillRect(0, 0, 600, 320);
 
-    // 外框裝飾
     ctx.strokeStyle = '#38bdf8';
     ctx.lineWidth = 3;
     ctx.strokeRect(12, 12, 576, 296);
 
-    // 標題與標籤
     ctx.fillStyle = '#f8fafc';
     ctx.font = 'bold 22px monospace';
     ctx.fillText('NURIKABE GRANDMASTER RECORD', 30, 48);
@@ -403,7 +400,6 @@ export const NurikabeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
     ctx.font = '12px monospace';
     ctx.fillText(`TIER: ${currentTier.toUpperCase()}  |  180° SYMMETRIC BOARD`, 30, 72);
 
-    // 盤面縮圖 (繪製迷你網格)
     const startX = 30;
     const startY = 95;
     const cellSize = Math.min(24, 180 / Math.max(rows, cols));
@@ -431,7 +427,6 @@ export const NurikabeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
       }
     }
 
-    // 右側績效數據欄
     ctx.textAlign = 'left';
     ctx.textBaseline = 'alphabetic';
 
@@ -445,19 +440,17 @@ export const NurikabeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
     ctx.fillText(`CONFLICTS: ${conflictCountRef.current}`, 260, 180);
     ctx.fillText(`FLUID IQ: ${cci.standardIQ} (Top ${(100 - cci.percentileRank).toFixed(1)}%)`, 260, 205);
 
-    // 防偽簽名
     ctx.fillStyle = '#64748b';
     ctx.font = '9px monospace';
     ctx.fillText(`RECEIPT: ${proofSignature || 'VERIFIED_LAWGIC_HASH'}`, 260, 245);
     ctx.fillText('POWERED BY LAWGIC COMPETITIVE ENGINE', 260, 265);
 
-    // 下載圖片
     const link = document.createElement('a');
     link.download = `Nurikabe_Card_${Date.now().toString(36)}.png`;
     link.href = canvas.toDataURL('image/png');
     link.click();
 
-    setCopyToast(isEn ? '📸 Performance card downloaded!' : '📸 高光戰績卡已生成並下載！');
+    setCopyToast(isEn ? '📸 Card downloaded!' : '📸 高光戰績卡已下載！');
     setTimeout(() => setCopyToast(null), 2500);
   };
 
@@ -491,24 +484,23 @@ export const NurikabeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
           </div>
         </div>
 
-        {/* 高對比切換 */}
         <button
           onClick={() => setHighContrast((prev) => !prev)}
-          className={`p-1 rounded border text-center transition ${
+          className={`p-1 rounded border text-center transition cursor-pointer ${
             highContrast
               ? 'bg-amber-950 border-amber-400 text-amber-300 font-bold shadow-xs'
               : 'bg-slate-950 border-slate-800 text-slate-500 hover:text-slate-300'
           }`}
-          title="Toggle High-Contrast Paper Mode"
+          title={isEn ? 'Toggle High-Contrast Paper Mode' : '切換高對比紙感模式'}
         >
           <div className="text-[6.5px]">🌓 {isEn ? 'Theme' : '主題'}</div>
-          <div className="text-[7.5px]">{highContrast ? (isEn ? 'Paper' : '高對比') : (isEn ? 'Dark' : '暗夜')}</div>
+          <div className="text-[7.5px]">{highContrast ? (isEn ? 'Paper' : '紙感') : (isEn ? 'Dark' : '暗夜')}</div>
         </button>
 
         <button
           onClick={() => setNoGuessMode((prev) => !prev)}
           disabled={tournamentMode}
-          className={`p-1 rounded border text-center transition ${
+          className={`p-1 rounded border text-center transition cursor-pointer ${
             tournamentMode
               ? 'bg-purple-950/80 border-purple-500 text-purple-300 font-bold cursor-not-allowed'
               : noGuessMode
@@ -517,13 +509,13 @@ export const NurikabeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
           }`}
         >
           <div className="text-[6.5px]">🛡️ {isEn ? 'No-Guess' : '無猜測'}</div>
-          <div className="text-[7.5px]">{tournamentMode ? (isEn ? 'Locked' : '鎖定') : noGuessMode ? 'Strict' : 'OFF'}</div>
+          <div className="text-[7.5px]">{tournamentMode ? (isEn ? 'Locked' : '鎖定') : noGuessMode ? (isEn ? 'Strict' : '嚴謹') : (isEn ? 'OFF' : '關閉')}</div>
         </button>
 
         <button
           onClick={handleRequestHint}
           disabled={isCompleted || tournamentMode || isReplaying}
-          className={`p-1 rounded border text-center transition ${
+          className={`p-1 rounded border text-center transition cursor-pointer ${
             tournamentMode
               ? 'bg-slate-900 border-slate-800 text-slate-600 cursor-not-allowed'
               : activeHint
@@ -554,12 +546,12 @@ export const NurikabeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
               <span className="text-slate-400">[{replayStepIndex}/{replayStepsList.length}]</span>
             </span>
             <div className="flex items-center gap-1">
-              <span className="text-[6.5px] text-slate-400">SPEED:</span>
+              <span className="text-[6.5px] text-slate-400">{isEn ? 'SPEED:' : '速度:'}</span>
               {[1, 2, 4].map((spd) => (
                 <button
                   key={spd}
                   onClick={() => setReplaySpeed(spd as 1 | 2 | 4)}
-                  className={`px-1 py-0.2 rounded text-[6.5px] font-bold ${
+                  className={`px-1 py-0.2 rounded text-[6.5px] font-bold cursor-pointer ${
                     replaySpeed === spd ? 'bg-cyan-500 text-slate-950' : 'bg-slate-800 text-slate-400'
                   }`}
                 >
@@ -568,14 +560,14 @@ export const NurikabeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
               ))}
               <button
                 onClick={handleRestoreUserBoard}
-                className="ml-1 px-1.5 py-0.2 bg-rose-950 hover:bg-rose-900 border border-rose-500/60 text-rose-300 rounded text-[6.5px] font-bold"
+                className="ml-1 px-1.5 py-0.2 bg-rose-950 hover:bg-rose-900 border border-rose-500/60 text-rose-300 rounded text-[6.5px] font-bold cursor-pointer"
               >
                 {isEn ? 'Restore Mine' : '還原我的盤面'}
               </button>
             </div>
           </div>
           <div className="truncate text-cyan-300">
-            {currentReplayStep?.rationale || 'Demonstrating AI deductive steps...'}
+            {currentReplayStep?.rationale || (isEn ? 'Demonstrating AI deductive steps...' : '演示因果演繹步進...')}
           </div>
         </div>
       )}
@@ -701,29 +693,29 @@ export const NurikabeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
           <button
             onClick={handleUndo}
             disabled={history.length === 0 || isCompleted || isReplaying}
-            className="px-2 py-0.5 bg-slate-900 border border-slate-800 rounded hover:bg-slate-800 disabled:opacity-40"
+            className="px-2 py-0.5 bg-slate-900 border border-slate-800 rounded hover:bg-slate-800 disabled:opacity-40 cursor-pointer"
           >
             ↩ {isEn ? 'Undo' : '撤銷'}
           </button>
           <button
             onClick={handleRedo}
             disabled={redoStack.length === 0 || isCompleted || isReplaying}
-            className="px-2 py-0.5 bg-slate-900 border border-slate-800 rounded hover:bg-slate-800 disabled:opacity-40"
+            className="px-2 py-0.5 bg-slate-900 border border-slate-800 rounded hover:bg-slate-800 disabled:opacity-40 cursor-pointer"
           >
             ↪ {isEn ? 'Redo' : '重做'}
           </button>
           {!tournamentMode && (
             <button
               onClick={handleCopySeedShareCode}
-              className="px-2 py-0.5 bg-slate-900 border border-slate-800 rounded hover:bg-slate-800 text-amber-300"
-              title="Copy Duel Link"
+              className="px-2 py-0.5 bg-slate-900 border border-slate-800 rounded hover:bg-slate-800 text-amber-300 cursor-pointer"
+              title={isEn ? 'Copy Duel Link' : '複製對決連結'}
             >
               🔗 {isEn ? 'Duel Link' : '對決連結'}
             </button>
           )}
         </div>
-        <div className="text-slate-500">
-          <span>點擊循環：空白 ➔ 黑海 ➔ 綠點 (島嶼)</span>
+        <div className="text-slate-500 text-[8px]">
+          {isEn ? 'Click cycle: Blank ➔ Sea (Black) ➔ Dot (Island)' : '點擊循環：空白 ➔ 黑海 ➔ 綠點 (島嶼)'}
         </div>
       </div>
 
@@ -733,7 +725,9 @@ export const NurikabeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
           <div className="flex items-center justify-between border-b border-slate-800 pb-1 mb-1.5">
             <div className="text-left">
               <div className="text-[7.5px] text-slate-500 tracking-wider">NURIKABE RESOLVED</div>
-              <div className="text-xs text-indigo-300 font-bold">🧱 暗夜數牆・拓撲島嶼完滿</div>
+              <div className="text-xs text-indigo-300 font-bold">
+                {isEn ? '🧱 Nurikabe Island Partition Solved!' : '🧱 暗夜數牆・拓撲島嶼完滿'}
+              </div>
             </div>
             <div className="px-2 py-0.5 border border-cyan-500 bg-cyan-950/80 rounded text-[9px] font-bold text-cyan-300">
               Gf: IQ {cci.standardIQ} (Top {Number((100 - cci.percentileRank).toFixed(1))}%)
@@ -742,16 +736,18 @@ export const NurikabeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
 
           <div className="grid grid-cols-3 gap-1 text-[7.5px] text-slate-400 mb-1.5">
             <div className="bg-slate-900/80 p-1 rounded">
-              <div>耗時</div>
+              <div>{isEn ? 'Time' : '耗時'}</div>
               <div className="text-slate-200 font-bold text-[10px]">{(elapsedMs / 1000).toFixed(1)}s</div>
             </div>
             <div className="bg-slate-900/80 p-1 rounded">
-              <div>操作步數</div>
+              <div>{isEn ? 'Moves' : '操作步數'}</div>
               <div className="text-cyan-300 font-bold text-[10px]">{movesCountRef.current}</div>
             </div>
             <div className="bg-slate-900/80 p-1 rounded">
-              <div>水池違規</div>
-              <div className="text-amber-300 font-bold text-[10px]">{conflictCountRef.current} 次</div>
+              <div>{isEn ? '2x2 Pools' : '水池違規'}</div>
+              <div className="text-amber-300 font-bold text-[10px]">
+                {conflictCountRef.current} {isEn ? '' : '次'}
+              </div>
             </div>
           </div>
 
@@ -778,7 +774,7 @@ export const NurikabeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
             <button
               onClick={handleStartReplay}
               disabled={isReplaying}
-              className="py-1 bg-indigo-950 hover:bg-indigo-900 border border-indigo-500/60 text-indigo-300 text-[7.5px] font-bold rounded transition shadow flex items-center justify-center gap-0.5 active:scale-95"
+              className="py-1 bg-indigo-950 hover:bg-indigo-900 border border-indigo-500/60 text-indigo-300 text-[7.5px] font-bold rounded transition shadow flex items-center justify-center gap-0.5 active:scale-95 cursor-pointer"
             >
               <span>🔁</span>
               <span>{isEn ? 'AI Replay' : '解法覆盤'}</span>
@@ -786,7 +782,7 @@ export const NurikabeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
 
             <button
               onClick={handleGenerateCard}
-              className="py-1 bg-purple-950 hover:bg-purple-900 border border-purple-500/60 text-purple-300 text-[7.5px] font-bold rounded transition shadow flex items-center justify-center gap-0.5 active:scale-95"
+              className="py-1 bg-purple-950 hover:bg-purple-900 border border-purple-500/60 text-purple-300 text-[7.5px] font-bold rounded transition shadow flex items-center justify-center gap-0.5 active:scale-95 cursor-pointer"
             >
               <span>📸</span>
               <span>{isEn ? 'Share Card' : '高光戰績卡'}</span>
@@ -797,7 +793,7 @@ export const NurikabeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
             {userStateBackup && (
               <button
                 onClick={handleRestoreUserBoard}
-                className="flex-1 py-1 bg-slate-900 hover:bg-slate-800 border border-cyan-500/60 text-cyan-300 text-[7.5px] font-bold rounded transition shadow flex items-center justify-center gap-0.5 active:scale-95"
+                className="flex-1 py-1 bg-slate-900 hover:bg-slate-800 border border-cyan-500/60 text-cyan-300 text-[7.5px] font-bold rounded transition shadow flex items-center justify-center gap-0.5 active:scale-95 cursor-pointer"
               >
                 <span>↩️</span>
                 <span>{isEn ? 'My Board' : '我的盤面'}</span>
@@ -806,7 +802,7 @@ export const NurikabeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
 
             <button
               onClick={handleCopySeedShareCode}
-              className="flex-1 py-1 bg-slate-900 hover:bg-slate-800 border border-amber-500/60 text-amber-300 text-[7.5px] font-bold rounded transition shadow flex items-center justify-center gap-0.5 active:scale-95"
+              className="flex-1 py-1 bg-slate-900 hover:bg-slate-800 border border-amber-500/60 text-amber-300 text-[7.5px] font-bold rounded transition shadow flex items-center justify-center gap-0.5 active:scale-95 cursor-pointer"
             >
               <span>🔗</span>
               <span>{isEn ? 'Duel Link' : '對決連結'}</span>
@@ -814,7 +810,7 @@ export const NurikabeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
 
             <button
               onClick={() => setShowSubmitModal(true)}
-              className="flex-1 py-1 bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 text-slate-950 text-[7.5px] font-black rounded shadow transition active:scale-95 flex items-center justify-center gap-0.5"
+              className="flex-1 py-1 bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 text-slate-950 text-[7.5px] font-black rounded shadow transition active:scale-95 flex items-center justify-center gap-0.5 cursor-pointer"
             >
               <span>📤</span>
               <span>{isEn ? 'Submit' : '賽事提交'}</span>
