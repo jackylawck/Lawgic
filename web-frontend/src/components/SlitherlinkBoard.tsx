@@ -1,4 +1,3 @@
-// web-frontend/src/components/SlitherlinkBoard.tsx
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { PuzzleEntity, TierKey } from '../generated';
 import { useLearnerProfile } from '../hooks/useLearnerProfile';
@@ -47,11 +46,11 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
   const spec: SlitherlinkSpec = (actualPuzzle as any)?.puzzle;
   const rows = spec?.rows || 6;
   const cols = spec?.cols || 6;
-  const grid = useMemo(() => spec?.grid || [], [spec]);
+  const grid = useMemo(() => (spec as any)?.clues || (spec as any)?.grid || [], [spec]);
 
   const currentTier = (actualPuzzle?.tier as TierKey) || 'kids';
 
-  // -------- 邊緣狀態 --------
+  // 1. 邊緣狀態：0: 未決, 1: 實線 (連線), 2: 標叉 (不可連)
   const [hEdges, setHEdges] = useState<EdgeState[][]>(() =>
     Array.from({ length: rows + 1 }, () => Array(cols).fill(0))
   );
@@ -62,13 +61,14 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
   const [history, setHistory] = useState<EdgeDelta[]>([]);
   const [redoStack, setRedoStack] = useState<EdgeDelta[]>([]);
 
-  // -------- 提示與 No-Guess --------
+  // 2. 輔助與提示狀態
   const [noGuessMode, setNoGuessMode] = useState<boolean>(false);
   const [noGuessWarning, setNoGuessWarning] = useState<string | null>(null);
   const [activeHint, setActiveHint] = useState<SlitherlinkHintStep | null>(null);
   const [hintLadderLevel, setHintLadderLevel] = useState<1 | 2 | 3>(1);
+  const [animatedEvidenceSet, setAnimatedEvidenceSet] = useState<Set<string>>(new Set());
 
-  // -------- 覆盤播放器（含證據高亮） --------
+  // 3. 覆盤播放器狀態
   const [isReplaying, setIsReplaying] = useState<boolean>(false);
   const [replaySpeed, setReplaySpeed] = useState<1 | 2 | 4>(1);
   const [replayStepIndex, setReplayStepIndex] = useState<number>(0);
@@ -77,13 +77,8 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
     h: EdgeState[][];
     v: EdgeState[][];
   } | null>(null);
-
-  // 🔥 證據格高亮集合（金色脈衝）
-  const [animatedEvidenceSet, setAnimatedEvidenceSet] = useState<Set<string>>(new Set());
-
   const [copyToast, setCopyToast] = useState<boolean>(false);
 
-  // -------- 通關與計時 --------
   const [isCompleted, setIsCompleted] = useState<boolean>(false);
   const [showPBModal, setShowPBModal] = useState<boolean>(false);
   const [showSubmitModal, setShowSubmitModal] = useState<boolean>(false);
@@ -96,7 +91,6 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
   const movesCountRef = useRef<number>(0);
   const hasRecordedRef = useRef<boolean>(false);
 
-  // -------- 初始化 --------
   useEffect(() => {
     setHEdges(Array.from({ length: rows + 1 }, () => Array(cols).fill(0)));
     setVEdges(Array.from({ length: rows }, () => Array(cols + 1).fill(0)));
@@ -105,9 +99,9 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
     setIsCompleted(false);
     setActiveHint(null);
     setHintLadderLevel(1);
+    setAnimatedEvidenceSet(new Set());
     setIsReplaying(false);
     setUserStateBackup(null);
-    setAnimatedEvidenceSet(new Set());   // 清空高亮
     setProofSignature(null);
     setNoGuessWarning(null);
     startTimeRef.current = Date.now();
@@ -118,7 +112,6 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
     hasRecordedRef.current = false;
   }, [actualPuzzle?.id, rows, cols]);
 
-  // 計時器（僅在非覆盤時運作）
   useEffect(() => {
     if (isCompleted || isReplaying) return;
     let frameId: number;
@@ -130,7 +123,7 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
     return () => cancelAnimationFrame(frameId);
   }, [isCompleted, isReplaying]);
 
-  // -------- 即時衝突分析 --------
+  // 4. 即時度數違規分析
   const analysis = useMemo(() => {
     const clueViolations = new Set<string>();
     const vertexViolations = new Set<string>();
@@ -166,7 +159,6 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
     return { clueViolations, vertexViolations, totalConflicts };
   }, [hEdges, vEdges, grid, rows, cols]);
 
-  // 衝突累計
   const prevConflictsRef = useRef<number>(0);
   useEffect(() => {
     if (analysis.totalConflicts > prevConflictsRef.current) {
@@ -176,7 +168,6 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
     prevConflictsRef.current = analysis.totalConflicts;
   }, [analysis.totalConflicts]);
 
-  // -------- 邊緣操作 --------
   const mutateEdge = useCallback(
     (type: 'H' | 'V', r: number, c: number, targetState: EdgeState) => {
       if (isCompleted || isReplaying) return;
@@ -220,6 +211,7 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
 
       if (activeHint && activeHint.type === type && activeHint.r === r && activeHint.c === c) {
         setActiveHint(null);
+        setAnimatedEvidenceSet(new Set());
       }
     },
     [isCompleted, isReplaying, hEdges, vEdges, noGuessMode, rows, cols, grid, activeHint, isEn]
@@ -234,7 +226,6 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
     [hEdges, vEdges, mutateEdge]
   );
 
-  // -------- Undo / Redo --------
   const handleUndo = useCallback(() => {
     if (history.length === 0 || isCompleted || isReplaying) return;
     if (navigator.vibrate) navigator.vibrate(10);
@@ -279,7 +270,6 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
     setRedoStack((prev) => prev.slice(0, -1));
   }, [redoStack, isCompleted, isReplaying]);
 
-  // 鍵盤快捷鍵
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (isCompleted || isReplaying) return;
@@ -296,11 +286,10 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isCompleted, isReplaying, handleUndo, handleRedo]);
 
-  // -------- 勝利驗證 --------
+  // 5. 勝利條件檢驗
   useEffect(() => {
     if (isCompleted || isReplaying || analysis.totalConflicts > 0) return;
 
-    // 檢查所有線索是否精確滿足
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         const clue = grid[r]?.[c];
@@ -315,7 +304,6 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
       }
     }
 
-    // 驗證單一封閉 Euler 迴路
     const hActive = hEdges.map((row) => row.map((v) => v === 1));
     const vActive = vEdges.map((row) => row.map((v) => v === 1));
     const isSingleLoop = WebSlitherlinkGenerator.verifySingleLoop(rows, cols, hActive, vActive);
@@ -366,7 +354,7 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
     }
   }, [hEdges, vEdges, grid, analysis.totalConflicts, isCompleted, isReplaying, actualPuzzle, rows, cols, currentTier, recordAttempt, profile.personalBest.fastestTime, activeHint, tournamentMode]);
 
-  // -------- 提示階梯 --------
+  // 因果提示請求
   const handleRequestHint = () => {
     if (isCompleted || tournamentMode || isReplaying) return;
     if (navigator.vibrate) navigator.vibrate(12);
@@ -376,21 +364,22 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
       if (step) {
         setActiveHint(step);
         setHintLadderLevel(1);
+        if (step.evidenceCells) {
+          setAnimatedEvidenceSet(new Set(step.evidenceCells.map(([er, ec]: [number, number]) => `${er},${ec}`)));
+        }
       }
     } else {
       setHintLadderLevel((prev) => (prev === 1 ? 2 : 3));
     }
   };
 
-  // -------- 覆盤引擎（含證據高亮） --------
+  // 6. 覆盤播放器
   const handleStartReplay = () => {
-    // 備份使用者盤面
     setUserStateBackup({
       h: hEdges.map((row) => [...row]),
       v: vEdges.map((row) => [...row]),
     });
 
-    // 從頭模擬 AI 推理
     const simH: EdgeState[][] = Array.from({ length: rows + 1 }, () => Array(cols).fill(0));
     const simV: EdgeState[][] = Array.from({ length: rows }, () => Array(cols + 1).fill(0));
     const steps: SlitherlinkHintStep[] = [];
@@ -409,23 +398,20 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
     setIsReplaying(true);
     setHEdges(Array.from({ length: rows + 1 }, () => Array(cols).fill(0)));
     setVEdges(Array.from({ length: rows }, () => Array(cols + 1).fill(0)));
-    setAnimatedEvidenceSet(new Set()); // 清空舊高亮
   };
 
   const handleRestoreUserBoard = () => {
     if (!userStateBackup) return;
     setIsReplaying(false);
+    setAnimatedEvidenceSet(new Set());
     setHEdges(userStateBackup.h.map((row) => [...row]));
     setVEdges(userStateBackup.v.map((row) => [...row]));
-    setAnimatedEvidenceSet(new Set()); // 清除高亮
     if (navigator.vibrate) navigator.vibrate(15);
   };
 
-  // 🕒 變速覆盤時間軸（含證據格高亮更新）
   useEffect(() => {
     if (!isReplaying || replayStepsList.length === 0) return;
     if (replayStepIndex >= replayStepsList.length) {
-      // 覆盤結束，清除高亮
       setAnimatedEvidenceSet(new Set());
       return;
     }
@@ -433,8 +419,6 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
     const delay = Math.round(450 / replaySpeed);
     const timer = setTimeout(() => {
       const step = replayStepsList[replayStepIndex];
-
-      // 套用步驟（畫線或打叉）
       if (step.type === 'H') {
         setHEdges((prev) => {
           const next = prev.map((row) => [...row]);
@@ -449,11 +433,9 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
         });
       }
 
-      // 🔥 高亮證據格（如果有的話）
       if (step.evidenceCells && step.evidenceCells.length > 0) {
-        setAnimatedEvidenceSet(new Set(step.evidenceCells.map(([er, ec]) => `${er},${ec}`)));
+        setAnimatedEvidenceSet(new Set(step.evidenceCells.map(([er, ec]: [number, number]) => `${er},${ec}`)));
       } else {
-        // 若無明確證據，則清空（或可根據定式推測，此處保守清空）
         setAnimatedEvidenceSet(new Set());
       }
 
@@ -463,7 +445,6 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
     return () => clearTimeout(timer);
   }, [isReplaying, replayStepIndex, replayStepsList, replaySpeed]);
 
-  // -------- 種子對決連結 --------
   const handleCopySeedShareCode = () => {
     const seed = (actualPuzzle as any)?.puzzle?.seed || (actualPuzzle?.metrics as any)?.seed || 0;
     const origin = typeof window !== 'undefined' ? window.location.origin : 'https://lawgic.app';
@@ -474,7 +455,6 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
     setTimeout(() => setCopyToast(false), 2400);
   };
 
-  // -------- 輔助數據 --------
   const theoryTime = (actualPuzzle?.metrics as any)?.estimated_time_sec || rows * cols * 3;
   const benchmarkData = useMemo(() => {
     return getBenchmarkMetrics('TopologicalLookahead', theoryTime, 'slitherlink');
@@ -482,10 +462,8 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
 
   const cci = useMemo(() => getCompositeCognitiveIndex(), [getCompositeCognitiveIndex, isCompleted]);
 
-  // -------- 渲染 --------
   return (
     <div className="flex flex-col items-center justify-center p-1 select-none font-mono">
-      {/* 頂部數據列 */}
       <div className="w-full grid grid-cols-5 gap-1 px-0.5 mb-1.5 text-[8px] sm:text-[9px]">
         <div className="bg-slate-950 border border-slate-800 p-1 rounded text-center">
           <div className="text-slate-500 text-[6.5px]">{isEn ? '⏱️ Speed' : '⏱️ 競速'}</div>
@@ -507,7 +485,8 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
         <button
           onClick={() => setNoGuessMode((prev) => !prev)}
           disabled={tournamentMode}
-          className={`p-1 rounded border text-center transition ${tournamentMode
+          className={`p-1 rounded border text-center transition ${
+            tournamentMode
               ? 'bg-purple-950/80 border-purple-500 text-purple-300 font-bold cursor-not-allowed'
               : noGuessMode
               ? 'bg-purple-950 border-purple-500 text-purple-300 font-bold shadow-xs'
@@ -521,7 +500,8 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
         <button
           onClick={handleRequestHint}
           disabled={isCompleted || tournamentMode || isReplaying}
-          className={`p-1 rounded border text-center transition ${tournamentMode
+          className={`p-1 rounded border text-center transition ${
+            tournamentMode
               ? 'bg-slate-900 border-slate-800 text-slate-600 cursor-not-allowed'
               : activeHint
               ? 'bg-amber-950/90 border-amber-500 text-amber-300 font-bold shadow-xs'
@@ -535,14 +515,12 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
         </button>
       </div>
 
-      {/* 複製成功 Toast */}
       {copyToast && (
         <div className="w-[min(88vw,42vh)] mb-1 p-1 bg-emerald-950 border border-emerald-500 text-emerald-300 text-[7.5px] rounded animate-fade-in text-center font-bold">
           {isEn ? '🔗 Direct duel link copied! Send to Discord!' : '🔗 一鍵對決連結已複製！發送至群組，好友點擊即可載入同題對決！'}
         </div>
       )}
 
-      {/* 覆盤控制條（含證據高亮指示） */}
       {isReplaying && (
         <div className="w-[min(88vw,42vh)] mb-1.5 p-1.5 bg-indigo-950/90 border border-cyan-500 rounded-lg text-cyan-200 text-[8px] animate-pulse font-mono">
           <div className="flex justify-between items-center text-[7px] text-cyan-400 mb-1 border-b border-cyan-900/60 pb-0.5">
@@ -553,8 +531,9 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
                 <button
                   key={spd}
                   onClick={() => setReplaySpeed(spd as 1 | 2 | 4)}
-                  className={`px-1 py-0.2 rounded text-[6.5px] font-bold ${replaySpeed === spd ? 'bg-cyan-500 text-slate-950' : 'bg-slate-800 text-slate-400'
-                    }`}
+                  className={`px-1 py-0.2 rounded text-[6.5px] font-bold ${
+                    replaySpeed === spd ? 'bg-cyan-500 text-slate-950' : 'bg-slate-800 text-slate-400'
+                  }`}
                 >
                   {spd}x
                 </button>
@@ -602,7 +581,7 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
         </div>
       )}
 
-      {/* 主棋盤（含 180° 對稱勳章） */}
+      {/* 主棋盤 */}
       <div
         className="relative overflow-hidden p-3 rounded-xl bg-slate-950 border-2 border-slate-800 shadow-2xl"
         style={{ width: 'min(88vw, 42vh)', height: 'min(88vw, 42vh)', touchAction: 'none' }}
@@ -611,7 +590,7 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
           ☯ 180° SYM
         </div>
 
-        {/* 網格數字層 */}
+        {/* 網格數字與高亮證據格 */}
         <div
           className="relative w-full h-full"
           style={{
@@ -624,18 +603,26 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
             Array.from({ length: cols }).map((__, c) => {
               const clue = grid[r]?.[c];
               const isViolated = analysis.clueViolations.has(`${r},${c}`);
-              const isEvidenceCell = animatedEvidenceSet.has(`${r},${c}`); // 🔥 證據高亮
+              const isEvidence = animatedEvidenceSet.has(`${r},${c}`);
 
               return (
                 <div
                   key={`cell-${r}-${c}`}
-                  className={`relative flex items-center justify-center select-none transition-colors ${isEvidenceCell ? 'bg-amber-500/20 ring-2 ring-amber-400 rounded-sm shadow-[0_0_12px_rgba(251,191,36,0.7)] animate-pulse z-10' : ''
-                    }`}
+                  className={`relative flex items-center justify-center select-none transition-all duration-300 rounded-sm ${
+                    isEvidence
+                      ? 'bg-amber-500/20 shadow-[inset_0_0_12px_rgba(245,158,11,0.4)] border border-amber-400/40'
+                      : ''
+                  }`}
                 >
                   {typeof clue === 'number' && (
                     <span
-                      className={`text-sm sm:text-base font-black font-mono transition-colors ${isViolated ? 'text-rose-400 animate-pulse' : 'text-slate-200'
-                        }`}
+                      className={`text-sm sm:text-base font-black font-mono transition-all duration-300 ${
+                        isViolated
+                          ? 'text-rose-400 animate-pulse'
+                          : isEvidence
+                          ? 'text-amber-300 scale-110 drop-shadow-[0_0_6px_rgba(251,191,36,0.8)]'
+                          : 'text-slate-200'
+                      }`}
                     >
                       {clue}
                     </span>
@@ -646,7 +633,7 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
           )}
         </div>
 
-        {/* 點位（頂點） */}
+        {/* 頂點點位 */}
         <div className="absolute inset-3 pointer-events-none z-10">
           {Array.from({ length: rows + 1 }).map((_, r) =>
             Array.from({ length: cols + 1 }).map((__, c) => (
@@ -662,7 +649,7 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
           )}
         </div>
 
-        {/* 水平邊緣（可點擊） */}
+        {/* 水平邊緣交互 */}
         <div className="absolute inset-3 z-20">
           {Array.from({ length: rows + 1 }).map((_, r) =>
             Array.from({ length: cols }).map((__, c) => {
@@ -690,7 +677,7 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
             })
           )}
 
-          {/* 垂直邊緣（可點擊） */}
+          {/* 垂直邊緣交互 */}
           {Array.from({ length: rows }).map((_, r) =>
             Array.from({ length: cols + 1 }).map((__, c) => {
               const state = vEdges[r][c];
@@ -719,7 +706,7 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
         </div>
       </div>
 
-      {/* 底部控制列 */}
+      {/* 底部快捷欄 */}
       <div className="w-full max-w-[340px] flex items-center justify-between px-1 mt-1.5 text-[7.5px] text-slate-400">
         <div className="flex gap-1">
           <button
@@ -798,7 +785,6 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
             />
           </div>
 
-          {/* 覆盤與對決行動群 */}
           <div className="flex gap-1 mb-1.5">
             <button
               onClick={handleStartReplay}
