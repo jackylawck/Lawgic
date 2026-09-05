@@ -379,8 +379,10 @@ export const DominoesBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isCompleted, handleUndo, handleRedo]);
 
+  // 核心防禦：加入 movesCountRef.current > 0 與非空盤面檢驗
   useEffect(() => {
     if (isCompleted || !solution) return;
+    if (movesCountRef.current === 0 || history.length === 0) return;
 
     if (analysis.isPerfectTiling && analysis.totalConflicts === 0) {
       setIsCompleted(true);
@@ -436,6 +438,7 @@ export const DominoesBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
     profile.personalBest.fastestTime,
     activeHint,
     tournamentMode,
+    history.length,
   ]);
 
   const handleRequestHint = () => {
@@ -486,10 +489,10 @@ export const DominoesBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
     const minC = Math.min(step.c1, step.c2);
     const maxC = Math.max(step.c1, step.c2);
 
-    const regionBox = `[${Math.max(1, minR)}~${Math.min(rows, maxR + 2)} 行, ${Math.max(
-      1,
-      minC
-    )}~${Math.min(cols, maxC + 2)} 列]`;
+    const regionBox = isEn
+      ? `[Rows ${Math.max(1, minR)}~${Math.min(rows, maxR + 2)}, Cols ${Math.max(1, minC)}~${Math.min(cols, maxC + 2)}]`
+      : `[${Math.max(1, minR)}~${Math.min(rows, maxR + 2)} 行, ${Math.max(1, minC)}~${Math.min(cols, maxC + 2)} 列]`;
+
     setFuzzyAreaHint(
       isEn
         ? `💡 Regional Hint: Look closely within region ${regionBox}. A forced boundary transition is forming.`
@@ -573,7 +576,7 @@ export const DominoesBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
           <div className="text-[7.5px]">
             {tournamentMode
               ? isEn
-                ? 'Tournament'
+                ? 'Sanctioned'
                 : '賽事強制'
               : noGuessMode
               ? isEn
@@ -775,12 +778,12 @@ export const DominoesBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
       <div className="w-full max-w-[340px] mt-2 p-1.5 bg-slate-900/60 border border-slate-800 rounded-lg">
         <div className="text-[6.5px] text-slate-500 font-bold uppercase mb-1 flex items-center justify-between">
           <div className="flex gap-1 items-center">
-            <span>DECK:</span>
+            <span>{isEn ? 'DECK:' : '牌堆:'}</span>
             <button
               onClick={() => setInventoryFilter('all')}
               className={`px-1 py-0.2 rounded text-[6px] ${
                 inventoryFilter === 'all'
-                  ? 'bg-indigo-600 text-white'
+                  ? 'bg-indigo-600 text-white font-bold'
                   : 'bg-slate-800 text-slate-400'
               }`}
             >
@@ -790,7 +793,7 @@ export const DominoesBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
               onClick={() => setInventoryFilter('pending')}
               className={`px-1 py-0.2 rounded text-[6px] ${
                 inventoryFilter === 'pending'
-                  ? 'bg-indigo-600 text-white'
+                  ? 'bg-indigo-600 text-white font-bold'
                   : 'bg-slate-800 text-slate-400'
               }`}
             >
@@ -800,7 +803,7 @@ export const DominoesBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
               onClick={() => setInventoryFilter('duplicate')}
               className={`px-1 py-0.2 rounded text-[6px] ${
                 inventoryFilter === 'duplicate'
-                  ? 'bg-rose-600 text-white'
+                  ? 'bg-rose-600 text-white font-bold'
                   : 'bg-slate-800 text-slate-400'
               }`}
             >
@@ -818,7 +821,7 @@ export const DominoesBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
             >
               ⚡ {isEn ? 'Urgency' : '緊迫排序'}
             </button>
-            <span className="text-cyan-400">
+            <span className="text-cyan-400 font-bold">
               {
                 Array.from(analysis.foundDominoCounts.values()).filter((cnt) => cnt === 1)
                   .length
@@ -834,7 +837,7 @@ export const DominoesBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
               key={d.id}
               className={`px-1.5 py-0.5 rounded text-[7px] font-mono border transition-all ${
                 d.isDuplicate
-                  ? 'bg-rose-950 border-rose-500 text-rose-300 animate-pulse'
+                  ? 'bg-rose-950 border-rose-500 text-rose-300 animate-pulse font-bold'
                   : d.isFound
                   ? 'bg-cyan-950 border-cyan-500 text-cyan-300 font-bold opacity-50'
                   : d.isCriticalFocus
@@ -865,8 +868,8 @@ export const DominoesBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
             ↪ {isEn ? 'Redo (Y)' : '重做'}
           </button>
         </div>
-        <div className="text-slate-500">
-          <span>點選兩格連線 / 點擊間隙切換</span>
+        <div className="text-slate-500 text-[8px]">
+          {isEn ? 'Select two cells to connect / Click gap to toggle' : '點選兩格連線 / 點擊間隙切換'}
         </div>
       </div>
 
@@ -875,7 +878,9 @@ export const DominoesBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
           <div className="flex items-center justify-between border-b border-slate-800 pb-1 mb-1.5">
             <div className="text-left">
               <div className="text-[7.5px] text-slate-500 tracking-wider">DOMINOES RESOLVED</div>
-              <div className="text-xs text-indigo-300 font-bold">🀄 骨牌矩陣・完美雙射鋪砌</div>
+              <div className="text-xs text-indigo-300 font-bold">
+                {isEn ? '🀄 Dominoes Matrix Mastered' : '🀄 骨牌矩陣・完美雙射鋪砌'}
+              </div>
             </div>
             <div className="px-2 py-0.5 border border-cyan-500 bg-cyan-950/80 rounded text-[9px] font-bold text-cyan-300">
               Gf: IQ {cci.standardIQ} (Top {Number((100 - cci.percentileRank).toFixed(1))}%)
@@ -884,19 +889,19 @@ export const DominoesBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
 
           <div className="grid grid-cols-3 gap-1 text-[7.5px] text-slate-400 mb-1.5">
             <div className="bg-slate-900/80 p-1 rounded">
-              <div>耗時</div>
+              <div>{isEn ? 'Time' : '耗時'}</div>
               <div className="text-slate-200 font-bold text-[10px]">
                 {(elapsedMs / 1000).toFixed(1)}s
               </div>
             </div>
             <div className="bg-slate-900/80 p-1 rounded">
-              <div>操作步數</div>
+              <div>{isEn ? 'Moves' : '操作步數'}</div>
               <div className="text-cyan-300 font-bold text-[10px]">{movesCountRef.current}</div>
             </div>
             <div className="bg-slate-900/80 p-1 rounded">
-              <div>衝突次數</div>
+              <div>{isEn ? 'Conflicts' : '衝突次數'}</div>
               <div className="text-amber-300 font-bold text-[10px]">
-                {conflictCountRef.current} 次
+                {conflictCountRef.current} {isEn ? '' : '次'}
               </div>
             </div>
           </div>
@@ -940,7 +945,7 @@ export const DominoesBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
           {proofSignature && (
             <div className="p-1 bg-slate-900 border border-slate-800 rounded text-left">
               <div className="text-[6.5px] text-slate-500 font-bold uppercase flex justify-between">
-                <span>LOCAL RECEIPT (SHA-256)</span>
+                <span>{isEn ? 'LOCAL RECEIPT (SHA-256)' : '本地存證 (SHA-256)'}</span>
                 <span className="text-emerald-400 font-mono text-[5.5px]">TAMPER-PROOF</span>
               </div>
               <div className="text-[6px] font-mono text-cyan-400/80 break-all select-all mt-0.5">
