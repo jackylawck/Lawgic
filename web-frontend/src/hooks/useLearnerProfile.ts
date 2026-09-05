@@ -1,8 +1,8 @@
 // web-frontend/src/hooks/useLearnerProfile.ts
 import { useState, useCallback, useEffect } from 'react';
 import { SecureStorage } from '../utils/secureStorage';
+import { useLanguage } from '../contexts/LanguageContext';
 
-// 保持與 generated/index.ts 一致的核心 4 種難度
 export type TierKey = 'kids' | 'intermediate' | 'expert' | 'master';
 export type ExtendedTierKey = TierKey | 'legendary' | 'ultimate';
 export type CognitiveDimension = 'spatial' | 'numeric' | 'workingMemory' | 'inhibition' | 'processingSpeed';
@@ -30,14 +30,13 @@ export interface AttemptPayload {
   hypothesisCount?: number;
   technique?: string;
   partialCompletionRatio?: number;
-  partialCredit?: number; // 補齊臨床部分計分欄位
+  partialCredit?: number;
   isPureModeAttempt?: boolean;
   isPureClear?: boolean;
   hintLogs?: { secFromStart: number; level: number }[];
   irtDifficulty?: number;
 }
 
-// 匯出 AttemptRecord 供 psychometricsEngine.ts 使用
 export type AttemptRecord = AttemptPayload;
 
 export interface TechniqueStats {
@@ -66,12 +65,12 @@ export interface BookmarkRecord {
 }
 
 export interface SpatialCompositeIndex {
-  standardScore: number;       // 常模標度分 (Scaled 1~19)
-  spatialPercentile: number;   // PR 百分位數 (1~99)
-  eulerianLoopControl: number; // 拓撲迴路掌控力 (0~100)
-  planarPartitioning: number;  // 平面分割適應力 (0~100)
-  rayTracingControl: number;   // 正交射線覆蓋力 (0~100)
-  recommendedDrill: string;    // 個人化空間專項訓練建議
+  standardScore: number;
+  spatialPercentile: number;
+  eulerianLoopControl: number;
+  planarPartitioning: number;
+  rayTracingControl: number;
+  recommendedDrill: string;
 }
 
 export interface LearnerProfileState {
@@ -240,6 +239,9 @@ function normalCDF(z: number): number {
 }
 
 export const useLearnerProfile = () => {
+  const { lang } = useLanguage();
+  const isEn = lang === 'en';
+
   const [profile, setProfile] = useState<LearnerProfileState>(() => {
     try {
       const stored = localStorage.getItem('logicore_learner_profile');
@@ -539,13 +541,22 @@ export const useLearnerProfile = () => {
     const standardScore = Math.min(19, Math.max(1, Math.round(10 + (weightedScore - 75) / 4.5)));
     const spatialPercentile = Math.min(99, Math.max(1, Math.round(100 / (1 + Math.exp(-(standardScore - 10) / 1.8)))));
 
-    let recommendedDrill = '空間推理能力三項均衡，建議挑戰 Master 級題目以突破更高難度維度！';
+    let recommendedDrill = isEn
+      ? 'Spatial reasoning dimensions are well-balanced; challenge Master tier puzzles to push higher!'
+      : '空間推理能力三項均衡，建議挑戰 Master 級題目以突破更高難度維度！';
+
     if (eulerianLoopControl < planarPartitioning - 6 && eulerianLoopControl < rayTracingControl - 6) {
-      recommendedDrill = '弱點定位：白黑珍珠幾何轉折前瞻力偏弱，建議強化 Masyu 相鄰黑珍珠排斥與閉環練習。';
+      recommendedDrill = isEn
+        ? 'Weakness Focus: White/black pearl orthogonality forecasting is weak; train Masyu adjacent pearl exclusion and loop closure.'
+        : '弱點定位：白黑珍珠幾何轉折前瞻力偏弱，建議強化 Masyu 相鄰黑珍珠排斥與閉環練習。';
     } else if (planarPartitioning < eulerianLoopControl - 6 && planarPartitioning < rayTracingControl - 6) {
-      recommendedDrill = '弱點定位：平面連通黑海分割容易遭遇池塘阻滯，建議強化 Nurikabe 2×2 禁池與孤島收斂練習。';
+      recommendedDrill = isEn
+        ? 'Weakness Focus: Planar connected black sea partitioning tends to get blocked by pools; train Nurikabe 2×2 pool and isolated island convergence.'
+        : '弱點定位：平面連通黑海分割容易遭遇池塘阻滯，建議強化 Nurikabe 2×2 禁池與孤島收斂練習。';
     } else if (rayTracingControl < eulerianLoopControl - 6 && rayTracingControl < planarPartitioning - 6) {
-      recommendedDrill = '弱點定位：正交射線互斥與光源覆蓋意識需提升，建議練習 Light Up 1-2 黑塊 XOR 與走廊投射。';
+      recommendedDrill = isEn
+        ? 'Weakness Focus: Orthogonal ray mutual exclusion and illumination awareness need boosting; practice Light Up 1-2 block XOR and corridor casting.'
+        : '弱點定位：正交射線互斥與光源覆蓋意識需提升，建議練習 Light Up 1-2 黑塊 XOR 與走廊投射。';
     }
 
     return {
@@ -556,7 +567,7 @@ export const useLearnerProfile = () => {
       rayTracingControl,
       recommendedDrill,
     };
-  }, [profile]);
+  }, [profile, isEn]);
 
   const getBenchmarkMetrics = useCallback(
     (technique: string, defaultTime: number, currentEngineType?: string): BenchmarkMetrics => {
@@ -629,7 +640,27 @@ export const useLearnerProfile = () => {
   const exportLongitudinalDataset = useCallback(() => {
     const cci = getCompositeCognitiveIndex();
     const sci = getSpatialCompositeIndex();
-    const dataDictionaryMd = `# LogiCore 認知評估數據集 — 數據字典 (Data Dictionary v2.8.0)
+    const dataDictionaryMd = isEn ? `# LogiCore Cognitive Assessment Dataset — Data Dictionary (v2.8.0)
+
+## 1. Global Psychometrics
+- **estimatedStandardIQ**: Wechsler Standardized Scale IQ (μ=100, σ=15).
+- **pureStreak**: Current consecutive pure mode clear streak.
+- **hintTrend**: Longitudinal hint call distribution (T1: 0~30s, T2: 30~60s, T3: 60s+).
+- **compositeGf**: Raw fluid intelligence estimation (0.000 ~ 1.000).
+- **spatialCompositeIndex**: Spatial topology & ray casting composite scale (Scaled 1~19, PR 1~99).
+- **csem**: Conditional Standard Error of Measurement.
+- **confidenceInterval95**: [Integer, Integer]. 95% Confidence Interval.
+- **ageNorm**: Age-stratified norm comparison.
+- **cronbachAlpha**: Internal consistency coefficient.
+- **splitHalfReliability**: Spearman-Brown split-half reliability.
+
+## 2. Five-Dimension Cognitive Load (CHC Taxonomy)
+- **spatial**: Spatial representation, 3D mental rotation, and ray tracing (25%).
+- **numeric**: Numeric constraint propagation and integer partitioning (25%).
+- **workingMemory**: Candidate retention and topological working memory (20%).
+- **inhibition**: Impulsive decision suppression and 2×2 pool inhibition (15%).
+- **processingSpeed**: Visual perceptual discrimination speed (15%).
+` : `# LogiCore 認知評估數據集 — 數據字典 (Data Dictionary v2.8.0)
 
 ## 1. 全域指標 (Global Psychometrics)
 - **estimatedStandardIQ**: Wechsler 標準量尺 IQ (μ=100, σ=15)。
@@ -688,7 +719,7 @@ export const useLearnerProfile = () => {
     document.body.appendChild(downloadAnchor);
     downloadAnchor.click();
     downloadAnchor.remove();
-  }, [profile, getCompositeCognitiveIndex, getSpatialCompositeIndex]);
+  }, [profile, getCompositeCognitiveIndex, getSpatialCompositeIndex, isEn]);
 
   return {
     profile,
