@@ -14,31 +14,57 @@ export interface SudokuHintStep {
   messageEn: string;
 }
 
-export class WebSudokuGenerator {
-  static generate(tier: TierKey): PuzzleEntity {
-    const configMap: Record<
-      TierKey,
-      { targetClues: number; maxRetries: number; baseIrt: number }
-    > = {
-      kids: { targetClues: 46, maxRetries: 6, baseIrt: -1.8 },
-      intermediate: { targetClues: 36, maxRetries: 8, baseIrt: -0.2 },
-      expert: { targetClues: 28, maxRetries: 12, baseIrt: 1.4 },
-      master: { targetClues: 24, maxRetries: 16, baseIrt: 2.5 },
-    };
+export interface SudokuSpec {
+  size: number;
+  grid: number[][];
+  clues: number;
+  symmetry: SymmetryType;
+  seed: number;
+  solvingPath: string[];
+  highestTechnique: TechniqueStage;
+  hints: SudokuHintStep[];
+}
 
-    const config = configMap[tier] || configMap.intermediate;
+interface TierConfig {
+  targetClues: number;
+  maxRetries: number;
+  baseIrt: number;
+}
+
+const TIER_SPECS: Record<TierKey, TierConfig> = {
+  kids: { targetClues: 46, maxRetries: 10, baseIrt: -1.8 },
+  intermediate: { targetClues: 36, maxRetries: 14, baseIrt: -0.2 },
+  expert: { targetClues: 28, maxRetries: 20, baseIrt: 1.4 },
+  master: { targetClues: 24, maxRetries: 26, baseIrt: 2.5 },
+};
+
+function mulberry32(a: number) {
+  return function () {
+    let t = (a += 0x6d2b79f5);
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+export class WebSudokuGenerator {
+  static generate(tier: TierKey = 'kids', inputSeed?: number): PuzzleEntity {
+    const config = TIER_SPECS[tier] || TIER_SPECS.intermediate;
     const allSymmetries: SymmetryType[] = ['rotational_180', 'rotational_90', 'diagonal'];
 
+    const actualSeed = inputSeed !== undefined ? inputSeed : Math.floor(Math.random() * 0x7fffffff);
+    const rnd = mulberry32(actualSeed);
+
     for (let attempt = 0; attempt < config.maxRetries; attempt++) {
-      const solution = this._generateCompleteBoard();
+      const solution = this._generateCompleteBoard(rnd);
       const puzzle = solution.map((row) => [...row]);
 
-      const symmetry = allSymmetries[Math.floor(Math.random() * allSymmetries.length)];
+      const symmetry = allSymmetries[Math.floor(rnd() * allSymmetries.length)];
       const cellGroups = this._generateSymmetryGroups(symmetry);
 
-      // 洗牌
+      // 洗牌對稱群組
       for (let i = cellGroups.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
+        const j = Math.floor(rnd() * (i + 1));
         [cellGroups[i], cellGroups[j]] = [cellGroups[j], cellGroups[i]];
       }
 
@@ -67,14 +93,9 @@ export class WebSudokuGenerator {
         }
       }
 
-      // 致命矩形防護
-      if (this._hasUniqueRectangleCandidate(puzzle)) {
-        continue;
-      }
-
       // 熱力圖平衡性檢查
       const uniformity = this._computeClueUniformity(puzzle);
-      if (uniformity < 0.55 && attempt < config.maxRetries - 1) {
+      if (uniformity < 0.50 && attempt < config.maxRetries - 1) {
         continue;
       }
 
@@ -106,14 +127,25 @@ export class WebSudokuGenerator {
           (symmetry === 'rotational_90' ? 15 : 0)
       );
 
-      const id = `sudoku_${tier}_${Date.now()}_${Math.floor(Math.random() * 10000)}`;
+      const id = `sudoku_${tier}_s${actualSeed}`;
+
+      const spec: SudokuSpec = {
+        size: 9,
+        grid: puzzle,
+        clues: currentClues,
+        symmetry,
+        seed: actualSeed,
+        solvingPath: path,
+        highestTechnique,
+        hints,
+      };
 
       return {
         id,
-        category: ('logic' as any),
+        category: 'logic' as any,
         engine_type: 'sudoku',
         tier,
-        puzzle,
+        puzzle: spec as any,
         solution,
         metrics: {
           clues_count: currentClues,
@@ -128,18 +160,17 @@ export class WebSudokuGenerator {
           ceiling_level: tier === 'master' && currentClues <= 24 ? 'Ultra' : 'Standard',
           solving_path: path,
           hints,
+          seed: actualSeed,
+          actualTier: tier,
         } as any,
         cognitiveLoad: load,
-        checksum: `pro_${id}`,
+        checksum: `SUDOKU_9x9_S${actualSeed}`,
       };
     }
 
-    return this._createFallbackPuzzle(tier);
+    return this._createFallbackPuzzle(tier, actualSeed);
   }
 
-  /**
-   * 逐步模擬推導，輸出完整的技巧推理路徑與前置三階漸進提示階梯
-   */
   private static _computeSolvingPathAndHints(
     board: number[][],
     solution: number[][],
@@ -230,21 +261,12 @@ export class WebSudokuGenerator {
         if (highestTechnique === 'NakedSingle') highestTechnique = 'HiddenSingle';
         continue;
       }
-
-      // 3. 區塊摒除 / 鎖定候選數 (Intersection Lock) 模擬
-      const remainingBeforeLock = copy.flat().filter((v) => v === 0).length;
-      if (remainingBeforeLock > 0 && remainingBeforeLock <= 30) {
-        path.push('Intersection Lock (Claiming)');
-        if (highestTechnique === 'NakedSingle' || highestTechnique === 'HiddenSingle') {
-          highestTechnique = 'IntersectionLock';
-        }
-      }
     }
 
     const remainingUnsolved = copy.flat().filter((v) => v === 0).length;
     if (remainingUnsolved > 0) {
-      highestTechnique = 'Chaining';
-      path.push(`Chaining / Bi-Value Chain (Residual: ${remainingUnsolved})`);
+      highestTechnique = remainingUnsolved <= 12 ? 'IntersectionLock' : 'Chaining';
+      path.push(highestTechnique === 'IntersectionLock' ? 'Intersection Lock (Claiming)' : `Chaining / Bi-Value Chain (Residual: ${remainingUnsolved})`);
     }
 
     // 建立提示階梯
@@ -307,7 +329,6 @@ export class WebSudokuGenerator {
         messageEn: `👉 Action: Tap cell (${r + 1}, ${c + 1}) and place digit ${val}.`,
       });
     } else {
-      // 兜底找第一個為 0 的格子
       outer: for (let r = 0; r < 9; r++) {
         for (let c = 0; c < 9; c++) {
           if (board[r][c] === 0) {
@@ -405,7 +426,7 @@ export class WebSudokuGenerator {
     return groups;
   }
 
-  private static _generateCompleteBoard(): number[][] {
+  private static _generateCompleteBoard(rnd: () => number): number[][] {
     const board: number[][] = Array.from({ length: 9 }, () => Array(9).fill(0));
     const rows = new Array(9).fill(0);
     const cols = new Array(9).fill(0);
@@ -418,7 +439,11 @@ export class WebSudokuGenerator {
       const b = Math.floor(r / 3) * 3 + Math.floor(c / 3);
 
       const used = rows[r] | cols[c] | boxes[b];
-      const nums = [1, 2, 3, 4, 5, 6, 7, 8, 9].sort(() => Math.random() - 0.5);
+      const nums = [1, 2, 3, 4, 5, 6, 7, 8, 9];
+      for (let i = nums.length - 1; i > 0; i--) {
+        const j = Math.floor(rnd() * (i + 1));
+        [nums[i], nums[j]] = [nums[j], nums[i]];
+      }
 
       for (const num of nums) {
         const mask = 1 << num;
@@ -525,56 +550,6 @@ export class WebSudokuGenerator {
     return solutions;
   }
 
-  private static _hasUniqueRectangleCandidate(board: number[][]): boolean {
-    const candidatesMap = new Map<string, number[]>();
-
-    for (let r = 0; r < 9; r++) {
-      for (let c = 0; c < 9; c++) {
-        if (board[r][c] === 0) {
-          const cands: number[] = [];
-          for (let n = 1; n <= 9; n++) {
-            if (this._isCellValid(board, r, c, n)) cands.push(n);
-          }
-          if (cands.length === 2) {
-            candidatesMap.set(`${r},${c}`, cands);
-          }
-        }
-      }
-    }
-
-    const entries = Array.from(candidatesMap.entries());
-    for (let i = 0; i < entries.length; i++) {
-      for (let j = i + 1; j < entries.length; j++) {
-        const [k1, v1] = entries[i];
-        const [k2, v2] = entries[j];
-        if (v1[0] !== v2[0] || v1[1] !== v2[1]) continue;
-
-        const [r1, c1] = k1.split(',').map(Number);
-        const [r2, c2] = k2.split(',').map(Number);
-        if (r1 === r2 || c1 === c2) continue;
-
-        const d1 = candidatesMap.get(`${r1},${c2}`);
-        const d2 = candidatesMap.get(`${r2},${c1}`);
-
-        if (
-          d1 &&
-          d2 &&
-          d1.length === 2 &&
-          d2.length === 2 &&
-          d1[0] === v1[0] &&
-          d1[1] === v1[1] &&
-          d2[0] === v1[0] &&
-          d2[1] === v1[1]
-        ) {
-          const b1 = Math.floor(r1 / 3) * 3 + Math.floor(c1 / 3);
-          const b4 = Math.floor(r2 / 3) * 3 + Math.floor(c2 / 3);
-          if (b1 !== b4) return true;
-        }
-      }
-    }
-    return false;
-  }
-
   private static _computeClueUniformity(board: number[][]): number {
     const blockClues: number[] = [];
     for (let br = 0; br < 3; br++) {
@@ -619,11 +594,7 @@ export class WebSudokuGenerator {
     return true;
   }
 
-  /**
-   * 兜底題庫：使用預先經過唯一解驗證的標準高階盤面，絕不產出多解廢題
-   */
-  private static _createFallbackPuzzle(tier: TierKey): PuzzleEntity {
-    // 官方標準唯一解盤面 (28 Clues)
+  private static _createFallbackPuzzle(tier: TierKey, seed: number): PuzzleEntity {
     const basePuzzle = [
       [5, 3, 0, 0, 7, 0, 0, 0, 0],
       [6, 0, 0, 1, 9, 5, 0, 0, 0],
@@ -648,13 +619,26 @@ export class WebSudokuGenerator {
       [3, 4, 5, 2, 8, 6, 1, 7, 9],
     ];
 
-    const id = `sudoku_verified_fb_${tier}_${Date.now()}`;
+    const id = `sudoku_fb_${tier}_s${seed}`;
     return {
       id,
-      category: ('logic' as any),
+      category: 'logic' as any,
       engine_type: 'sudoku',
       tier,
-      puzzle: basePuzzle,
+      puzzle: {
+        size: 9,
+        grid: basePuzzle,
+        clues: 28,
+        symmetry: 'rotational_180',
+        seed,
+        solvingPath: ['Naked Single ×18', 'Hidden Single ×12', 'Intersection Lock'],
+        highestTechnique: 'IntersectionLock',
+        hints: [
+          { level: 1, row: 0, col: 2, targetNum: 4, technique: 'NakedSingle', messageZh: '觀察第 1 行第 3 列之交叉約束。', messageEn: 'Inspect cross constraints at (1, 3).' },
+          { level: 2, row: 0, col: 2, targetNum: 4, technique: 'NakedSingle', messageZh: '該格僅能填入 4。', messageEn: 'The cell uniquely accommodates 4.' },
+          { level: 3, row: 0, col: 2, targetNum: 4, technique: 'NakedSingle', messageZh: '👉 手動填入 4。', messageEn: '👉 Input 4.' },
+        ],
+      } as any,
       solution: baseSolution,
       metrics: {
         clues_count: 28,
@@ -666,14 +650,10 @@ export class WebSudokuGenerator {
         estimated_time_sec: 180,
         ceiling_level: 'Standard',
         solving_path: ['Naked Single ×18', 'Hidden Single ×12', 'Intersection Lock'],
-        hints: [
-          { level: 1, row: 0, col: 2, targetNum: 4, technique: 'NakedSingle', messageZh: '觀察第 1 行第 3 列之交叉約束。', messageEn: 'Inspect cross constraints at (1, 3).' },
-          { level: 2, row: 0, col: 2, targetNum: 4, technique: 'NakedSingle', messageZh: '該格僅能填入 4。', messageEn: 'The cell uniquely accommodates 4.' },
-          { level: 3, row: 0, col: 2, targetNum: 4, technique: 'NakedSingle', messageZh: '👉 手動填入 4。', messageEn: '👉 Input 4.' },
-        ],
+        seed,
       } as any,
       cognitiveLoad: { spatial: 0.35, numeric: 0.75, workingMemory: 0.8, inhibition: 0.7 },
-      checksum: `fb_${id}`,
+      checksum: `SUDOKU_FB_9x9_S${seed}`,
     };
   }
 }
