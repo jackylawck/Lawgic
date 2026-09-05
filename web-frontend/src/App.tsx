@@ -170,7 +170,6 @@ function generateEnginePuzzle(gameId: string, tier: ExtendedTierKey): PuzzleEnti
 
     if (!puzzle) return null;
 
-    // 安全保障：確保 engine_type 與 puzzle 資料存在
     if (!puzzle.engine_type) puzzle.engine_type = gameId;
     if (!puzzle.puzzle && (puzzle.grid || puzzle.solution || puzzle.clues)) {
       puzzle.puzzle = { ...puzzle };
@@ -442,10 +441,18 @@ const MainDashboard: React.FC = () => {
         </div>
       )}
 
+      {/* 修正：移除 CognitiveDashboard 的 onClose prop，改為在容器右上角設置關閉按鈕 */}
       {showDashboardModal && (
         <div className="fixed inset-0 z-50 bg-black/85 flex items-center justify-center p-2 sm:p-4 overflow-y-auto">
-          <div className="relative w-full max-w-4xl bg-slate-950 border border-slate-800 rounded-2xl shadow-2xl overflow-hidden my-auto">
-            <CognitiveDashboard onClose={() => setShowDashboardModal(false)} />
+          <div className="relative w-full max-w-4xl bg-slate-950 border border-slate-800 rounded-2xl shadow-2xl overflow-hidden my-auto p-2 sm:p-4">
+            <button
+              onClick={() => setShowDashboardModal(false)}
+              className="absolute top-3 right-3 z-10 w-7 h-7 flex items-center justify-center bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-full font-bold text-xs transition cursor-pointer"
+              title={isEn ? 'Close' : '關閉'}
+            >
+              ✕
+            </button>
+            <CognitiveDashboard />
           </div>
         </div>
       )}
@@ -521,6 +528,7 @@ const MainDashboard: React.FC = () => {
       {activePuzzle ? (
         <section className="flex flex-col items-center w-full max-w-sm sm:max-w-md">
           <div className="w-full p-1 bg-slate-900/60 border border-slate-800 rounded-xl shadow-2xl">
+            {/* 修正：加入 activePuzzle.id 監聽，切換題目時自動重設錯誤狀態 */}
             <ErrorBoundary
               FallbackComponent={EngineFallbackUI}
               resetKeys={[selectedType, currentLevel, puzzleIndex, activePuzzle.id]}
