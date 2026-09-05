@@ -81,6 +81,8 @@ export const HeyawakeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
     setIsCompleted(false);
     setActiveHint(null);
     setHintLadderLevel(1);
+    setShowPBModal(false);
+    setShowSubmitModal(false);
     setProofSignature(null);
     setNoGuessWarning(null);
     startTimeRef.current = Date.now();
@@ -275,8 +277,16 @@ export const HeyawakeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
     setRedoStack((prev) => prev.slice(0, -1));
   }, [redoStack, isCompleted]);
 
+  // 🌟 核心防禦：加入 movesCountRef.current > 0 與非空盤面檢驗，杜絕初始化誤通關
   useEffect(() => {
     if (isCompleted || !solution || solution.length === 0) return;
+    
+    // 🛑 核心防禦 1：若未曾進行任何走步，絕不判定通關
+    if (movesCountRef.current === 0 || history.length === 0) return;
+
+    // 🛑 核心防禦 2：若盤面全為 0（空白），絕不判定通關
+    const hasAnyInput = board.some((row) => row.some((cell) => cell !== 0));
+    if (!hasAnyInput) return;
 
     let isMatch = true;
     for (let r = 0; r < rows; r++) {
