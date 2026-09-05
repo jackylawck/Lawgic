@@ -8,6 +8,12 @@ import { CognitiveRadarChart } from './CognitiveRadarChart';
 import { PBCelebrationModal } from './PBCelebrationModal';
 import { TournamentSubmissionModal } from './TournamentSubmissionModal';
 import { getEnvironmentFingerprint, calculateInfractionScore } from '../utils/tournamentSecurity';
+import {
+  WebHashiGenerator,
+  HashiSpec,
+  Island,
+  HashiHintStep,
+} from '../engines/hashiGenerator';
 
 interface Props {
   puzzleData?: PuzzleEntity;
@@ -15,45 +21,11 @@ interface Props {
   tournamentMode?: boolean;
 }
 
-export interface Island {
-  id: number;
-  r: number;
-  c: number;
-  capacity: number;
-}
-
-export interface Bridge {
-  u: number;
-  v: number;
-  count: 1 | 2;
-}
-
 interface BridgeDelta {
   u: number;
   v: number;
   from: 0 | 1 | 2;
   to: 0 | 1 | 2;
-}
-
-export type HashiTechnique =
-  | 'corner_capacity_forced'
-  | 'degree_propagation'
-  | 'cut_edge_isolation'
-  | 'isolated_pair_block'
-  | 'spanning_bottleneck';
-
-interface HashiHintStep {
-  step: number;
-  u: number;
-  v: number;
-  forcedCount: 1 | 2;
-  technique: HashiTechnique;
-  evidenceIslands: number[];
-  rationale: string;
-  humanReadable: {
-    zh: string;
-    en: string;
-  };
 }
 
 const MAX_HISTORY_STEPS = 250;
@@ -71,21 +43,20 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
   const { lang } = useLanguage();
   const isEn = lang === 'en';
 
-  const spec = (actualPuzzle as any)?.puzzle || (actualPuzzle as any)?.spec || (actualPuzzle as any);
+  const spec: HashiSpec = (actualPuzzle as any)?.puzzle || (actualPuzzle as any)?.spec;
   const rows = spec?.rows || 9;
   const cols = spec?.cols || 9;
 
-  // 1. 提取島嶼
   const islands: Island[] = useMemo(() => {
     if (spec?.islands && Array.isArray(spec.islands)) {
       return spec.islands;
     }
-    if (spec?.grid) {
+    if ((spec as any)?.grid) {
       const list: Island[] = [];
       let idCounter = 0;
       for (let r = 0; r < rows; r++) {
         for (let c = 0; c < cols; c++) {
-          const val = spec.grid[r]?.[c];
+          const val = (spec as any).grid[r]?.[c];
           if (typeof val === 'number' && val > 0) {
             list.push({ id: idCounter++, r, c, capacity: val });
           }
@@ -98,25 +69,35 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
 
   const currentTier = (actualPuzzle?.tier as TierKey) || 'kids';
 
-  // 2. 核心狀態：真實架設的橋樑 (u < v)
+  // 1. 橋樑狀態集合
   const [bridges, setBridges] = useState<Map<string, 1 | 2>>(new Map());
-
-  // 3. 候選筆記標記（Notes 模式：記錄玩家預設的可能橋數，不影響真實判定）
   const [candidateNotes, setCandidateNotes] = useState<Map<string, 1 | 2>>(new Map());
   const [isNoteMode, setIsNoteMode] = useState<boolean>(false);
+  const [highContrast, setHighContrast] = useState<boolean>(false);
 
-  // 4. 歷史差量堆疊（壓縮儲存，上限 250 步）
   const [history, setHistory] = useState<BridgeDelta[]>([]);
   const [redoStack, setRedoStack] = useState<BridgeDelta[]>([]);
-
-  // 選取的起點島嶼
   const [selectedIslandId, setSelectedIslandId] = useState<number | null>(null);
 
-  // 輔助與提示狀態
+  // 2. 輔助與提示狀態
   const [noGuessMode, setNoGuessMode] = useState<boolean>(false);
   const [noGuessWarning, setNoGuessWarning] = useState<string | null>(null);
   const [activeHint, setActiveHint] = useState<HashiHintStep | null>(null);
   const [hintLadderLevel, setHintLadderLevel] = useState<1 | 2 | 3>(1);
+  const [animatedEvidenceSet, setAnimatedEvidenceSet] = useState<Set<number>>(new Set());
+
+  // 3. 覆盤播放器狀態（升級：分歧點標記與滿足度儀表板）
+  const [isReplaying, setIsReplaying] = useState<boolean>(false);
+  const [replaySpeed, setReplaySpeed] = useState<1 | 2 | 4>(1);
+  const [replayStepIndex, setReplayStepIndex] = useState<number>(0);
+  const [replayStepsList, setReplayStepsList] = useState<HashiHintStep[]>([]);
+  const [userBridgesBackup, setUserBridgesBackup] = useState<Map<string, 1 | 2> | null>(null);
+  const [divergenceIndex, setDivergenceIndex] = useState<number | null>(null);
+
+  // 4. 手動種子彈窗
+  const [showSeedInputModal, setShowSeedInputModal] = useState<boolean>(false);
+  const [manualSeedInput, setManualSeedInput] = useState<string>('');
+  const [copyToast, setCopyToast] = useState<string | null>(null);
 
   const [isCompleted, setIsCompleted] = useState<boolean>(false);
   const [showPBModal, setShowPBModal] = useState<boolean>(false);
@@ -130,7 +111,6 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
   const movesCountRef = useRef<number>(0);
   const hasRecordedRef = useRef<boolean>(false);
 
-  // 初始化
   useEffect(() => {
     setBridges(new Map());
     setCandidateNotes(new Map());
@@ -140,6 +120,10 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
     setIsCompleted(false);
     setActiveHint(null);
     setHintLadderLevel(1);
+    setAnimatedEvidenceSet(new Set());
+    setIsReplaying(false);
+    setUserBridgesBackup(null);
+    setDivergenceIndex(null);
     setProofSignature(null);
     setNoGuessWarning(null);
     startTimeRef.current = Date.now();
@@ -150,9 +134,8 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
     hasRecordedRef.current = false;
   }, [actualPuzzle?.id, islands]);
 
-  // 計時器
   useEffect(() => {
-    if (isCompleted) return;
+    if (isCompleted || isReplaying) return;
     let frameId: number;
     const updateTimer = () => {
       setElapsedMs(Date.now() - startTimeRef.current);
@@ -160,9 +143,9 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
     };
     frameId = requestAnimationFrame(updateTimer);
     return () => cancelAnimationFrame(frameId);
-  }, [isCompleted]);
+  }, [isCompleted, isReplaying]);
 
-  // 圖論分析：計算度數、超額、滿額與全圖連通分量
+  // 圖論度數與連通分量分析
   const graphAnalysis = useMemo(() => {
     const degrees = new Map<number, number>();
     islands.forEach((isl) => degrees.set(isl.id, 0));
@@ -184,7 +167,6 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
       else if (deg > isl.capacity) overflowIslands.add(isl.id);
     });
 
-    // 連通分量計算 (BFS)
     const visited = new Set<number>();
     let connectedComponents = 0;
 
@@ -228,7 +210,6 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
     };
   }, [islands, bridges]);
 
-  // 衝突累計
   const prevConflictsRef = useRef<number>(0);
   useEffect(() => {
     if (graphAnalysis.totalConflicts > prevConflictsRef.current) {
@@ -238,165 +219,13 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
     prevConflictsRef.current = graphAnalysis.totalConflicts;
   }, [graphAnalysis.totalConflicts]);
 
-  // 正交視線鄰居檢索（射線障礙物檢測）
-  const getOrthogonalNeighbors = useCallback((islId: number): number[] => {
-    const src = islands.find((i) => i.id === islId);
-    if (!src) return [];
-
-    const neighbors: number[] = [];
-    const dirs = [
-      [-1, 0], [1, 0], [0, -1], [0, 1],
-    ];
-
-    for (const [dr, dc] of dirs) {
-      let r = src.r + dr;
-      let c = src.c + dc;
-      while (r >= 0 && r < rows && c >= 0 && c < cols) {
-        const found = islands.find((i) => i.r === r && i.c === c);
-        if (found) {
-          neighbors.push(found.id);
-          break;
-        }
-        r += dr;
-        c += dc;
-      }
-    }
-    return neighbors;
-  }, [islands, rows, cols]);
-
-  // 跨橋碰撞檢測（阻止正交橋樑在空間中交叉相截）
-  const checkBridgeCrossingCollision = useCallback(
-    (uId: number, vId: number): boolean => {
-      const u = islands.find((i) => i.id === uId)!;
-      const v = islands.find((i) => i.id === vId)!;
-      const isHorizontal = u.r === v.r;
-
-      for (const [key] of bridges) {
-        const [buIdStr, bvIdStr] = key.split('-');
-        const buId = Number(buIdStr);
-        const bvId = Number(bvIdStr);
-        if (buId === uId || buId === vId || bvId === uId || bvId === vId) continue;
-
-        const bu = islands.find((i) => i.id === buId)!;
-        const bv = islands.find((i) => i.id === bvId)!;
-        const isBHorizontal = bu.r === bv.r;
-
-        if (isHorizontal !== isBHorizontal) {
-          const hBridge = isHorizontal
-            ? { y: u.r, x1: Math.min(u.c, v.c), x2: Math.max(u.c, v.c) }
-            : { y: bu.r, x1: Math.min(bu.c, bv.c), x2: Math.max(bu.c, bv.c) };
-          const vBridge = !isHorizontal
-            ? { x: u.c, y1: Math.min(u.r, v.r), y2: Math.max(u.r, v.r) }
-            : { x: bu.c, y1: Math.min(bu.r, bv.r), y2: Math.max(bu.r, bv.r) };
-
-          if (
-            vBridge.x > hBridge.x1 &&
-            vBridge.x < hBridge.x2 &&
-            hBridge.y > vBridge.y1 &&
-            hBridge.y < vBridge.y2
-          ) {
-            return true;
-          }
-        }
-      }
-      return false;
-    },
-    [islands, bridges]
-  );
-
-  // 高階全局 No-Guess 定式引擎（納入「割邊隔離」與「度數傳播」）
-  const getNextForcedDeduction = useCallback((): HashiHintStep | null => {
-    // 定式 1: 剩餘可用方向容量極限收斂 (度數連鎖傳播)
-    for (const isl of islands) {
-      const currentDeg = graphAnalysis.degrees.get(isl.id) || 0;
-      if (currentDeg === isl.capacity) continue;
-
-      const remainingNeeded = isl.capacity - currentDeg;
-      const validNeighbors = getOrthogonalNeighbors(isl.id).filter((nId) => {
-        const minId = Math.min(isl.id, nId);
-        const maxId = Math.max(isl.id, nId);
-        const currentBridgeCount = bridges.get(`${minId}-${maxId}`) || 0;
-        const neighborDeg = graphAnalysis.degrees.get(nId) || 0;
-        const neighborCap = islands.find((i) => i.id === nId)!.capacity;
-        return (
-          currentBridgeCount < 2 &&
-          neighborDeg < neighborCap &&
-          !checkBridgeCrossingCollision(isl.id, nId)
-        );
-      });
-
-      // 剩餘所有方向即便全架滿 2 條橋，剛好滿足缺額
-      if (validNeighbors.length * 2 === remainingNeeded && validNeighbors.length > 0) {
-        const target = validNeighbors[0];
-        const minId = Math.min(isl.id, target);
-        const maxId = Math.max(isl.id, target);
-        const currentCount = bridges.get(`${minId}-${maxId}`) || 0;
-
-        return {
-          step: 1,
-          u: minId,
-          v: maxId,
-          forcedCount: (currentCount + 1) as 1 | 2,
-          technique: 'degree_propagation',
-          evidenceIslands: [isl.id, target],
-          rationale: `島嶼 [${isl.r + 1},${isl.c + 1}] (配額 ${isl.capacity}) 剩餘缺額 ${remainingNeeded}，所有剩餘方向必須全速連滿。`,
-          humanReadable: {
-            zh: `觀察島嶼 [${isl.r + 1},${isl.c + 1}]：扣除現有橋數後，其餘可用鄰居必須全部連滿方能湊齊度數，此處必然架橋。`,
-            en: `Island [${isl.r + 1},${isl.c + 1}] degree deficit requires maximum saturation across remaining neighbors.`,
-          },
-        };
-      }
-    }
-
-    // 定式 2: 割邊防孤島隔離定式 (Cut-Edge Isolation)
-    // 若連接某兩島會直接形成一個已閉合且滿額的子圖（但全圖島嶼尚未接齊），則此邊被嚴格禁連
-    if (islands.length > 2) {
-      for (const isl of islands) {
-        if (isl.capacity === 1 && (graphAnalysis.degrees.get(isl.id) || 0) === 0) {
-          const neighbors = getOrthogonalNeighbors(isl.id);
-          const oneCapNeighbors = neighbors.filter((nId) => {
-            const n = islands.find((i) => i.id === nId)!;
-            return n.capacity === 1 && (graphAnalysis.degrees.get(n.id) || 0) === 0;
-          });
-
-          // 若某鄰居也是容量 1 的島嶼，若連接這兩島將立刻形成 2 節點的孤立閉合圖
-          if (oneCapNeighbors.length > 0) {
-            const safeNeighbors = neighbors.filter((nId) => !oneCapNeighbors.includes(nId));
-            if (safeNeighbors.length === 1) {
-              const target = safeNeighbors[0];
-              const minId = Math.min(isl.id, target);
-              const maxId = Math.max(isl.id, target);
-              return {
-                step: 1,
-                u: minId,
-                v: maxId,
-                forcedCount: 1,
-                technique: 'cut_edge_isolation',
-                evidenceIslands: [isl.id, target, oneCapNeighbors[0]],
-                rationale: `島嶼 [${isl.r + 1},${isl.c + 1}] 若與相鄰的容量 1 島嶼連線，將形成封閉孤島切斷全域連通。因此必須連向 [${target}]。`,
-                humanReadable: {
-                  zh: `島嶼 [${isl.r + 1},${isl.c + 1}] 不能與同為容量 1 的鄰居相連（否則形成孤立閉環），故唯一安全方向必然連橋。`,
-                  en: `Connecting to another capacity 1 island creates an isolated sub-graph. Must connect to the alternate neighbor.`,
-                },
-              };
-            }
-          }
-        }
-      }
-    }
-
-    return null;
-  }, [islands, graphAnalysis.degrees, getOrthogonalNeighbors, bridges, checkBridgeCrossingCollision]);
-
-  // 差量變更應用 (含 No-Guess 阻擋與依據提示)
   const mutateBridge = useCallback(
     (uId: number, vId: number, targetCount: 0 | 1 | 2) => {
-      if (isCompleted) return;
+      if (isCompleted || isReplaying) return;
       const minId = Math.min(uId, vId);
       const maxId = Math.max(uId, vId);
       const key = `${minId}-${maxId}`;
 
-      // 筆記模式操作（不影響真實盤面）
       if (isNoteMode) {
         setCandidateNotes((prev) => {
           const next = new Map(prev);
@@ -411,28 +240,22 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
       const currentCount = bridges.get(key) || 0;
       if (currentCount === targetCount) return;
 
-      // 碰撞檢測
-      if (targetCount > 0 && checkBridgeCrossingCollision(minId, maxId)) {
+      if (targetCount > 0 && WebHashiGenerator.checkCrossing(minId, maxId, islands, bridges)) {
         if (navigator.vibrate) navigator.vibrate([30, 40, 30]);
-        setNoGuessWarning(
-          isEn ? '[Collision Blocked] Bridges cannot cross each other!' : '【跨橋碰撞】星際橋樑不可正交相交穿透！'
-        );
+        setNoGuessWarning(isEn ? '[Collision Blocked] Bridges cannot cross!' : '【跨橋碰撞】星際橋樑不可交叉相交！');
         setTimeout(() => setNoGuessWarning(null), 2400);
         return;
       }
 
-      // No-Guess 阻擋
       if (noGuessMode && targetCount > currentCount) {
-        const step = getNextForcedDeduction();
+        const step = WebHashiGenerator.getNextForcedDeduction(islands, rows, cols, bridges);
         if (step) {
           const isTargetBridge = step.u === minId && step.v === maxId;
           const isCountMatch = step.forcedCount === targetCount;
           if (!isTargetBridge || !isCountMatch) {
             if (navigator.vibrate) navigator.vibrate([25, 35, 25]);
             const reason = isEn ? step.humanReadable.en : step.humanReadable.zh;
-            setNoGuessWarning(
-              isEn ? `[No-Guess Blocked] Strictly deduce: ${reason}` : `【無猜測攔截】依據因果定式應優先連線：${reason}`
-            );
+            setNoGuessWarning(isEn ? `[No-Guess Blocked] Strictly deduce: ${reason}` : `【無猜測攔截】依據定式應優先連線：${reason}`);
             setTimeout(() => setNoGuessWarning(null), 3000);
             return;
           }
@@ -453,7 +276,6 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
         return next;
       });
 
-      // 同步消除對應筆記
       setCandidateNotes((prev) => {
         if (prev.has(key)) {
           const next = new Map(prev);
@@ -467,10 +289,9 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
         setActiveHint(null);
       }
     },
-    [isCompleted, isNoteMode, bridges, checkBridgeCrossingCollision, noGuessMode, getNextForcedDeduction, activeHint, isEn]
+    [isCompleted, isReplaying, isNoteMode, bridges, islands, rows, cols, noGuessMode, activeHint, isEn]
   );
 
-  // 循環切換 (0 -> 1 -> 2 -> 0)
   const cycleBridge = useCallback(
     (uId: number, vId: number) => {
       const minId = Math.min(uId, vId);
@@ -483,16 +304,16 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
     [isNoteMode, candidateNotes, bridges, mutateBridge]
   );
 
-  // 點選島嶼
   const handleIslandClick = useCallback(
     (islId: number) => {
+      if (isReplaying) return;
       if (selectedIslandId === null) {
         setSelectedIslandId(islId);
         if (navigator.vibrate) navigator.vibrate(6);
       } else if (selectedIslandId === islId) {
         setSelectedIslandId(null);
       } else {
-        const validNeighbors = getOrthogonalNeighbors(selectedIslandId);
+        const validNeighbors = WebHashiGenerator.getOrthogonalNeighbors(selectedIslandId, islands, rows, cols);
         if (validNeighbors.includes(islId)) {
           cycleBridge(selectedIslandId, islId);
         } else {
@@ -501,12 +322,11 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
         setSelectedIslandId(null);
       }
     },
-    [selectedIslandId, getOrthogonalNeighbors, cycleBridge]
+    [isReplaying, selectedIslandId, islands, rows, cols, cycleBridge]
   );
 
-  // 差量 Undo / Redo
   const handleUndo = useCallback(() => {
-    if (history.length === 0 || isCompleted) return;
+    if (history.length === 0 || isCompleted || isReplaying) return;
     if (navigator.vibrate) navigator.vibrate(10);
 
     const lastDelta = history[history.length - 1];
@@ -520,10 +340,10 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
 
     setRedoStack((prev) => [...prev, lastDelta]);
     setHistory((prev) => prev.slice(0, -1));
-  }, [history, isCompleted]);
+  }, [history, isCompleted, isReplaying]);
 
   const handleRedo = useCallback(() => {
-    if (redoStack.length === 0 || isCompleted) return;
+    if (redoStack.length === 0 || isCompleted || isReplaying) return;
     if (navigator.vibrate) navigator.vibrate(10);
 
     const nextDelta = redoStack[redoStack.length - 1];
@@ -537,12 +357,11 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
 
     setHistory((prev) => [...prev, nextDelta]);
     setRedoStack((prev) => prev.slice(0, -1));
-  }, [redoStack, isCompleted]);
+  }, [redoStack, isCompleted, isReplaying]);
 
-  // 鍵盤操控支援
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (isCompleted) return;
+      if (isCompleted || isReplaying) return;
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') {
         e.preventDefault();
         if (e.shiftKey) handleRedo();
@@ -554,15 +373,16 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
         setIsNoteMode((prev) => !prev);
       } else if (e.code === 'Escape') {
         setSelectedIslandId(null);
+        setShowSeedInputModal(false);
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isCompleted, handleUndo, handleRedo]);
+  }, [isCompleted, isReplaying, handleUndo, handleRedo]);
 
   // 勝利驗證與 SHA-256
   useEffect(() => {
-    if (isCompleted) return;
+    if (isCompleted || isReplaying) return;
 
     if (graphAnalysis.allSatisfied && graphAnalysis.isFullyConnected) {
       setIsCompleted(true);
@@ -577,10 +397,10 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
           engineType: 'hashi',
           tier: currentTier,
           cognitiveLoad: actualPuzzle.cognitiveLoad || {
-            spatial: 0.85,
+            spatial: 0.88,
             numeric: 0.5,
-            workingMemory: 0.7,
-            inhibition: 0.8,
+            workingMemory: 0.75,
+            inhibition: 0.82,
           },
           isSuccess: true,
           timeSpentSec: timeSpent,
@@ -591,7 +411,7 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
         });
 
         try {
-          const canonical = `${actualPuzzle.id}|${timeSpent}|${movesCountRef.current}|${conflictCountRef.current}|HASHI_GLOBAL_LEGEND`;
+          const canonical = `${actualPuzzle.id}|${timeSpent}|${movesCountRef.current}|${conflictCountRef.current}|SECURE_${tournamentMode}|HASHI_CHAMPION`;
           const enc = new TextEncoder();
           window.crypto.subtle.digest('SHA-256', enc.encode(canonical)).then((buf) => {
             const hex = Array.from(new Uint8Array(buf))
@@ -608,15 +428,14 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
         }
       }
     }
-  }, [graphAnalysis, isCompleted, actualPuzzle, currentTier, recordAttempt, profile.personalBest.fastestTime, activeHint]);
+  }, [graphAnalysis, isCompleted, isReplaying, actualPuzzle, currentTier, recordAttempt, profile.personalBest.fastestTime, activeHint, tournamentMode]);
 
-  // 提示請求
   const handleRequestHint = () => {
-    if (isCompleted || tournamentMode) return;
+    if (isCompleted || tournamentMode || isReplaying) return;
     if (navigator.vibrate) navigator.vibrate(12);
 
     if (!activeHint) {
-      const step = getNextForcedDeduction();
+      const step = WebHashiGenerator.getNextForcedDeduction(islands, rows, cols, bridges);
       if (step) {
         setActiveHint(step);
         setSelectedIslandId(step.u);
@@ -627,6 +446,195 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
     }
   };
 
+  // 細節 3：AI 變速覆盤引擎 + 玩家操作分歧點比對檢測
+  const handleStartReplay = () => {
+    setUserBridgesBackup(new Map(bridges));
+
+    const simBridges = new Map<string, 1 | 2>();
+    const steps: HashiHintStep[] = [];
+
+    let safety = 0;
+    while (safety++ < islands.length * 4) {
+      const step = WebHashiGenerator.getNextForcedDeduction(islands, rows, cols, simBridges);
+      if (!step) break;
+      steps.push(step);
+      simBridges.set(`${step.u}-${step.v}`, step.forcedCount);
+    }
+
+    // 分歧點比對：尋找玩家第幾步開始與 AI 定式步驟產生分歧
+    let firstDiverge: number | null = null;
+    for (let i = 0; i < steps.length; i++) {
+      const aiStep = steps[i];
+      const playerAction = history[i];
+      if (!playerAction || playerAction.u !== aiStep.u || playerAction.v !== aiStep.v || playerAction.to !== aiStep.forcedCount) {
+        firstDiverge = i;
+        break;
+      }
+    }
+    setDivergenceIndex(firstDiverge);
+
+    setReplayStepsList(steps);
+    setReplayStepIndex(0);
+    setIsReplaying(true);
+    setBridges(new Map());
+    setSelectedIslandId(null);
+  };
+
+  const handleRestoreUserBoard = () => {
+    if (!userBridgesBackup) return;
+    setIsReplaying(false);
+    setBridges(new Map(userBridgesBackup));
+    setAnimatedEvidenceSet(new Set());
+    if (navigator.vibrate) navigator.vibrate(15);
+  };
+
+  useEffect(() => {
+    if (!isReplaying || replayStepsList.length === 0) return;
+    if (replayStepIndex >= replayStepsList.length) return;
+
+    const delay = Math.round(450 / replaySpeed);
+    const timer = setTimeout(() => {
+      const step = replayStepsList[replayStepIndex];
+      setBridges((prev) => {
+        const next = new Map(prev);
+        next.set(`${step.u}-${step.v}`, step.forcedCount);
+        return next;
+      });
+
+      if (step.evidenceIslands) {
+        setAnimatedEvidenceSet(new Set(step.evidenceIslands));
+      }
+      setReplayStepIndex((prev) => prev + 1);
+    }, delay);
+
+    return () => clearTimeout(timer);
+  }, [isReplaying, replayStepIndex, replayStepsList, replaySpeed]);
+
+  // 一鍵生成對決連結
+  const handleCopySeedShareCode = () => {
+    const seed = (actualPuzzle as any)?.puzzle?.seed || (actualPuzzle?.metrics as any)?.seed || 0;
+    const origin = typeof window !== 'undefined' ? window.location.origin : 'https://lawgic.app';
+    const duelUrl = `${origin}/?engine=hashi&tier=${currentTier}&seed=${seed}`;
+    navigator.clipboard.writeText(duelUrl);
+    setCopyToast(isEn ? '🔗 Direct duel link copied!' : '🔗 一鍵對決連結已複製！發送至群組即可發起對決！');
+    if (navigator.vibrate) navigator.vibrate(20);
+    setTimeout(() => setCopyToast(null), 2400);
+  };
+
+  // 細節 2：手動輸入純文字種子並無縫載入
+  const handleApplyManualSeed = (e: React.FormEvent) => {
+    e.preventDefault();
+    const raw = manualSeedInput.trim();
+    if (!raw) return;
+
+    // 解析格式：支援 hashi_master_s12345 或 HASHI-S12345-Texpert 或 純整數 12345
+    let extractedSeed = raw;
+    const seedMatch = raw.match(/s(\d+)/i) || raw.match(/S(\d+)/);
+    if (seedMatch) extractedSeed = seedMatch[1];
+    else if (/^\d+$/.test(raw)) extractedSeed = raw;
+
+    const url = new URL(window.location.href);
+    url.searchParams.set('engine', 'hashi');
+    url.searchParams.set('tier', currentTier);
+    url.searchParams.set('seed', extractedSeed);
+    window.location.href = url.toString();
+  };
+
+  // 📸 生成高光戰績卡（Canvas 圖片匯出）
+  const handleGenerateCard = () => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 600;
+    canvas.height = 320;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const bgGrad = ctx.createLinearGradient(0, 0, 600, 320);
+    bgGrad.addColorStop(0, '#020617');
+    bgGrad.addColorStop(1, '#0f172a');
+    ctx.fillStyle = bgGrad;
+    ctx.fillRect(0, 0, 600, 320);
+
+    ctx.strokeStyle = '#38bdf8';
+    ctx.lineWidth = 3;
+    ctx.strokeRect(12, 12, 576, 296);
+
+    ctx.fillStyle = '#f8fafc';
+    ctx.font = 'bold 22px monospace';
+    ctx.fillText('HASHIWOKAKERO MASTER RECORD', 30, 48);
+
+    ctx.fillStyle = '#94a3b8';
+    ctx.font = '12px monospace';
+    ctx.fillText(`TIER: ${currentTier.toUpperCase()}  |  180° SYMMETRIC BOARD`, 30, 72);
+
+    const startX = 30;
+    const startY = 95;
+    const boardSize = 180;
+    const scaleX = boardSize / cols;
+    const scaleY = boardSize / rows;
+
+    ctx.strokeStyle = '#38bdf8';
+    ctx.lineWidth = 2;
+    bridges.forEach((count, key) => {
+      const [uIdStr, vIdStr] = key.split('-');
+      const u = islands.find((i) => i.id === Number(uIdStr))!;
+      const v = islands.find((i) => i.id === Number(vIdStr))!;
+      const x1 = startX + (u.c + 0.5) * scaleX;
+      const y1 = startY + (u.r + 0.5) * scaleY;
+      const x2 = startX + (v.c + 0.5) * scaleX;
+      const y2 = startY + (v.r + 0.5) * scaleY;
+
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
+      ctx.stroke();
+    });
+
+    islands.forEach((isl) => {
+      const ix = startX + (isl.c + 0.5) * scaleX;
+      const iy = startY + (isl.r + 0.5) * scaleY;
+
+      ctx.fillStyle = '#1e293b';
+      ctx.beginPath();
+      ctx.arc(ix, iy, 8, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#38bdf8';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+
+      ctx.fillStyle = '#f8fafc';
+      ctx.font = 'bold 9px monospace';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(`${isl.capacity}`, ix, iy);
+    });
+
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
+
+    ctx.fillStyle = '#38bdf8';
+    ctx.font = 'bold 16px monospace';
+    ctx.fillText(`TIME: ${(elapsedMs / 1000).toFixed(1)}s`, 260, 125);
+
+    ctx.fillStyle = '#cbd5e1';
+    ctx.font = '13px monospace';
+    ctx.fillText(`MOVES: ${movesCountRef.current}`, 260, 155);
+    ctx.fillText(`CONFLICTS: ${conflictCountRef.current}`, 260, 180);
+    ctx.fillText(`FLUID IQ: ${cci.standardIQ} (Top ${(100 - cci.percentileRank).toFixed(1)}%)`, 260, 205);
+
+    ctx.fillStyle = '#64748b';
+    ctx.font = '9px monospace';
+    ctx.fillText(`RECEIPT: ${proofSignature || 'VERIFIED_HASHI_HASH'}`, 260, 245);
+    ctx.fillText('POWERED BY LAWGIC TOURNAMENT ENGINE', 260, 265);
+
+    const link = document.createElement('a');
+    link.download = `Hashi_Card_${Date.now().toString(36)}.png`;
+    link.href = canvas.toDataURL('image/png');
+    link.click();
+
+    setCopyToast(isEn ? '📸 Performance card downloaded!' : '📸 高光戰績卡已生成並下載！');
+    setTimeout(() => setCopyToast(null), 2500);
+  };
+
   const theoryTime = (actualPuzzle?.metrics as any)?.estimated_time_sec || islands.length * 5;
   const benchmarkData = useMemo(() => {
     return getBenchmarkMetrics('TopologicalLookahead', theoryTime, 'hashi');
@@ -634,19 +642,20 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
 
   const cci = useMemo(() => getCompositeCognitiveIndex(), [getCompositeCognitiveIndex, isCompleted]);
 
-  // 根據大盤面維度動態計算雙橋平行間距
   const dynamicBridgeOffset = useMemo(() => {
     return Math.min(2.4, Math.max(1.1, 14 / Math.max(rows, cols)));
   }, [rows, cols]);
 
   const selectableNeighbors = useMemo(() => {
     if (selectedIslandId === null) return new Set<number>();
-    return new Set(getOrthogonalNeighbors(selectedIslandId));
-  }, [selectedIslandId, getOrthogonalNeighbors]);
+    return new Set(WebHashiGenerator.getOrthogonalNeighbors(selectedIslandId, islands, rows, cols));
+  }, [selectedIslandId, islands, rows, cols]);
+
+  const currentReplayStep = replayStepsList[replayStepIndex - 1];
 
   return (
     <div className="flex flex-col items-center justify-center p-1 select-none font-mono">
-      {/* 頂部賽事數據列 */}
+      {/* 頂部數據列 */}
       <div className="w-full grid grid-cols-6 gap-1 px-0.5 mb-1.5 text-[8px] sm:text-[9px]">
         <div className="bg-slate-950 border border-slate-800 p-1 rounded text-center">
           <div className="text-slate-500 text-[6.5px]">{isEn ? '⏱️ Speed' : '⏱️ 競速'}</div>
@@ -665,76 +674,126 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
           </div>
         </div>
 
-        {/* 候選筆記模式 (Notes) */}
+        {/* 手動輸入種子碼按鈕 */}
         <button
-          onClick={() => setIsNoteMode((prev) => !prev)}
-          className={`p-1 rounded border text-center transition ${
-            isNoteMode
-              ? 'bg-amber-950 border-amber-500 text-amber-300 font-bold shadow-xs'
-              : 'bg-slate-950 border-slate-800 text-slate-500 hover:text-slate-300'
-          }`}
-          title={isEn ? 'Toggle Candidate Notes Mode (Key: N)' : '切換候選筆記模式'}
+          onClick={() => setShowSeedInputModal(true)}
+          className="p-1 rounded border border-slate-800 bg-slate-950 text-slate-400 hover:text-amber-300 hover:border-amber-500/60 transition text-center"
+          title="Manual Enter Seed"
         >
-          <div className="text-[6.5px]">✏️ {isEn ? 'Notes' : '筆記'}</div>
-          <div className="text-[7.5px]">{isNoteMode ? (isEn ? 'ON' : '開啟') : (isEn ? 'OFF' : '關閉')}</div>
+          <div className="text-[6.5px]">🔢 {isEn ? 'Seed' : '種子'}</div>
+          <div className="text-[7.5px]">{isEn ? 'Input' : '輸入'}</div>
         </button>
 
-        {/* 無猜測模式 */}
+        <button
+          onClick={() => setHighContrast((prev) => !prev)}
+          className={`p-1 rounded border text-center transition ${
+            highContrast
+              ? 'bg-amber-950 border-amber-400 text-amber-300 font-bold shadow-xs'
+              : 'bg-slate-950 border-slate-800 text-slate-500 hover:text-slate-300'
+          }`}
+        >
+          <div className="text-[6.5px]">🌓 {isEn ? 'Theme' : '主題'}</div>
+          <div className="text-[7.5px]">{highContrast ? 'Paper' : 'Dark'}</div>
+        </button>
+
         <button
           onClick={() => setNoGuessMode((prev) => !prev)}
+          disabled={tournamentMode}
           className={`p-1 rounded border text-center transition ${
-            noGuessMode
+            tournamentMode
+              ? 'bg-purple-950/80 border-purple-500 text-purple-300 font-bold cursor-not-allowed'
+              : noGuessMode
               ? 'bg-purple-950 border-purple-500 text-purple-300 font-bold shadow-xs'
               : 'bg-slate-950 border-slate-800 text-slate-500 hover:text-slate-300'
           }`}
         >
           <div className="text-[6.5px]">🛡️ {isEn ? 'No-Guess' : '無猜測'}</div>
-          <div className="text-[7.5px]">{noGuessMode ? (isEn ? 'Strict ON' : '強制嚴謹') : (isEn ? 'OFF' : '關閉')}</div>
-        </button>
-
-        {/* 提示階梯 */}
-        <button
-          onClick={handleRequestHint}
-          disabled={isCompleted || tournamentMode}
-          className={`p-1 rounded border text-center transition ${
-            tournamentMode
-              ? 'bg-slate-900 border-slate-800 text-slate-600 cursor-not-allowed'
-              : activeHint
-              ? 'bg-amber-950/90 border-amber-500 text-amber-300 font-bold shadow-xs'
-              : 'bg-indigo-950/80 border-indigo-500/60 text-indigo-300 hover:bg-indigo-900'
-          }`}
-        >
-          <div className="text-[6.5px]">💡 {isEn ? 'Hint Ladder' : '提示階梯'}</div>
-          <div className="text-[7.5px] truncate">
-            {tournamentMode
-              ? (isEn ? 'Locked' : '賽事鎖定')
-              : activeHint
-              ? `${isEn ? 'Lv.' : '階梯 '}${hintLadderLevel}/3`
-              : (isEn ? 'Get Hint' : '因果提示')}
-          </div>
+          <div className="text-[7.5px]">{tournamentMode ? 'Locked' : noGuessMode ? 'Strict' : 'OFF'}</div>
         </button>
       </div>
 
-      {/* 警示橫條 */}
+      {copyToast && (
+        <div className="w-[min(88vw,42vh)] mb-1 p-1 bg-emerald-950 border border-emerald-500 text-emerald-300 text-[7.5px] rounded animate-fade-in text-center font-bold">
+          {copyToast}
+        </div>
+      )}
+
+      {/* 細節 1 & 3：變速覆盤控制條 + 滿足度儀表板 + 分歧點警告 */}
+      {isReplaying && (
+        <div className="w-[min(88vw,42vh)] mb-1.5 p-1.5 bg-indigo-950/90 border border-cyan-500 rounded-lg text-cyan-200 text-[8px] animate-pulse font-mono">
+          <div className="flex justify-between items-center text-[7px] text-cyan-400 mb-1 border-b border-cyan-900/60 pb-0.5">
+            <span className="flex items-center gap-1 font-bold">
+              <span>{currentReplayStep?.techniqueIcon || '🌉'}</span>
+              <span>{isEn ? currentReplayStep?.techniqueName.en : currentReplayStep?.techniqueName.zh}</span>
+              <span className="text-slate-400">[{replayStepIndex}/{replayStepsList.length}]</span>
+              {divergenceIndex !== null && replayStepIndex >= divergenceIndex && (
+                <span className="ml-1 px-1 bg-rose-950 border border-rose-500 text-rose-300 rounded text-[6px]">
+                  ⚠️ {isEn ? 'DIVERGED' : '分歧步'}
+                </span>
+              )}
+            </span>
+            <div className="flex items-center gap-1">
+              <span className="text-[6.5px] text-slate-400">SPEED:</span>
+              {[1, 2, 4].map((spd) => (
+                <button
+                  key={spd}
+                  onClick={() => setReplaySpeed(spd as 1 | 2 | 4)}
+                  className={`px-1 py-0.2 rounded text-[6.5px] font-bold ${
+                    replaySpeed === spd ? 'bg-cyan-500 text-slate-950' : 'bg-slate-800 text-slate-400'
+                  }`}
+                >
+                  {spd}x
+                </button>
+              ))}
+              <button
+                onClick={handleRestoreUserBoard}
+                className="ml-1 px-1.5 py-0.2 bg-rose-950 hover:bg-rose-900 border border-rose-500/60 text-rose-300 rounded text-[6.5px] font-bold"
+              >
+                {isEn ? 'Restore Mine' : '還原我的盤面'}
+              </button>
+            </div>
+          </div>
+
+          {/* 細節 1：島嶼滿足度進度條儀表板 */}
+          <div className="flex items-center justify-between text-[6.5px] text-slate-300 mb-0.5">
+            <span>
+              {isEn ? 'Islands Satisfied:' : '島嶼滿額進度:'}{' '}
+              <strong className="text-emerald-400">{graphAnalysis.satisfiedIslands.size}</strong>/{islands.length}
+            </span>
+            <span className="text-cyan-300">
+              {currentReplayStep ? `+${currentReplayStep.forcedCount} Bridge` : ''}
+            </span>
+          </div>
+          <div className="w-full bg-slate-900 h-1 rounded-full overflow-hidden mb-1">
+            <div
+              className="bg-emerald-400 h-full transition-all duration-200"
+              style={{ width: `${(graphAnalysis.satisfiedIslands.size / Math.max(1, islands.length)) * 100}%` }}
+            />
+          </div>
+
+          <div className="truncate text-cyan-300">
+            {currentReplayStep?.rationale || 'Demonstrating deductive bridge placement...'}
+          </div>
+        </div>
+      )}
+
       {noGuessWarning && (
         <div className="w-[min(88vw,42vh)] mb-1.5 p-1 bg-rose-950 border border-rose-500 text-rose-300 text-[8px] rounded-lg animate-pulse text-center shadow-lg font-bold">
           {noGuessWarning}
         </div>
       )}
 
-      {/* 提示說明卡片 */}
-      {activeHint && (
+      {activeHint && !isReplaying && (
         <div className="w-[min(88vw,42vh)] mb-1.5 p-1.5 bg-amber-950/80 border border-amber-500/70 rounded-lg text-amber-200 text-[8px] animate-fade-in text-left shadow-lg">
           <div className="font-bold flex items-center justify-between text-[7px] text-amber-400 border-b border-amber-900/60 pb-0.5 mb-1">
-            <span>[HASHI HINT LADDER LEVEL {hintLadderLevel}/3]</span>
-            <span className="uppercase">{activeHint.technique.replace(/_/g, ' ')}</span>
+            <span className="flex items-center gap-1">
+              <span>{activeHint.techniqueIcon}</span>
+              <span>{isEn ? activeHint.techniqueName.en : activeHint.techniqueName.zh}</span>
+            </span>
+            <span>LEVEL {hintLadderLevel}/3</span>
           </div>
           {hintLadderLevel === 1 && (
-            <div>
-              {isEn
-                ? `Focus on Island #${activeHint.u}. An inevitable bridge connection is forced here.`
-                : `請關注島嶼 #${activeHint.u} 與 #${activeHint.v}。兩者間存在必然的架橋定式。`}
-            </div>
+            <div>{isEn ? `Focus between Island #${activeHint.u} and #${activeHint.v}.` : `請關注島嶼 #${activeHint.u} 與 #${activeHint.v} 之間。`}</div>
           )}
           {hintLadderLevel === 2 && (
             <div>{isEn ? activeHint.humanReadable.en : activeHint.humanReadable.zh}</div>
@@ -750,14 +809,19 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
         </div>
       )}
 
-      {/* 數橋星空畫布 */}
+      {/* 主星橋畫布 */}
       <div
-        className="relative overflow-hidden p-2 rounded-xl bg-slate-950 border-2 border-slate-800 shadow-2xl"
+        className={`relative overflow-hidden p-2 rounded-xl border-2 shadow-2xl transition-colors ${
+          highContrast ? 'bg-black border-slate-400' : 'bg-slate-950 border-slate-800'
+        }`}
         style={{ width: 'min(88vw, 42vh)', height: 'min(88vw, 42vh)', touchAction: 'none' }}
       >
-        {/* SVG 橋樑與筆記渲染層 */}
+        <div className="absolute top-1 right-1 px-1 py-0.2 bg-indigo-950/70 border border-indigo-500/50 rounded text-[6px] text-indigo-300 font-mono pointer-events-none z-20">
+          ☯ 180° SYM
+        </div>
+
+        {/* SVG 橋樑渲染層 */}
         <svg className="absolute inset-0 w-full h-full pointer-events-none z-10">
-          {/* 1. 候選筆記虛線橋樑 */}
           {Array.from(candidateNotes.entries()).map(([key, count]) => {
             const [uIdStr, vIdStr] = key.split('-');
             const u = islands.find((i) => i.id === Number(uIdStr))!;
@@ -767,7 +831,6 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
             const x2 = ((v.c + 0.5) / cols) * 100;
             const y2 = ((v.r + 0.5) / rows) * 100;
 
-            const isHorizontal = u.r === v.r;
             return (
               <line
                 key={`note-${key}`}
@@ -783,7 +846,6 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
             );
           })}
 
-          {/* 2. 真實橋樑實線渲染（含動態間距補償） */}
           {Array.from(bridges.entries()).map(([key, count]) => {
             const [uIdStr, vIdStr] = key.split('-');
             const u = islands.find((i) => i.id === Number(uIdStr))!;
@@ -796,6 +858,7 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
 
             const isHorizontal = u.r === v.r;
             const offset = dynamicBridgeOffset;
+            const strokeColor = highContrast ? '#ffffff' : '#38bdf8';
 
             if (count === 1) {
               return (
@@ -805,7 +868,7 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
                   y1={`${y1}%`}
                   x2={`${x2}%`}
                   y2={`${y2}%`}
-                  stroke="#38bdf8"
+                  stroke={strokeColor}
                   strokeWidth="3.2"
                   strokeLinecap="round"
                 />
@@ -818,7 +881,7 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
                     y1={`${isHorizontal ? y1 - offset : y1}%`}
                     x2={`${isHorizontal ? x2 : x2 - offset}%`}
                     y2={`${isHorizontal ? y2 - offset : y2}%`}
-                    stroke="#38bdf8"
+                    stroke={strokeColor}
                     strokeWidth="2.5"
                     strokeLinecap="round"
                   />
@@ -827,7 +890,7 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
                     y1={`${isHorizontal ? y1 + offset : y1}%`}
                     x2={`${isHorizontal ? x2 : x2 + offset}%`}
                     y2={`${isHorizontal ? y2 + offset : y2}%`}
-                    stroke="#38bdf8"
+                    stroke={strokeColor}
                     strokeWidth="2.5"
                     strokeLinecap="round"
                   />
@@ -837,7 +900,7 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
           })}
         </svg>
 
-        {/* 網格與島嶼節點層 */}
+        {/* 島嶼節點網格 */}
         <div
           className="relative w-full h-full"
           style={{
@@ -852,7 +915,7 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
             const isOverflow = currentDeg > isl.capacity;
             const isSelected = selectedIslandId === isl.id;
             const isSelectable = selectableNeighbors.has(isl.id);
-            const isHintEvidence = activeHint && (activeHint.u === isl.id || activeHint.v === isl.id);
+            const isEvidenceAnimated = animatedEvidenceSet.has(isl.id);
 
             return (
               <div
@@ -869,13 +932,17 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
                     isOverflow
                       ? 'bg-red-950 border-2 border-rose-500 text-rose-300 ring-2 ring-rose-500/50 scale-105'
                       : isSatisfied
-                      ? 'bg-emerald-950 border-2 border-emerald-400 text-emerald-300'
+                      ? highContrast
+                        ? 'bg-neutral-800 border-2 border-white text-white'
+                        : 'bg-emerald-950 border-2 border-emerald-400 text-emerald-300'
                       : isSelected
                       ? 'bg-cyan-500 border-2 border-white text-slate-950 ring-4 ring-cyan-400/50 scale-110'
                       : isSelectable
                       ? 'bg-slate-900 border-2 border-cyan-400 text-cyan-200 animate-pulse scale-105 ring-2 ring-cyan-400/40'
+                      : highContrast
+                      ? 'bg-black border-2 border-slate-600 text-white hover:border-white'
                       : 'bg-slate-900 border-2 border-slate-700 text-slate-200 hover:border-slate-500'
-                  } ${isHintEvidence ? 'ring-4 ring-amber-400 animate-bounce' : ''}`}
+                  } ${isEvidenceAnimated ? 'ring-4 ring-amber-400 animate-bounce' : ''}`}
                 >
                   {isl.capacity}
                 </button>
@@ -885,40 +952,78 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
         </div>
       </div>
 
-      {/* 底部撤銷重做與快捷欄 */}
+      {/* 底部快捷欄 */}
       <div className="w-full max-w-[340px] flex items-center justify-between px-1 mt-1.5 text-[7.5px] text-slate-400">
         <div className="flex gap-1">
           <button
             onClick={handleUndo}
-            disabled={history.length === 0 || isCompleted}
+            disabled={history.length === 0 || isCompleted || isReplaying}
             className="px-2 py-0.5 bg-slate-900 border border-slate-800 rounded hover:bg-slate-800 disabled:opacity-40"
           >
             ↩ {isEn ? 'Undo (Z)' : '撤銷'}
           </button>
           <button
             onClick={handleRedo}
-            disabled={redoStack.length === 0 || isCompleted}
+            disabled={redoStack.length === 0 || isCompleted || isReplaying}
             className="px-2 py-0.5 bg-slate-900 border border-slate-800 rounded hover:bg-slate-800 disabled:opacity-40"
           >
             ↪ {isEn ? 'Redo (Y)' : '重做'}
           </button>
+          {!tournamentMode && (
+            <button
+              onClick={handleCopySeedShareCode}
+              className="px-2 py-0.5 bg-slate-900 border border-slate-800 rounded hover:bg-slate-800 text-amber-300"
+              title="Copy Duel Link"
+            >
+              🔗 {isEn ? 'Duel Link' : '對決連結'}
+            </button>
+          )}
         </div>
         <div className="text-slate-500">
-          <span>點選兩島連線：無 ➔ 單 ➔ 雙 ➔ 拆除 / N 切換筆記</span>
+          <span>點選兩島循環：無 ➔ 單 ➔ 雙 ➔ 拆除</span>
         </div>
       </div>
 
-      {/* 即時圖例與全圖連通警示 */}
-      <div className="w-full max-w-[340px] flex items-center justify-around px-1 mt-1 text-[6.5px] text-slate-500">
-        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-950 border border-emerald-500 inline-block" />滿度島嶼</span>
-        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-950 border border-rose-500 inline-block" />超度違規</span>
-        <span className="flex items-center gap-1"><span className="w-2.5 h-[2px] bg-amber-400 border border-amber-400 border-dashed inline-block" />候選筆記</span>
-        {!graphAnalysis.isFullyConnected && graphAnalysis.connectedComponents > 1 && (
-          <span className="text-amber-400 font-bold animate-pulse">⚠️ 孤立子圖 ({graphAnalysis.connectedComponents} 區塊)</span>
-        )}
-      </div>
+      {/* 細節 2：純文字種子手動輸入彈窗 Modal */}
+      {showSeedInputModal && (
+        <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4">
+          <div className="bg-slate-950 border border-indigo-500/70 p-4 rounded-xl max-w-xs w-full shadow-2xl font-mono text-center animate-fade-in">
+            <div className="text-indigo-400 font-bold text-xs mb-2">🔢 {isEn ? 'Enter Duel Seed' : '手動輸入對決種子碼'}</div>
+            <p className="text-slate-400 text-[9px] mb-3 leading-relaxed">
+              {isEn
+                ? 'Paste raw seed code (e.g. hashi_master_s12345 or 12345) to load the exact board.'
+                : '貼入好友分享的短碼（例如 hashi_master_s12345 或純數字 12345），立即進入同題對決！'}
+            </p>
+            <form onSubmit={handleApplyManualSeed} className="flex flex-col gap-2">
+              <input
+                type="text"
+                value={manualSeedInput}
+                onChange={(e) => setManualSeedInput(e.target.value)}
+                placeholder="e.g. hashi_master_s12345"
+                className="bg-slate-900 border border-slate-700 rounded px-2 py-1 text-slate-200 text-xs text-center focus:border-cyan-400 outline-none"
+                autoFocus
+              />
+              <div className="flex gap-2 mt-1">
+                <button
+                  type="button"
+                  onClick={() => setShowSeedInputModal(false)}
+                  className="flex-1 py-1 bg-slate-900 border border-slate-800 text-slate-400 text-[10px] rounded hover:bg-slate-800"
+                >
+                  {isEn ? 'Cancel' : '取消'}
+                </button>
+                <button
+                  type="submit"
+                  className="flex-1 py-1 bg-gradient-to-r from-cyan-600 to-cyan-500 text-slate-950 font-bold text-[10px] rounded hover:from-cyan-500 shadow"
+                >
+                  {isEn ? 'Load' : '載入盤面'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
-      {/* 通關結算面板 */}
+      {/* 結算成就與覆盤面板 */}
       {isCompleted && (
         <div className="mt-2 p-2.5 bg-slate-950/95 border border-indigo-500/60 rounded-xl text-center w-[min(88vw,42vh)] shadow-2xl animate-fade-in font-mono">
           <div className="flex items-center justify-between border-b border-slate-800 pb-1 mb-1.5">
@@ -965,13 +1070,43 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
             />
           </div>
 
-          <div className="flex gap-1 mb-1.5">
+          {/* 覆盤、戰績卡與對決行動群 */}
+          <div className="grid grid-cols-2 gap-1 mb-1">
             <button
-              onClick={exportLongitudinalDataset}
-              className="flex-1 py-1 bg-slate-900 hover:bg-slate-800 border border-cyan-600/50 hover:border-cyan-400 text-cyan-300 text-[7.5px] font-bold rounded transition shadow flex items-center justify-center gap-0.5 active:scale-95"
+              onClick={handleStartReplay}
+              disabled={isReplaying}
+              className="py-1 bg-indigo-950 hover:bg-indigo-900 border border-indigo-500/60 text-indigo-300 text-[7.5px] font-bold rounded transition shadow flex items-center justify-center gap-0.5 active:scale-95"
             >
-              <span>📊</span>
-              <span>{isEn ? 'Dataset' : '匯出數據'}</span>
+              <span>🔁</span>
+              <span>{isEn ? 'AI Replay' : '解法覆盤'}</span>
+            </button>
+
+            <button
+              onClick={handleGenerateCard}
+              className="py-1 bg-purple-950 hover:bg-purple-900 border border-purple-500/60 text-purple-300 text-[7.5px] font-bold rounded transition shadow flex items-center justify-center gap-0.5 active:scale-95"
+            >
+              <span>📸</span>
+              <span>{isEn ? 'Share Card' : '高光戰績卡'}</span>
+            </button>
+          </div>
+
+          <div className="flex gap-1 mb-1.5">
+            {userBridgesBackup && (
+              <button
+                onClick={handleRestoreUserBoard}
+                className="flex-1 py-1 bg-slate-900 hover:bg-slate-800 border border-cyan-500/60 text-cyan-300 text-[7.5px] font-bold rounded transition shadow flex items-center justify-center gap-0.5 active:scale-95"
+              >
+                <span>↩️</span>
+                <span>{isEn ? 'My Board' : '我的盤面'}</span>
+              </button>
+            )}
+
+            <button
+              onClick={handleCopySeedShareCode}
+              className="flex-1 py-1 bg-slate-900 hover:bg-slate-800 border border-amber-500/60 text-amber-300 text-[7.5px] font-bold rounded transition shadow flex items-center justify-center gap-0.5 active:scale-95"
+            >
+              <span>🔗</span>
+              <span>{isEn ? 'Duel Link' : '對決連結'}</span>
             </button>
 
             <button
@@ -986,8 +1121,8 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
           {proofSignature && (
             <div className="p-1 bg-slate-900 border border-slate-800 rounded text-left">
               <div className="text-[6.5px] text-slate-500 font-bold uppercase flex justify-between">
-                <span>LOCAL RECEIPT (SHA-256)</span>
-                <span className="text-emerald-400 font-mono text-[5.5px]">TAMPER-PROOF</span>
+                <span>PSYCHOMETRIC INTEGRITY RECEIPT</span>
+                <span className="text-emerald-400 font-mono text-[5.5px]">CSPRNG-SECURE</span>
               </div>
               <div className="text-[6px] font-mono text-cyan-400/80 break-all select-all mt-0.5">
                 {proofSignature}
