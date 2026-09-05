@@ -9,19 +9,8 @@
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="theme-color" content="#090d14" />
 
-  <!-- 嚴格 CSP：允許 WASM 編譯、Blob、Worker 與外聯 CDN -->
-  <meta http-equiv="Content-Security-Policy" content="
-    default-src 'self';
-    script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' 'unsafe-eval' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net;
-    style-src 'self' 'unsafe-inline';
-    img-src 'self' data: blob: https:;
-    font-src 'self' data: https://fonts.gstatic.com;
-    connect-src 'self' data: blob: https:;
-    worker-src 'self' blob:;
-    object-src 'none';
-    base-uri 'self';
-    form-action 'none';
-  " />
+  <!-- 嚴格 CSP：合在一行避免瀏覽器因換行截斷指令 -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' 'unsafe-eval' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data: https://fonts.gstatic.com; connect-src 'self' data: blob: https:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'none';" />
   <meta http-equiv="X-Content-Type-Options" content="nosniff" />
   <meta name="referrer" content="strict-origin-when-cross-origin" />
 
@@ -67,7 +56,7 @@
 </head>
 <body class="bg-[#090d14] text-slate-200 overflow-x-hidden select-none touch-manipulation overscroll-none min-h-screen">
   <div id="root"></div>
-  <script type="module" src="./src/main.tsx"></script>
+  <script type="module" src="/src/main.tsx"></script>
 
   <!-- 強固型 PWA 註冊與生命週期監聽 -->
   <script>
@@ -75,7 +64,6 @@
       window.addEventListener('load', () => {
         navigator.serviceWorker.register('./sw.js', { scope: './' })
           .then((registration) => {
-            // 監聽是否有新版本發布
             registration.addEventListener('updatefound', () => {
               const newWorker = registration.installing;
               if (newWorker) {
@@ -92,7 +80,6 @@
           });
       });
 
-      // 避免快取版本切換導致舊資產死鎖
       let refreshing = false;
       navigator.serviceWorker.addEventListener('controllerchange', () => {
         if (!refreshing) {
