@@ -9,7 +9,7 @@ import { VirtualGamepad } from './components/VirtualGamepad';
 import { useLearnerProfile, TierKey } from './hooks/useLearnerProfile';
 import { ChallengeCodec } from './utils/challengeCodec';
 
-// 匯入所有演算法生成器 (補齊至 16 款)
+// 匯入所有演算法生成器 (涵蓋全套 18 款謎題引擎)
 import { WebMazeGenerator } from './engines/mazeGenerator';
 import { WebSudokuGenerator } from './engines/sudokuGenerator';
 import { WebNonogramGenerator } from './engines/nonogramGenerator';
@@ -511,7 +511,7 @@ const MainDashboard: React.FC = () => {
           <div className="w-full p-1 bg-slate-900/60 border border-slate-800 rounded-xl shadow-2xl">
             <ErrorBoundary FallbackComponent={EngineFallbackUI} resetKeys={[selectedType, currentLevel, puzzleIndex]}>
               <PuzzleRenderer
-                key={`${selectedType}-${currentLevel}-${puzzleIndex}-${activePuzzle.checksum}`}
+                key={`${selectedType}-${currentLevel}-${puzzleIndex}-${activePuzzle.checksum || activePuzzle.id}`}
                 puzzle={activePuzzle}
                 tournamentMode={tournamentMode}
               />
