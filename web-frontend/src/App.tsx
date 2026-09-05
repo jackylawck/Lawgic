@@ -1,15 +1,15 @@
 // web-frontend/src/App.tsx
-import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useMemo, useRef, useEffect, useCallback, memo } from 'react';
 import { ErrorBoundary } from 'react-error-boundary';
 import { LanguageProvider, useLanguage } from './contexts/LanguageContext';
-import { PuzzleRenderer } from './registry/RendererRegistry';
+import { PuzzleRenderer, CognitiveDashboard } from './registry/RendererRegistry';
 import { PUZZLE_CATALOG, PuzzleEntity } from './generated';
 import { LangSwitcher } from './components/LangSwitcher';
 import { VirtualGamepad } from './components/VirtualGamepad';
 import { useLearnerProfile, TierKey } from './hooks/useLearnerProfile';
 import { ChallengeCodec } from './utils/challengeCodec';
 
-// 匯入演算法生成器
+// 匯入所有演算法生成器 (補齊至 16 款)
 import { WebMazeGenerator } from './engines/mazeGenerator';
 import { WebSudokuGenerator } from './engines/sudokuGenerator';
 import { WebNonogramGenerator } from './engines/nonogramGenerator';
@@ -24,6 +24,10 @@ import { WebFutoshikiGenerator } from './engines/futoshikiGenerator';
 import { WebHitoriGenerator } from './engines/hitoriGenerator';
 import { WebKakuroGenerator } from './engines/kakuroGenerator';
 import { WebMasyuGenerator } from './engines/masyuGenerator';
+import { WebDominoesGenerator } from './engines/dominoesGenerator';
+import { WebHeyawakeGenerator } from './engines/heyawakeGenerator';
+import { WebYajilinGenerator } from './engines/yajilinGenerator';
+import { WebShikakuGenerator } from './engines/shikakuGenerator';
 
 export type ExtendedTierKey = TierKey | 'legendary' | 'ultimate';
 
@@ -49,8 +53,10 @@ const ALL_GAMES: PuzzleMeta[] = [
   { id: 'hitori', nameZh: '孤島數壹', nameEn: 'Hitori', icon: '⬛' },
   { id: 'futoshiki', nameZh: '天平不等', nameEn: 'Futoshiki', icon: '⚖️' },
   { id: 'masyu', nameZh: '珍珠迴路', nameEn: 'Masyu', icon: '⚪' },
-  { id: 'jigsaw', nameZh: '幾何拼圖', nameEn: 'Jigsaw', icon: '🧩' },
   { id: 'dominoes', nameZh: '骨牌矩陣', nameEn: 'Dominoes', icon: '🀄' },
+  { id: 'heyawake', nameZh: '連環分室', nameEn: 'Heyawake', icon: '🚪' },
+  { id: 'yajilin', nameZh: '矢印迴路', nameEn: 'Yajilin', icon: '🧭' },
+  { id: 'shikaku', nameZh: '四角分割', nameEn: 'Shikaku', icon: '📐' },
 ];
 
 export const LEVEL_KEYS: ExtendedTierKey[] = ['kids', 'intermediate', 'expert', 'master', 'legendary', 'ultimate'];
@@ -75,6 +81,25 @@ const EngineFallbackUI: React.FC<{ resetErrorBoundary: () => void }> = ({ resetE
     </button>
   </div>
 );
+
+const PuzzleTimer: React.FC<{ activeId: string | undefined }> = memo(({ activeId }) => {
+  const [elapsed, setElapsed] = useState<number>(0);
+
+  useEffect(() => {
+    setElapsed(0);
+    const interval = setInterval(() => {
+      setElapsed((prev) => prev + 1);
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [activeId]);
+
+  return (
+    <span>
+      ⏱️ {String(Math.floor(elapsed / 60)).padStart(2, '0')}:{String(elapsed % 60).padStart(2, '0')}
+    </span>
+  );
+});
+PuzzleTimer.displayName = 'PuzzleTimer';
 
 function generateEnginePuzzle(gameId: string, tier: ExtendedTierKey): PuzzleEntity | null {
   try {
@@ -124,6 +149,18 @@ function generateEnginePuzzle(gameId: string, tier: ExtendedTierKey): PuzzleEnti
       case 'masyu':
         puzzle = WebMasyuGenerator.generate(tier as any);
         break;
+      case 'dominoes':
+        puzzle = WebDominoesGenerator.generate(baseTier);
+        break;
+      case 'heyawake':
+        puzzle = WebHeyawakeGenerator.generate(baseTier);
+        break;
+      case 'yajilin':
+        puzzle = WebYajilinGenerator.generate(tier as any);
+        break;
+      case 'shikaku':
+        puzzle = WebShikakuGenerator.generate(tier as any);
+        break;
       default:
         return null;
     }
@@ -143,6 +180,8 @@ function generateEnginePuzzle(gameId: string, tier: ExtendedTierKey): PuzzleEnti
   }
 }
 
+const MAX_CACHED_PUZZLES = 40;
+
 const MainDashboard: React.FC = () => {
   const { lang } = useLanguage();
   const isEn = lang === 'en';
@@ -152,30 +191,15 @@ const MainDashboard: React.FC = () => {
   const [currentLevel, setCurrentLevel] = useState<ExtendedTierKey>('kids');
   const [puzzleIndex, setPuzzleIndex] = useState<number>(0);
   const [tournamentMode, setTournamentMode] = useState<boolean>(false);
-  const [elapsed, setElapsed] = useState<number>(0);
+  const [showDashboardModal, setShowDashboardModal] = useState<boolean>(false);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState<boolean>(false);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const isGeneratingRef = useRef<boolean>(false);
 
   const [dynamicPuzzles, setDynamicPuzzles] = useState<Record<string, PuzzleEntity[]>>(() => {
-    const initialPool: Record<string, PuzzleEntity[]> = {
-      maze: [],
-      sudoku: [],
-      nonogram: [],
-      nurikabe: [],
-      skyscraper: [],
-      hashi: [],
-      kropki: [],
-      slitherlink: [],
-      tents: [],
-      lightup: [],
-      futoshiki: [],
-      hitori: [],
-      kakuro: [],
-      masyu: [],
-    };
+    const initialPool: Record<string, PuzzleEntity[]> = {};
+    ALL_GAMES.forEach((g) => { initialPool[g.id] = []; });
 
     try {
       const p = generateEnginePuzzle('maze', 'kids');
@@ -200,7 +224,7 @@ const MainDashboard: React.FC = () => {
   const activePuzzle = activeList.length > 0 ? activeList[puzzleIndex % activeList.length] : null;
 
   const appendBatchPuzzles = useCallback(
-    async (gameId: string, tier: ExtendedTierKey, count: number = 5) => {
+    async (gameId: string, tier: ExtendedTierKey, count: number = 3) => {
       if (isGeneratingRef.current) return;
       isGeneratingRef.current = true;
       setIsGenerating(true);
@@ -216,14 +240,19 @@ const MainDashboard: React.FC = () => {
         } catch (err) {
           console.warn(`Engine ${gameId} batch error:`, err);
         }
-        await new Promise((resolve) => setTimeout(resolve, 30));
+        await new Promise((resolve) => setTimeout(resolve, 20));
       }
 
       if (generated.length > 0) {
-        setDynamicPuzzles((prev) => ({
-          ...prev,
-          [gameId]: [...(prev[gameId] || []), ...generated],
-        }));
+        setDynamicPuzzles((prev) => {
+          const oldList = prev[gameId] || [];
+          const updated = [...oldList, ...generated];
+          const bounded = updated.length > MAX_CACHED_PUZZLES ? updated.slice(updated.length - MAX_CACHED_PUZZLES) : updated;
+          return {
+            ...prev,
+            [gameId]: bounded,
+          };
+        });
       }
 
       isGeneratingRef.current = false;
@@ -234,13 +263,13 @@ const MainDashboard: React.FC = () => {
 
   useEffect(() => {
     if (activeList.length < 2 && !isGeneratingRef.current) {
-      appendBatchPuzzles(selectedType, currentLevel, 5);
+      appendBatchPuzzles(selectedType, currentLevel, 3);
     }
   }, [selectedType, currentLevel, activeList.length, appendBatchPuzzles]);
 
   useEffect(() => {
     if (activeList.length > 0 && puzzleIndex >= activeList.length - 1 && !isGeneratingRef.current) {
-      appendBatchPuzzles(selectedType, currentLevel, 5);
+      appendBatchPuzzles(selectedType, currentLevel, 3);
     }
   }, [puzzleIndex, activeList.length, selectedType, currentLevel, appendBatchPuzzles]);
 
@@ -348,17 +377,6 @@ const MainDashboard: React.FC = () => {
   );
 
   useEffect(() => {
-    setElapsed(0);
-    if (timerRef.current) clearInterval(timerRef.current);
-    timerRef.current = setInterval(() => {
-      setElapsed((prev) => prev + 1);
-    }, 1000);
-    return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
-    };
-  }, [activePuzzle?.id]);
-
-  useEffect(() => {
     const handleGlobalKey = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
       if (e.key === '[' || e.key === 'PageUp') { e.preventDefault(); handlePrevPuzzle(); }
@@ -412,10 +430,25 @@ const MainDashboard: React.FC = () => {
         </div>
       )}
 
+      {showDashboardModal && (
+        <div className="fixed inset-0 z-50 bg-black/85 flex items-center justify-center p-2 sm:p-4 overflow-y-auto">
+          <div className="relative w-full max-w-4xl bg-slate-950 border border-slate-800 rounded-2xl shadow-2xl overflow-hidden my-auto">
+            <CognitiveDashboard onClose={() => setShowDashboardModal(false)} />
+          </div>
+        </div>
+      )}
+
       <div className="w-full max-w-sm sm:max-w-md flex items-center justify-between px-1 mb-1 text-[8px] text-slate-500">
         <div className="flex items-center gap-1.5">
-          <span className="font-bold text-cyan-400">IQ {cci.standardIQ}</span>
-          <span>(±{cci.semIQ})</span>
+          <button
+            onClick={() => setShowDashboardModal(true)}
+            className="flex items-center gap-1 hover:text-cyan-300 transition"
+            title={isEn ? 'Open Longitudinal Cognitive Dashboard' : '開啟全域縱向認知儀表板'}
+          >
+            <span className="font-bold text-cyan-400">IQ {cci.standardIQ}</span>
+            <span>(±{cci.semIQ})</span>
+            <span className="text-[7px] text-indigo-400 underline">📊</span>
+          </button>
           {profile.pureStreak >= 2 && (
             <span className="text-amber-300 font-bold">💎 ×{profile.pureStreak}</span>
           )}
@@ -539,7 +572,7 @@ const MainDashboard: React.FC = () => {
 
           <div className="mt-2 flex items-center justify-between w-full px-1 text-[9px] text-slate-500 border-t border-slate-800/80 pt-1.5">
             <div>
-              ⏱️ {String(Math.floor(elapsed / 60)).padStart(2, '0')}:{String(elapsed % 60).padStart(2, '0')}
+              <PuzzleTimer activeId={activePuzzle.id} />
             </div>
             <div>
               {isEn ? 'Puzzle' : '進度'}: {puzzleIndex + 1}/{activeList.length}
