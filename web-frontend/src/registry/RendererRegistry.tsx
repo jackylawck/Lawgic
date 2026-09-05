@@ -26,6 +26,7 @@ const MasyuBoard = lazy(() => import('../components/MasyuBoard').then(m => ({ de
 const DominoesBoard = lazy(() => import('../components/DominoesBoard').then(m => ({ default: m.DominoesBoard })));
 const HeyawakeBoard = lazy(() => import('../components/HeyawakeBoard').then(m => ({ default: m.HeyawakeBoard })));
 const YajilinBoard = lazy(() => import('../components/YajilinBoard').then(m => ({ default: m.YajilinBoard })));
+const ShikakuBoard = lazy(() => import('../components/ShikakuBoard').then(m => ({ default: m.ShikakuBoard })));
 
 // 認知儀表板懶載入
 export const CognitiveDashboard = lazy(() =>
@@ -54,6 +55,7 @@ export const RENDERERS: Record<string, React.ComponentType<BaseBoardProps>> = {
   dominoes: DominoesBoard,
   heyawake: HeyawakeBoard,
   yajilin: YajilinBoard,
+  shikaku: ShikakuBoard,
 };
 
 interface PuzzleRendererProps {
