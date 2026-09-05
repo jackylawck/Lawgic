@@ -40,7 +40,6 @@ export const KakuroBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMod
     Array.from({ length: rows }, () => Array(cols).fill(0))
   );
 
-  // 手動候選筆記模式矩陣：每個格子儲存使用者標記的候選數字集合 (Set<number>)
   const [manualNotes, setManualNotes] = useState<Record<string, number[]>>({});
   const [isNoteMode, setIsNoteMode] = useState<boolean>(false);
 
@@ -51,11 +50,9 @@ export const KakuroBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMod
   const [isFav, setIsFav] = useState<boolean>(false);
   const [sanctionedSig, setSanctionedSig] = useState<string>('');
 
-  // 錯誤時間序列追蹤
   const [errorLogs, setErrorLogs] = useState<ErrorLogItem[]>([]);
   const prevConflictCountRef = useRef<number>(0);
 
-  // 因果提示階梯狀態
   const [hintLevel, setHintLevel] = useState<number>(0);
   const [activeHint, setActiveHint] = useState<KakuroHintStep | null>(null);
 
@@ -111,14 +108,12 @@ export const KakuroBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMod
     return () => clearInterval(timer);
   }, [isCompleted, isTimeOut, tournamentMode, timeLimit]);
 
-  // 當前選中格的即時約束傳播候選數
   const currentCandidates = useMemo(() => {
     const [r, c] = selectedCell;
     if (initialGrid[r]?.[c]?.type !== 'white') return [];
     return WebKakuroGenerator.getCellCandidates(initialGrid, userGrid, rows, cols, r, c);
   }, [selectedCell, initialGrid, userGrid, rows, cols]);
 
-  // 即時衝突檢查與錯誤分類診斷
   const { conflicts, errorDiagnostics } = useMemo(() => {
     const set = new Set<string>();
     let duplicateCount = 0;
@@ -213,7 +208,6 @@ export const KakuroBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMod
     };
   }, [userGrid, initialGrid, rows, cols]);
 
-  // 記錄錯誤時間序列
   useEffect(() => {
     const currentCount = conflicts.size;
     if (currentCount > prevConflictCountRef.current) {
@@ -227,7 +221,6 @@ export const KakuroBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMod
     prevConflictCountRef.current = currentCount;
   }, [conflicts.size, accumulatedMs, errorDiagnostics]);
 
-  // 錯誤時間序列三分段診斷 (0-33%, 34-66%, 67-100%)
   const timelineAnalysis = useMemo(() => {
     const totalSpent = Math.max(1, Math.floor(accumulatedMs / 1000));
     const p1End = totalSpent / 3;
@@ -262,7 +255,6 @@ export const KakuroBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMod
     async (r: number, c: number, val: number) => {
       if (isCompleted || isTimeOut || initialGrid[r]?.[c]?.type !== 'white') return;
 
-      // 手動筆記模式
       if (isNoteMode) {
         if (val === 0) {
           setManualNotes((prev) => {
@@ -294,7 +286,6 @@ export const KakuroBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMod
           setIsCompleted(true);
           const timeSpent = Math.max(1, Math.round(accumulatedMs / 1000));
 
-          // 產生賽事防偽簽章
           generateSanctionedSignature(`KAKURO-${actualPuzzle?.id}-${timeSpent}-${seed}`).then(setSanctionedSig);
 
           if (actualPuzzle) {
@@ -330,7 +321,6 @@ export const KakuroBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMod
   );
 
   const handleRequestHint = useCallback(() => {
-    // 賽事規範模式禁用因果提示
     if (isCompleted || isTimeOut || tournamentMode) return;
     const step = WebKakuroGenerator.getNextForcedDeduction(initialGrid, userGrid, rows, cols);
     if (!step) return;
@@ -358,7 +348,6 @@ export const KakuroBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMod
     setIsFav(nextFav);
   };
 
-  // 全鍵盤操作
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (isCompleted || isTimeOut) return;
@@ -439,39 +428,39 @@ export const KakuroBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMod
         <div className="flex items-center gap-1">
           <button
             onClick={() => setIsNoteMode((prev) => !prev)}
-            className={`px-2 py-1 rounded border font-bold transition ${
+            className={`px-2 py-1 rounded border font-bold transition cursor-pointer ${
               isNoteMode
                 ? 'bg-amber-950 border-amber-400 text-amber-300 shadow-[0_0_8px_rgba(251,191,36,0.4)]'
                 : 'bg-slate-900 border-slate-700 text-slate-400'
             }`}
-            title="快捷鍵 [N]：切換筆記候選模式"
+            title={isEn ? 'Key [N]: Toggle manual candidate note mode' : '快捷鍵 [N]：切換筆記候選模式'}
           >
-            ✏️ 筆記模式: {isNoteMode ? 'ON' : 'OFF'}
+            ✏️ {isEn ? 'Notes' : '筆記模式'}: {isNoteMode ? (isEn ? 'ON' : '開啟') : (isEn ? 'OFF' : '關閉')}
           </button>
           <button
             onClick={() => setShowAutoCandidates((prev) => !prev)}
-            className={`px-1.5 py-1 rounded border ${
+            className={`px-1.5 py-1 rounded border cursor-pointer ${
               showAutoCandidates ? 'border-cyan-500 text-cyan-300 bg-cyan-950/60' : 'border-slate-800 text-slate-500 bg-slate-900'
             }`}
-            title="即時雙向候選數傳播提示"
+            title={isEn ? 'Toggle real-time candidate propagation guide' : '即時雙向候選數傳播提示'}
           >
-            🔍 傳播導引
+            🔍 {isEn ? 'Guide' : '傳播導引'}
           </button>
         </div>
 
         <div className="flex items-center gap-1 text-slate-400 font-semibold">
           {tournamentMode ? (
             <span className="text-amber-400 font-bold flex items-center gap-0.5">
-              🏆 WPF 賽事規範鎖定
+              🏆 {isEn ? 'WPF Sanctioned Locked' : 'WPF 賽事規範鎖定'}
             </span>
           ) : (
             <button
               onClick={handleToggleFavorite}
-              className={`px-1.5 py-0.5 rounded border ${
+              className={`px-1.5 py-0.5 rounded border transition cursor-pointer ${
                 isFav ? 'border-amber-500 text-amber-300 bg-amber-950' : 'border-slate-700 text-slate-500'
               }`}
             >
-              {isFav ? '★ 傳奇' : '☆ 收藏'}
+              {isFav ? (isEn ? '★ Vault' : '★ 傳奇') : (isEn ? '☆ Star' : '☆ 收藏')}
             </button>
           )}
           <span className="text-slate-600">|</span>
@@ -482,19 +471,19 @@ export const KakuroBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMod
       {/* 狀態進度看板 */}
       <div className="w-full grid grid-cols-3 gap-1 mb-2 text-[8px]">
         <div className="bg-slate-950 border border-slate-800 p-1 rounded text-center">
-          <div className="text-slate-500 text-[6.5px]">{tournamentMode ? '倒數' : '耗時'}</div>
+          <div className="text-slate-500 text-[6.5px]">{tournamentMode ? (isEn ? 'Countdown' : '倒數') : (isEn ? 'Time' : '耗時')}</div>
           <div className={`font-bold ${tournamentMode && remainingSec <= 30 ? 'text-rose-400 animate-pulse' : 'text-slate-200'}`}>
             {tournamentMode ? `${remainingSec}s` : `${(accumulatedMs / 1000).toFixed(1)}s`}
           </div>
         </div>
         <div className="bg-slate-950 border border-slate-800 p-1 rounded text-center">
-          <div className="text-slate-500 text-[6.5px]">分割熵 (Entropy)</div>
+          <div className="text-slate-500 text-[6.5px]">{isEn ? 'Partition Entropy' : '分割熵 (Entropy)'}</div>
           <div className="text-purple-300 font-bold">{entropy}</div>
         </div>
         <div className="bg-slate-950 border border-slate-800 p-1 rounded text-center">
-          <div className="text-slate-500 text-[6.5px]">衝突警示</div>
+          <div className="text-slate-500 text-[6.5px]">{isEn ? 'Conflict Status' : '衝突警示'}</div>
           <div className={`font-bold ${conflicts.size > 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
-            {conflicts.size > 0 ? `${conflicts.size} 處衝突` : 'OK'}
+            {conflicts.size > 0 ? `${conflicts.size} ${isEn ? 'Conflicts' : '處衝突'}` : 'OK'}
           </div>
         </div>
       </div>
@@ -502,7 +491,11 @@ export const KakuroBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMod
       {/* 雙向約束傳播候選導引條 */}
       {showAutoCandidates && initialGrid[selectedCell[0]]?.[selectedCell[1]]?.type === 'white' && (
         <div className="w-full mb-2 p-1.5 bg-slate-950/90 border border-cyan-700/60 rounded-lg text-[7.5px] text-slate-300 flex items-center justify-between animate-fade-in shadow">
-          <span className="font-bold text-cyan-400">格 [{selectedCell[0] + 1}, {selectedCell[1] + 1}] 雙向合法候選:</span>
+          <span className="font-bold text-cyan-400">
+            {isEn
+              ? `Cell [${selectedCell[0] + 1}, ${selectedCell[1] + 1}] Valid Partitions:`
+              : `格 [${selectedCell[0] + 1}, ${selectedCell[1] + 1}] 雙向合法候選:`}
+          </span>
           <div className="flex gap-1">
             {currentCandidates.length > 0 ? (
               currentCandidates.map((num) => (
@@ -511,7 +504,9 @@ export const KakuroBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMod
                 </span>
               ))
             ) : (
-              <span className="text-rose-400 font-bold">無合法分割組合</span>
+              <span className="text-rose-400 font-bold">
+                {isEn ? 'No Valid Partition' : '無合法分割組合'}
+              </span>
             )}
           </div>
         </div>
@@ -575,7 +570,6 @@ export const KakuroBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMod
                   {val !== 0 ? (
                     val
                   ) : notes.length > 0 ? (
-                    // 3x3 手動候選筆記矩陣
                     <div className="grid grid-cols-3 w-full h-full p-0.5 pointer-events-none">
                       {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => (
                         <span
@@ -605,7 +599,7 @@ export const KakuroBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMod
             <button
               key={`pad-${num}`}
               onClick={() => setDigit(selectedCell[0], selectedCell[1], num)}
-              className={`h-9 border text-sm font-bold rounded-lg transition shadow flex items-center justify-center ${
+              className={`h-9 border text-sm font-bold rounded-lg transition shadow flex items-center justify-center cursor-pointer ${
                 isNoteMode
                   ? 'bg-amber-950/60 border-amber-600 text-amber-300 active:bg-amber-900'
                   : 'bg-slate-900 border-slate-700 hover:border-cyan-400 active:bg-cyan-950 text-cyan-300'
@@ -616,8 +610,8 @@ export const KakuroBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMod
           ))}
           <button
             onClick={() => setDigit(selectedCell[0], selectedCell[1], 0)}
-            className="h-9 bg-slate-900 border border-slate-700 hover:border-rose-400 text-rose-400 font-bold text-sm rounded-lg transition shadow flex items-center justify-center"
-            title="清空"
+            className="h-9 bg-slate-900 border border-slate-700 hover:border-rose-400 text-rose-400 font-bold text-sm rounded-lg transition shadow flex items-center justify-center cursor-pointer"
+            title={isEn ? 'Clear' : '清空'}
           >
             ✕
           </button>
@@ -630,7 +624,7 @@ export const KakuroBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMod
           <button
             onClick={handleRequestHint}
             disabled={isCompleted || isTimeOut}
-            className="w-full py-1.5 text-xs font-bold rounded-lg border bg-slate-900 border-amber-500/50 text-amber-300 hover:bg-amber-950/40 transition flex items-center justify-center gap-1 shadow disabled:opacity-40"
+            className="w-full py-1.5 text-xs font-bold rounded-lg border bg-slate-900 border-amber-500/50 text-amber-300 hover:bg-amber-950/40 transition flex items-center justify-center gap-1 shadow disabled:opacity-40 cursor-pointer"
           >
             💡 {isEn ? 'Hint Ladder [H]' : '因果提示階梯 [H]'}
           </button>
@@ -640,14 +634,26 @@ export const KakuroBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMod
       {hintLevel > 0 && activeHint && (
         <div className="mt-2 p-2 rounded-xl text-center w-full max-w-[280px] font-mono border bg-slate-900/90 border-amber-500/60 text-slate-200 text-[8px]">
           <div className="text-[7.5px] font-bold text-amber-300 mb-0.5">
-            🔮 {isEn ? 'INTEGER PARTITION' : '數和密碼・因果推導'}
+            🔮 {isEn ? 'INTEGER PARTITION INFERENCE' : '數和密碼・因果推導'}
           </div>
           <div>
-            {hintLevel === 1 && <span>🔍 審視坐標 [{activeHint.r + 1}, {activeHint.c + 1}] 的雙向和數分割</span>}
-            {hintLevel === 2 && <span className="text-cyan-300 font-bold">⚡ {activeHint.humanReadable.zh}</span>}
+            {hintLevel === 1 && (
+              <span>
+                {isEn
+                  ? `🔍 Inspect intersecting sum constraints at [${activeHint.r + 1}, ${activeHint.c + 1}]`
+                  : `🔍 審視坐標 [${activeHint.r + 1}, ${activeHint.c + 1}] 的雙向和數分割`}
+              </span>
+            )}
+            {hintLevel === 2 && (
+              <span className="text-cyan-300 font-bold">
+                ⚡ {isEn ? (activeHint.humanReadable.en || activeHint.rationale) : activeHint.humanReadable.zh}
+              </span>
+            )}
             {hintLevel === 3 && (
               <span className="text-rose-400 font-extrabold">
-                🎯 目標格必然填入唯一解 {activeHint.forcedValue}！
+                {isEn
+                  ? `🎯 Target cell must strictly be ${activeHint.forcedValue}!`
+                  : `🎯 目標格必然填入唯一解 ${activeHint.forcedValue}！`}
               </span>
             )}
           </div>
@@ -657,22 +663,45 @@ export const KakuroBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMod
       {/* 結算面板：錯誤時間序列分析與 SHA-256 賽事認證 */}
       {isCompleted && (
         <div className="mt-2.5 p-3 bg-slate-950 border border-emerald-500/80 rounded-xl text-center w-full max-w-[320px] shadow-2xl font-mono animate-fade-in">
-          <div className="text-emerald-400 font-bold text-xs mb-0.5">KAKURO PARTITIONS BALANCED!</div>
+          <div className="text-emerald-400 font-bold text-xs mb-0.5 uppercase tracking-wider">
+            {isEn ? 'KAKURO PARTITIONS BALANCED!' : '數和密碼空間完全平衡！'}
+          </div>
 
           {/* 錯誤時間序列診斷 */}
           <div className="my-1.5 p-2 bg-slate-900/90 border border-slate-800 rounded text-left text-[7.5px]">
             <div className="text-purple-300 font-bold mb-1 flex items-center justify-between">
-              <span>⏱️ 錯誤時間序列 (Error Timeline)</span>
-              <span className="text-emerald-400 font-normal">總衝突: {errorLogs.length} 次</span>
+              <span>⏱️ {isEn ? 'Error Timeline Diagnostics' : '錯誤時間序列 (Error Timeline)'}</span>
+              <span className="text-emerald-400 font-normal">
+                {isEn ? `Total Conflicts: ${errorLogs.length}` : `總衝突: ${errorLogs.length} 次`}
+              </span>
             </div>
             <div className="grid grid-cols-3 gap-1 text-center py-1 bg-slate-950/80 rounded mb-1">
-              <div>前期 (0-33%): <strong className={timelineAnalysis.p1Errors > 0 ? 'text-amber-300' : 'text-emerald-400'}>{timelineAnalysis.p1Errors} 次</strong></div>
-              <div>中期 (34-66%): <strong className={timelineAnalysis.p2Errors > 0 ? 'text-amber-300' : 'text-emerald-400'}>{timelineAnalysis.p2Errors} 次</strong></div>
-              <div>後期 (67-100%): <strong className={timelineAnalysis.p3Errors > 0 ? 'text-rose-400' : 'text-emerald-400'}>{timelineAnalysis.p3Errors} 次</strong></div>
+              <div>
+                {isEn ? 'Early (0-33%):' : '前期 (0-33%):'}{' '}
+                <strong className={timelineAnalysis.p1Errors > 0 ? 'text-amber-300' : 'text-emerald-400'}>
+                  {timelineAnalysis.p1Errors} {isEn ? '' : '次'}
+                </strong>
+              </div>
+              <div>
+                {isEn ? 'Mid (34-66%):' : '中期 (34-66%):'}{' '}
+                <strong className={timelineAnalysis.p2Errors > 0 ? 'text-amber-300' : 'text-emerald-400'}>
+                  {timelineAnalysis.p2Errors} {isEn ? '' : '次'}
+                </strong>
+              </div>
+              <div>
+                {isEn ? 'Late (67-100%):' : '後期 (67-100%):'}{' '}
+                <strong className={timelineAnalysis.p3Errors > 0 ? 'text-rose-400' : 'text-emerald-400'}>
+                  {timelineAnalysis.p3Errors} {isEn ? '' : '次'}
+                </strong>
+              </div>
             </div>
             <div className="text-[6.5px] text-slate-400">
               {timelineAnalysis.p3Errors > timelineAnalysis.p1Errors
-                ? '⚠️ 診斷：後期工作記憶疲勞主導，建議加強收尾專注度。'
+                ? isEn
+                  ? '⚠️ Diagnosis: Late-stage working memory fatigue detected. Enhance endgame focus.'
+                  : '⚠️ 診斷：後期工作記憶疲勞主導，建議加強收尾專注度。'
+                : isEn
+                ? '✅ Diagnosis: Steady attentional control maintained across all phases.'
                 : '✅ 診斷：全流程專注度穩定，抑制控制保持良好。'}
             </div>
           </div>
@@ -680,13 +709,15 @@ export const KakuroBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMod
           {/* 賽事簽名 */}
           {sanctionedSig && (
             <div className="my-1 py-1 px-2 bg-slate-900 border border-indigo-700/60 rounded text-[7px] text-indigo-300 flex items-center justify-between">
-              <span>🛡️ SHA-256 賽事認證碼:</span>
+              <span>🛡️ {isEn ? 'SHA-256 Sanctioned Hash:' : 'SHA-256 賽事認證碼:'}</span>
               <span className="font-bold text-cyan-300">{sanctionedSig}</span>
             </div>
           )}
 
           <div className="text-[8.5px] text-slate-300 mb-1">
-            耗時: {(accumulatedMs / 1000).toFixed(2)}s | 分割熵: {entropy} | Gf: IQ {cci.standardIQ}
+            {isEn
+              ? `Time: ${(accumulatedMs / 1000).toFixed(2)}s | Partition Entropy: ${entropy} | Gf: IQ ${cci.standardIQ}`
+              : `耗時: ${(accumulatedMs / 1000).toFixed(2)}s | 分割熵: ${entropy} | Gf: IQ ${cci.standardIQ}`}
           </div>
         </div>
       )}
