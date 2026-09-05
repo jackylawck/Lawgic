@@ -23,6 +23,14 @@ class GlobalErrorBoundary extends React.Component<
   }
 
   handleReload = () => {
+    try {
+      // 真正清理可能導致持續白屏的臨時演算法快取，避免循環崩潰
+      sessionStorage.clear();
+      // 若有特定 puzzle 快取 key 亦在此一併清除
+      localStorage.removeItem('lawgic_active_board_state');
+    } catch {
+      // 忽略無存取權限情況
+    }
     window.location.reload();
   };
 
@@ -43,7 +51,7 @@ class GlobalErrorBoundary extends React.Component<
             </div>
             <button
               onClick={this.handleReload}
-              className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 active:scale-95 text-white font-bold text-xs rounded transition"
+              className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 active:scale-95 text-white font-bold text-xs rounded transition cursor-pointer"
             >
               重新整理平台 (Reload)
             </button>
@@ -53,6 +61,15 @@ class GlobalErrorBoundary extends React.Component<
     }
     return this.props.children;
   }
+}
+
+// 註冊 PWA Service Worker (支援離線題目運算與桌面/手機安裝)
+if ('serviceWorker' in navigator && import.meta.env.PROD) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js').catch((err) => {
+      console.warn('[PWA] Service Worker registration skipped:', err);
+    });
+  });
 }
 
 const rootElement = document.getElementById('root');
