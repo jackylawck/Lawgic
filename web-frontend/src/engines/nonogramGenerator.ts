@@ -1,441 +1,485 @@
-// web-frontend/src/engines/nonogramGenerator.ts
-import { PuzzleEntity, TierKey } from '../generated';
+// web-frontend/src/components/NonogramBoard.tsx
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { PuzzleEntity } from '../generated';
+import { useLanguage } from '../contexts/LanguageContext';
+import { useLearnerProfile } from '../hooks/useLearnerProfile';
+import { WebNonogramGenerator, NonogramHintStep } from '../engines/nonogramGenerator';
 
-export type ExtendedTierKey = TierKey | 'legendary' | 'ultimate';
-
-export interface NonogramHintStep {
-  step: number;
-  orientation: 'row' | 'col';
-  index: number;
-  targetCell: [number, number];
-  forcedState: 1 | 2; // 1: 必填黑, 2: 必標叉
-  technique: 'overlap' | 'boundary_extension' | 'space_exclusion' | 'exhaustion';
-  rationale: string;
-  humanReadable: {
-    zh: string;
-    en: string;
-  };
+interface NonogramBoardProps {
+  puzzle: PuzzleEntity;
+  puzzleData?: PuzzleEntity;
+  tournamentMode?: boolean;
 }
 
-export interface NonogramSpec {
-  rows: number;
-  cols: number;
-  rowClues: number[][];
-  colClues: number[][];
-  solution: boolean[][];
-  pureDeductionRate: number;
-  complexityScore: number;
-  tier: ExtendedTierKey;
-  seed: number;
-  solvingSteps?: NonogramHintStep[];
+type CellState = 0 | 1 | 2; // 0: 空白, 1: 填黑, 2: 標叉 (X)
+type InputMode = 'fill' | 'cross';
+
+interface HistoryState {
+  grid: CellState[][];
 }
 
-interface TierConfig {
-  rows: number;
-  cols: number;
-  density: number;
-  minPureRate: number;
-  baseIrt: number;
-}
+export const NonogramBoard: React.FC<NonogramBoardProps> = ({ puzzle, puzzleData, tournamentMode }) => {
+  const activePuzzle = puzzle || puzzleData;
+  const { lang } = useLanguage();
+  const isEn = lang === 'en';
+  const { recordAttempt } = useLearnerProfile();
 
-const TIER_SPECS: Record<ExtendedTierKey, TierConfig> = {
-  kids: { rows: 5, cols: 5, density: 0.55, minPureRate: 0.95, baseIrt: -0.6 },
-  intermediate: { rows: 6, cols: 6, density: 0.52, minPureRate: 0.90, baseIrt: 0.3 },
-  expert: { rows: 8, cols: 8, density: 0.50, minPureRate: 0.85, baseIrt: 1.2 },
-  master: { rows: 10, cols: 10, density: 0.48, minPureRate: 0.80, baseIrt: 2.2 },
-  legendary: { rows: 12, cols: 12, density: 0.46, minPureRate: 0.75, baseIrt: 3.0 },
-  ultimate: { rows: 15, cols: 15, density: 0.45, minPureRate: 0.70, baseIrt: 3.8 },
-};
+  // 1. 強韌雙向相容解構：徹底解決屬性未定義引發的 Crash
+  const rawSpec = (activePuzzle?.puzzle || {}) as any;
+  const rows: number = rawSpec.rows || rawSpec.solution?.length || 5;
+  const cols: number = rawSpec.cols || rawSpec.solution?.[0]?.length || 5;
 
-function mulberry32(a: number) {
-  return function () {
-    let t = (a += 0x6d2b79f5);
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
+  const rowClues: number[][] = useMemo(() => {
+    if (Array.isArray(rawSpec.rowClues)) return rawSpec.rowClues;
+    if (Array.isArray(rawSpec.row_clues)) return rawSpec.row_clues;
+    if (Array.isArray(rawSpec.hints?.rows)) return rawSpec.hints.rows;
+    return Array.from({ length: rows }, () => [0]);
+  }, [rawSpec, rows]);
 
-export class WebNonogramGenerator {
-  public static extractLineClues(line: boolean[]): number[] {
-    const clues: number[] = [];
-    let count = 0;
-    for (const cell of line) {
-      if (cell) {
-        count++;
-      } else if (count > 0) {
-        clues.push(count);
-        count = 0;
-      }
-    }
-    if (count > 0) clues.push(count);
-    return clues.length > 0 ? clues : [0];
-  }
+  const colClues: number[][] = useMemo(() => {
+    if (Array.isArray(rawSpec.colClues)) return rawSpec.colClues;
+    if (Array.isArray(rawSpec.col_clues)) return rawSpec.col_clues;
+    if (Array.isArray(rawSpec.hints?.cols)) return rawSpec.hints.cols;
+    return Array.from({ length: cols }, () => [0]);
+  }, [rawSpec, cols]);
 
-  /**
-   * 基於動態規劃 (DP) 的單行重疊與排除求解器
-   * 時間複雜度保證 O(L * B)，徹底解決遞迴超時與貪婪覆蓋誤判
-   */
-  public static getLineOverlap(
-    length: number,
-    clues: number[],
-    currentLine: number[]
-  ): number[] {
-    if (clues.length === 1 && clues[0] === 0) {
-      return Array(length).fill(2); // 全部標叉
-    }
+  // 2. 狀態矩陣與互動控制
+  const [grid, setGrid] = useState<CellState[][]>(() =>
+    Array.from({ length: rows }, () => Array(cols).fill(0))
+  );
+  const [activeTool, setActiveTool] = useState<InputMode>('fill');
+  const [isCompleted, setIsCompleted] = useState<boolean>(false);
+  const [hintStep, setHintStep] = useState<NonogramHintStep | null>(null);
+  const [conflictsCount, setConflictsCount] = useState<number>(0);
 
-    const numBlocks = clues.length;
-    // canBeBlack[i] 與 canBeWhite[i] 紀錄第 i 格是否存在至少一種合法可能
-    const canBeBlack = new Array<boolean>(length).fill(false);
-    const canBeWhite = new Array<boolean>(length).fill(false);
+  // 歷史棧 (Undo / Redo)
+  const [history, setHistory] = useState<HistoryState[]>([]);
+  const [redoStack, setRedoStack] = useState<HistoryState[]>([]);
 
-    // dp[i][j] 表示前 i 格能否恰好由前 j 個線索塊合法匹配
-    // j 範圍: 0 ~ numBlocks
-    const memo = new Map<string, boolean>();
+  // 拖曳劃線控制 Ref
+  const isMouseDownRef = useRef<boolean>(false);
+  const dragDrawValRef = useRef<CellState | null>(null);
+  const startTimeRef = useRef<number>(Date.now());
+  const hintCallsCountRef = useRef<number>(0);
+  const hintLogsRef = useRef<{ secFromStart: number; level: number }[]>([]);
 
-    const checkMatch = (idx: number, bIdx: number): boolean => {
-      const key = `${idx},${bIdx}`;
-      if (memo.has(key)) return memo.get(key)!;
+  // 3. 題目切換重置生命週期
+  useEffect(() => {
+    setGrid(Array.from({ length: rows }, () => Array(cols).fill(0)));
+    setHistory([]);
+    setRedoStack([]);
+    setIsCompleted(false);
+    setHintStep(null);
+    setConflictsCount(0);
+    startTimeRef.current = Date.now();
+    hintCallsCountRef.current = 0;
+    hintLogsRef.current = [];
+  }, [activePuzzle?.id, rows, cols]);
 
-      if (idx === length) {
-        const res = bIdx === numBlocks;
-        memo.set(key, res);
-        return res;
-      }
-
-      let possible = false;
-
-      // 嘗試在此格放白色/叉 (狀態 2 或 0 可轉白)
-      if (currentLine[idx] !== 1) {
-        if (checkMatch(idx + 1, bIdx)) {
-          canBeWhite[idx] = true;
-          possible = true;
-        }
-      }
-
-      // 嘗試在此格放置線索塊 clues[bIdx]
-      if (bIdx < numBlocks) {
-        const bLen = clues[bIdx];
-        if (idx + bLen <= length) {
-          let canFitBlock = true;
-          for (let k = 0; k < bLen; k++) {
-            if (currentLine[idx + k] === 2) { // 撞叉
-              canFitBlock = false;
-              break;
-            }
-          }
-
-          // 區塊後必須隔一格空位 (或已到行尾)
-          const nextIdx = idx + bLen;
-          if (canFitBlock) {
-            if (nextIdx === length) {
-              if (checkMatch(nextIdx, bIdx + 1)) {
-                for (let k = 0; k < bLen; k++) canBeBlack[idx + k] = true;
-                possible = true;
-              }
-            } else if (currentLine[nextIdx] !== 1) {
-              if (checkMatch(nextIdx + 1, bIdx + 1)) {
-                for (let k = 0; k < bLen; k++) canBeBlack[idx + k] = true;
-                canBeWhite[nextIdx] = true;
-                possible = true;
-              }
-            }
-          }
-        }
-      }
-
-      memo.set(key, possible);
-      return possible;
+  // 全域放開滑鼠/觸控監聽
+  useEffect(() => {
+    const handleGlobalMouseUp = () => {
+      isMouseDownRef.current = false;
+      dragDrawValRef.current = null;
     };
-
-    const isFeasible = checkMatch(0, 0);
-    if (!isFeasible) return Array(length).fill(0);
-
-    const result = new Array<number>(length).fill(0);
-    for (let i = 0; i < length; i++) {
-      if (canBeBlack[i] && !canBeWhite[i]) result[i] = 1;      // 必然為黑
-      else if (!canBeBlack[i] && canBeWhite[i]) result[i] = 2; // 必然為叉
-    }
-    return result;
-  }
-
-  public static getNextForcedDeduction(
-    rows: number,
-    cols: number,
-    rowClues: number[][],
-    colClues: number[][],
-    grid: number[][]
-  ): NonogramHintStep | null {
-    for (let r = 0; r < rows; r++) {
-      const overlap = this.getLineOverlap(cols, rowClues[r], grid[r]);
-      for (let c = 0; c < cols; c++) {
-        if (grid[r][c] === 0 && overlap[c] !== 0) {
-          const isBlack = overlap[c] === 1;
-          return {
-            step: 1,
-            orientation: 'row',
-            index: r,
-            targetCell: [r, c],
-            forcedState: overlap[c] as 1 | 2,
-            technique: isBlack ? 'overlap' : 'space_exclusion',
-            rationale: isBlack
-              ? `第 ${r + 1} 行線索 [${rowClues[r].join(', ')}] 極限位移重疊，此格必黑`
-              : `第 ${r + 1} 行線索 [${rowClues[r].join(', ')}] 空間無法容納任何線段，必標叉`,
-            humanReadable: {
-              zh: isBlack
-                ? `觀察第 ${r + 1} 行：根據線索 [${rowClues[r].join(', ')}] 的兩端極限滑動，此格處於重疊區（必填黑）。`
-                : `觀察第 ${r + 1} 行：根據線索 [${rowClues[r].join(', ')}]，沒有任何可能組合能覆蓋此格（必標叉）。`,
-              en: isBlack
-                ? `Inspect Row ${r + 1}: Line clues [${rowClues[r].join(', ')}] overlap forces this cell to be FILLED.`
-                : `Inspect Row ${r + 1}: Clues [${rowClues[r].join(', ')}] cannot reach here; must be CROSSED.`,
-            },
-          };
-        }
-      }
-    }
-
-    for (let c = 0; c < cols; c++) {
-      const colLine = Array.from({ length: rows }, (_, r) => grid[r][c]);
-      const overlap = this.getLineOverlap(rows, colClues[c], colLine);
-      for (let r = 0; r < rows; r++) {
-        if (grid[r][c] === 0 && overlap[r] !== 0) {
-          const isBlack = overlap[r] === 1;
-          return {
-            step: 1,
-            orientation: 'col',
-            index: c,
-            targetCell: [r, c],
-            forcedState: overlap[r] as 1 | 2,
-            technique: isBlack ? 'overlap' : 'space_exclusion',
-            rationale: isBlack
-              ? `第 ${c + 1} 列線索 [${colClues[c].join(', ')}] 極限重疊必黑`
-              : `第 ${c + 1} 列線索 [${colClues[c].join(', ')}] 空間排除必標叉`,
-            humanReadable: {
-              zh: isBlack
-                ? `觀察第 ${c + 1} 列：根據線索 [${colClues[c].join(', ')}] 的重疊交集，此格必為黑色。`
-                : `觀察第 ${c + 1} 列：根據線索 [${colClues[c].join(', ')}]，此處空間無法容納任何線段，必標叉號。`,
-              en: isBlack
-                ? `Inspect Col ${c + 1}: Clues [${colClues[c].join(', ')}] force this intersection to be FILLED.`
-                : `Inspect Col ${c + 1}: Clues [${colClues[c].join(', ')}] exclude this cell; must be CROSSED.`,
-            },
-          };
-        }
-      }
-    }
-
-    return null;
-  }
-
-  private static evaluateSolvability(
-    rows: number,
-    cols: number,
-    rowClues: number[][],
-    colClues: number[][]
-  ): { unique: boolean; pureRate: number } {
-    const grid: number[][] = Array.from({ length: rows }, () => Array(cols).fill(0));
-    let changed = true;
-    let deducedCells = 0;
-    let iterations = 0;
-
-    // 波前推進
-    while (changed && iterations < 30) {
-      changed = false;
-      iterations++;
-
-      for (let r = 0; r < rows; r++) {
-        const overlap = this.getLineOverlap(cols, rowClues[r], grid[r]);
-        for (let c = 0; c < cols; c++) {
-          if (grid[r][c] === 0 && overlap[c] !== 0) {
-            grid[r][c] = overlap[c];
-            deducedCells++;
-            changed = true;
-          }
-        }
-      }
-
-      for (let c = 0; c < cols; c++) {
-        const currentCol = Array.from({ length: rows }, (_, r) => grid[r][c]);
-        const overlap = this.getLineOverlap(rows, colClues[c], currentCol);
-        for (let r = 0; r < rows; r++) {
-          if (grid[r][c] === 0 && overlap[r] !== 0) {
-            grid[r][c] = overlap[r];
-            deducedCells++;
-            changed = true;
-          }
-        }
-      }
-    }
-
-    const totalCells = rows * cols;
-    const pureRate = Number((deducedCells / totalCells).toFixed(2));
-
-    if (pureRate >= 0.96) {
-      return { unique: true, pureRate: 1.0 };
-    }
-
-    // 嚴謹熔斷判定：步數耗盡視為非唯一解，杜絕偽唯一解外洩
-    let solutionCount = 0;
-    let stepBudget = 300;
-    let budgetExhausted = false;
-
-    const solveBacktrack = (r: number, c: number): void => {
-      if (solutionCount >= 2) return;
-      if (stepBudget <= 0) {
-        budgetExhausted = true;
-        return;
-      }
-      stepBudget--;
-
-      if (r === rows) {
-        for (let j = 0; j < cols; j++) {
-          const colLine = Array.from({ length: rows }, (_, i) => grid[i][j] === 1);
-          const clue = this.extractLineClues(colLine);
-          if (clue.join(',') !== colClues[j].join(',')) return;
-        }
-        solutionCount++;
-        return;
-      }
-
-      const nextR = c === cols - 1 ? r + 1 : r;
-      const nextC = c === cols - 1 ? 0 : c + 1;
-
-      if (grid[r][c] !== 0) {
-        solveBacktrack(nextR, nextC);
-        return;
-      }
-
-      for (const val of [1, 2]) {
-        grid[r][c] = val;
-        if (c === cols - 1) {
-          const rowLine = grid[r].map((v) => v === 1);
-          if (this.extractLineClues(rowLine).join(',') !== rowClues[r].join(',')) {
-            grid[r][c] = 0;
-            continue;
-          }
-        }
-
-        solveBacktrack(nextR, nextC);
-        grid[r][c] = 0;
-        if (solutionCount >= 2 || budgetExhausted) return;
-      }
+    window.addEventListener('mouseup', handleGlobalMouseUp);
+    window.addEventListener('touchend', handleGlobalMouseUp);
+    return () => {
+      window.removeEventListener('mouseup', handleGlobalMouseUp);
+      window.removeEventListener('touchend', handleGlobalMouseUp);
     };
+  }, []);
 
-    solveBacktrack(0, 0);
+  // 4. 即時線索完成態判定 (滿足線索即高亮劃除)
+  const rowStatus = useMemo(() => {
+    return Array.from({ length: rows }, (_, r) => {
+      const line = grid[r].map((cell) => cell === 1);
+      const extracted = WebNonogramGenerator.extractLineClues(line);
+      return extracted.join(',') === (rowClues[r] || [0]).join(',');
+    });
+  }, [grid, rows, rowClues]);
 
-    // 步數耗盡時判定為不確定（視為無唯一解以保障品質）
-    const isStrictlyUnique = !budgetExhausted && solutionCount === 1;
-    return { unique: isStrictlyUnique, pureRate };
-  }
+  const colStatus = useMemo(() => {
+    return Array.from({ length: cols }, (_, c) => {
+      const line = Array.from({ length: rows }, (_, r) => grid[r][c] === 1);
+      const extracted = WebNonogramGenerator.extractLineClues(line);
+      return extracted.join(',') === (colClues[c] || [0]).join(',');
+    });
+  }, [grid, rows, cols, colClues]);
 
-  public static generate(tier: ExtendedTierKey = 'kids', inputSeed?: number): PuzzleEntity {
-    const config = TIER_SPECS[tier] || TIER_SPECS.kids;
-    const { rows, cols, density, minPureRate, baseIrt } = config;
-
-    const actualSeed = inputSeed !== undefined ? inputSeed : Math.floor(Math.random() * 0x7fffffff);
-    const rnd = mulberry32(actualSeed);
-
-    let attempts = 0;
-    const maxAttempts = tier === 'ultimate' ? 20 : tier === 'legendary' ? 25 : 35;
-
-    while (attempts < maxAttempts) {
-      attempts++;
-
-      // 對稱矩陣生成，天然提高線索約束重疊率
-      const solution: boolean[][] = Array.from({ length: rows }, () => Array(cols).fill(false));
+  // 5. 勝利驗證與心理計量回傳
+  const checkVictory = useCallback(
+    (currentGrid: CellState[][]) => {
       for (let r = 0; r < rows; r++) {
-        for (let c = 0; c < Math.ceil(cols / 2); c++) {
-          const isFilled = rnd() < density;
-          solution[r][c] = isFilled;
-          solution[r][cols - 1 - c] = isFilled;
-        }
+        const line = currentGrid[r].map((cell) => cell === 1);
+        const extracted = WebNonogramGenerator.extractLineClues(line);
+        if (extracted.join(',') !== (rowClues[r] || [0]).join(',')) return false;
       }
-
-      const rowClues = solution.map((row) => this.extractLineClues(row));
-      const colClues: number[][] = [];
       for (let c = 0; c < cols; c++) {
-        colClues.push(this.extractLineClues(solution.map((row) => row[c])));
+        const line = Array.from({ length: rows }, (_, r) => currentGrid[r][c] === 1);
+        const extracted = WebNonogramGenerator.extractLineClues(line);
+        if (extracted.join(',') !== (colClues[c] || [0]).join(',')) return false;
       }
+      return true;
+    },
+    [rows, cols, rowClues, colClues]
+  );
 
-      const evaluation = this.evaluateSolvability(rows, cols, rowClues, colClues);
-      if (!evaluation.unique || evaluation.pureRate < minPureRate) {
-        continue;
-      }
+  const triggerVictory = useCallback(
+    (finalGrid: CellState[][]) => {
+      setIsCompleted(true);
+      if (navigator.vibrate) navigator.vibrate([40, 60, 40, 80]);
 
-      const totalClueNumbers = [...rowClues, ...colClues].reduce((sum, list) => sum + list.length, 0);
-      const dynamicIrt = Number((baseIrt + (1 - evaluation.pureRate) * 0.8 + (totalClueNumbers / (rows + cols)) * 0.2).toFixed(2));
-      const puzzleId = `nonogram_${tier}_s${actualSeed}`;
+      const timeSpentSec = Math.max(1, Math.round((Date.now() - startTimeRef.current) / 1000));
+      const isPure = hintCallsCountRef.current === 0;
 
-      const spec: NonogramSpec = {
-        rows,
-        cols,
-        rowClues,
-        colClues,
-        solution,
-        pureDeductionRate: evaluation.pureRate,
-        complexityScore: totalClueNumbers,
-        tier,
-        seed: actualSeed,
-      };
-
-      return {
-        id: puzzleId,
-        category: 'spatial_logic' as any,
-        engine_type: 'nonogram',
-        tier: (tier === 'ultimate' || tier === 'legendary' ? 'master' : tier) as TierKey,
-        checksum: `NONOGRAM_${rows}x${cols}_${tier.toUpperCase()}_S${actualSeed}`,
-        puzzle: spec as any,
-        solution: solution as any,
-        cognitiveLoad: {
-          spatial: Number(Math.min(1.0, 0.4 + (rows * cols) / 150).toFixed(2)),
-          numeric: Number(Math.min(1.0, 0.3 + (totalClueNumbers / 30) * 0.5).toFixed(2)),
-          workingMemory: Number(Math.min(1.0, 0.5 + (1 - evaluation.pureRate) * 0.5).toFixed(2)),
-          inhibition: 0.9,
+      // 串接全局縱向常模寫入
+      recordAttempt({
+        puzzleId: activePuzzle?.id || `nonogram_${rows}x${cols}_${Date.now()}`,
+        engineType: 'nonogram',
+        tier: activePuzzle?.tier || 'kids',
+        cognitiveLoad: activePuzzle?.cognitiveLoad || {
+          spatial: 0.75,
+          numeric: 0.65,
+          workingMemory: 0.70,
+          inhibition: 0.85,
         },
-        metrics: {
-          estimated_time_sec: Math.max(20, rows * cols * 2),
-          irt_logit_difficulty: dynamicIrt,
-          human_sim_steps: rows * cols,
-          seed: actualSeed,
-        } as any,
-      };
+        isSuccess: true,
+        timeSpentSec,
+        conflictsCount,
+        isPureModeAttempt: isPure,
+        isPureClear: isPure,
+        hintLogs: hintLogsRef.current,
+        irtDifficulty: activePuzzle?.metrics?.irt_logit_difficulty || 1.2,
+      });
+    },
+    [activePuzzle, rows, cols, conflictsCount, recordAttempt]
+  );
+
+  // 6. 核心塗色與網格更新邏輯
+  const applyCellMutation = useCallback(
+    (r: number, c: number, targetVal: CellState, isStartAction = false) => {
+      if (isCompleted) return;
+
+      setGrid((prev) => {
+        const prevVal = prev[r][c];
+        if (prevVal === targetVal) return prev;
+
+        if (isStartAction) {
+          setHistory((hist) => [...hist.slice(-25), { grid: prev.map((row) => [...row]) }]);
+          setRedoStack([]);
+        }
+
+        const next = prev.map((row, rowIdx) =>
+          rowIdx === r ? [...row] : row
+        );
+        next[r][c] = targetVal;
+
+        // 如果點中的格子與題目底層真實答案相斥，累計衝突指標
+        if (rawSpec.solution && rawSpec.solution[r]) {
+          const isCorrectBlack = rawSpec.solution[r][c];
+          if ((targetVal === 1 && !isCorrectBlack) || (targetVal === 2 && isCorrectBlack)) {
+            setConflictsCount((cnt) => cnt + 1);
+          }
+        }
+
+        if (checkVictory(next)) {
+          triggerVictory(next);
+        }
+
+        return next;
+      });
+    },
+    [isCompleted, rawSpec.solution, checkVictory, triggerVictory]
+  );
+
+  // 滑鼠操作 handlers
+  const handleMouseDown = (r: number, c: number, e: React.MouseEvent) => {
+    if (isCompleted || e.button === 1) return;
+    e.preventDefault();
+
+    isMouseDownRef.current = true;
+    const currentVal = grid[r][c];
+    let nextVal: CellState = 0;
+
+    // 右鍵或 Alt 鍵快速標叉
+    if (e.button === 2 || e.altKey) {
+      nextVal = currentVal === 2 ? 0 : 2;
+    } else {
+      // 根據當前切換工具
+      if (activeTool === 'fill') {
+        nextVal = currentVal === 1 ? 0 : 1;
+      } else {
+        nextVal = currentVal === 2 ? 0 : 2;
+      }
     }
 
-    // 兜底保底題目（幾何鑽石對稱圖案）
-    const fallbackSize = rows;
-    const fallbackSolution: boolean[][] = Array.from({ length: fallbackSize }, (_, r) =>
-      Array.from({ length: cols }, (_, c) => {
-        const midR = (fallbackSize - 1) / 2;
-        const midC = (cols - 1) / 2;
-        return Math.abs(r - midR) + Math.abs(c - midC) <= Math.floor(fallbackSize * 0.45);
-      })
-    );
+    dragDrawValRef.current = nextVal;
+    applyCellMutation(r, c, nextVal, true);
+  };
 
-    const fbRowClues = fallbackSolution.map((r) => this.extractLineClues(r));
-    const fbColClues = Array.from({ length: cols }, (_, c) =>
-      this.extractLineClues(fallbackSolution.map((r) => r[c]))
-    );
+  const handleMouseEnter = (r: number, c: number) => {
+    if (!isMouseDownRef.current || dragDrawValRef.current === null || isCompleted) return;
+    applyCellMutation(r, c, dragDrawValRef.current, false);
+  };
 
-    return {
-      id: `nonogram_${tier}_s${actualSeed}_fallback`,
-      category: 'spatial_logic' as any,
-      engine_type: 'nonogram',
-      tier: (tier === 'ultimate' || tier === 'legendary' ? 'master' : tier) as TierKey,
-      checksum: `NONOGRAM_FALLBACK_${actualSeed}`,
-      puzzle: {
-        rows,
-        cols,
-        rowClues: fbRowClues,
-        colClues: fbColClues,
-        solution: fallbackSolution,
-        pureDeductionRate: 1.0,
-        complexityScore: rows + cols,
-        tier,
-        seed: actualSeed,
-      } as unknown as NonogramSpec,
-      solution: fallbackSolution as any,
-      cognitiveLoad: { spatial: 0.8, numeric: 0.5, workingMemory: 0.6, inhibition: 0.85 },
-      metrics: { estimated_time_sec: rows * cols, irt_logit_difficulty: config.baseIrt, seed: actualSeed } as any,
+  // 觸控滑動支援 (Touch Move)
+  const handleTouchMove = (e: React.TouchEvent) => {
+    if (!isMouseDownRef.current || dragDrawValRef.current === null || isCompleted) return;
+    const touch = e.touches[0];
+    const elem = document.elementFromPoint(touch.clientX, touch.clientY);
+    if (!elem) return;
+
+    const rStr = elem.getAttribute('data-r');
+    const cStr = elem.getAttribute('data-c');
+    if (rStr !== null && cStr !== null) {
+      applyCellMutation(parseInt(rStr, 10), parseInt(cStr, 10), dragDrawValRef.current, false);
+    }
+  };
+
+  // 7. 復原 / 重做 (Undo / Redo)
+  const handleUndo = useCallback(() => {
+    if (history.length === 0 || isCompleted) return;
+    const previous = history[history.length - 1];
+    setRedoStack((prev) => [{ grid: grid.map((r) => [...r]) }, ...prev]);
+    setGrid(previous.grid);
+    setHistory((prev) => prev.slice(0, prev.length - 1));
+  }, [history, grid, isCompleted]);
+
+  const handleRedo = useCallback(() => {
+    if (redoStack.length === 0 || isCompleted) return;
+    const next = redoStack[0];
+    setHistory((prev) => [...prev, { grid: grid.map((r) => [...r]) }]);
+    setGrid(next.grid);
+    setRedoStack((prev) => prev.slice(1));
+  }, [redoStack, grid, isCompleted]);
+
+  // 鍵盤快捷鍵 (Ctrl+Z / Ctrl+Y / Space 切換工具)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'z') {
+        e.preventDefault();
+        if (e.shiftKey) handleRedo();
+        else handleUndo();
+      } else if ((e.metaKey || e.ctrlKey) && e.key === 'y') {
+        e.preventDefault();
+        handleRedo();
+      } else if (e.key === ' ' || e.key === 'Tab') {
+        e.preventDefault();
+        setActiveTool((prev) => (prev === 'fill' ? 'cross' : 'fill'));
+      }
     };
-  }
-}
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [handleUndo, handleRedo]);
+
+  // 8. 演算法因果演繹單步提示
+  const handleRequestHint = () => {
+    if (isCompleted) return;
+    const hint = WebNonogramGenerator.getNextForcedDeduction(rows, cols, rowClues, colClues, grid);
+    setHintStep(hint);
+
+    hintCallsCountRef.current += 1;
+    const secFromStart = Math.round((Date.now() - startTimeRef.current) / 1000);
+    hintLogsRef.current.push({ secFromStart, level: 1 });
+
+    if (hint && navigator.vibrate) navigator.vibrate(25);
+  };
+
+  const handleApplyHintStep = () => {
+    if (!hintStep) return;
+    const [hr, hc] = hintStep.targetCell;
+    applyCellMutation(hr, hc, hintStep.forcedState, true);
+    setHintStep(null);
+  };
+
+  return (
+    <div
+      className="flex flex-col items-center select-none w-full max-w-xl mx-auto p-1 sm:p-2 touch-none"
+      onContextMenu={(e) => e.preventDefault()}
+      onTouchMove={handleTouchMove}
+    >
+      {/* 提示訊息橫額 */}
+      {hintStep && (
+        <div className="w-full mb-2 p-2.5 bg-indigo-950/90 border border-indigo-500/70 rounded-xl text-indigo-200 text-xs shadow-xl animate-fade-in font-mono">
+          <div className="flex items-center justify-between font-bold mb-1.5 text-indigo-300">
+            <span className="flex items-center gap-1">
+              <span>💡</span>
+              <span>{isEn ? 'Logical Deduction Step' : '演繹推導單步指引'}</span>
+            </span>
+            <button
+              onClick={() => setHintStep(null)}
+              className="px-1.5 py-0.5 rounded text-slate-400 hover:text-white hover:bg-indigo-900/60 transition"
+            >
+              ✕
+            </button>
+          </div>
+          <p className="text-[11px] text-slate-300 leading-relaxed mb-2">
+            {isEn ? hintStep.humanReadable.en : hintStep.humanReadable.zh}
+          </p>
+          <div className="flex justify-end gap-2">
+            <button
+              onClick={handleApplyHintStep}
+              className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[10px] rounded transition"
+            >
+              {isEn ? 'Apply Deduction' : '直接填入推論'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* 勝利慶祝標誌 */}
+      {isCompleted && (
+        <div className="w-full mb-2 p-2 bg-emerald-950/90 border border-emerald-500 text-emerald-300 font-bold text-xs rounded-xl shadow-2xl flex items-center justify-center gap-2 animate-victory-pulse font-mono">
+          <span>🎉</span>
+          <span>{isEn ? 'Nonogram Solved & Sanctioned!' : '像素數織拓撲完美復原！'}</span>
+        </div>
+      )}
+
+      {/* 互動工具列 (Tool Bar) */}
+      <div className="flex items-center justify-between w-full max-w-sm mb-2 px-1 text-xs">
+        <div className="flex items-center gap-1.5">
+          <button
+            onClick={() => setActiveTool('fill')}
+            className={`flex items-center gap-1 px-3 py-1 rounded border transition font-bold ${
+              activeTool === 'fill'
+                ? 'bg-indigo-600 border-indigo-400 text-white shadow-sm'
+                : 'bg-slate-900 border-slate-700 text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <span>◼</span>
+            <span>{isEn ? 'Fill' : '填黑'}</span>
+          </button>
+          <button
+            onClick={() => setActiveTool('cross')}
+            className={`flex items-center gap-1 px-3 py-1 rounded border transition font-bold ${
+              activeTool === 'cross'
+                ? 'bg-rose-900/80 border-rose-500 text-rose-200 shadow-sm'
+                : 'bg-slate-900 border-slate-700 text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <span>✕</span>
+            <span>{isEn ? 'Cross' : '排叉'}</span>
+          </button>
+        </div>
+
+        <div className="flex items-center gap-1">
+          <button
+            onClick={handleUndo}
+            disabled={history.length === 0 || isCompleted}
+            className="px-2 py-1 bg-slate-900 border border-slate-700 rounded text-slate-400 hover:text-slate-200 disabled:opacity-40 disabled:cursor-not-allowed text-[10px] font-mono"
+            title="Undo (Ctrl+Z)"
+          >
+            ⤺
+          </button>
+          <button
+            onClick={handleRedo}
+            disabled={redoStack.length === 0 || isCompleted}
+            className="px-2 py-1 bg-slate-900 border border-slate-700 rounded text-slate-400 hover:text-slate-200 disabled:opacity-40 disabled:cursor-not-allowed text-[10px] font-mono"
+            title="Redo (Ctrl+Y)"
+          >
+            ⤻
+          </button>
+        </div>
+      </div>
+
+      {/* 數織棋盤主體與自適應外圍線索佈局 */}
+      <div className="relative inline-block bg-slate-950 p-2 sm:p-3 rounded-2xl border border-slate-800 shadow-2xl overflow-x-auto max-w-full">
+        <div
+          className="grid gap-[2px] sm:gap-1"
+          style={{
+            gridTemplateColumns: `auto repeat(${cols}, minmax(22px, 32px))`,
+            gridTemplateRows: `auto repeat(${rows}, minmax(22px, 32px))`,
+          }}
+        >
+          {/* 左上空白交會處 */}
+          <div className="bg-slate-900/50 rounded-tl-lg flex items-center justify-center p-1 border-r border-b border-slate-800">
+            <span className="text-[8px] text-slate-600 font-mono">LAWGIC</span>
+          </div>
+
+          {/* 頂部縱列線索 (Col Clues) */}
+          {colClues.map((clue, cIdx) => (
+            <div
+              key={`col-clue-${cIdx}`}
+              className={`flex flex-col items-center justify-end pb-1 px-0.5 bg-slate-900/40 border-b border-slate-700/80 text-[9px] sm:text-[10px] font-mono transition ${
+                colStatus[cIdx] ? 'text-slate-600 line-through' : 'text-cyan-300'
+              } ${cIdx % 5 === 4 && cIdx !== cols - 1 ? 'border-r-2 border-r-slate-700' : ''}`}
+            >
+              {clue.map((n, i) => (
+                <span key={i} className="py-[1px] leading-tight">{n}</span>
+              ))}
+            </div>
+          ))}
+
+          {/* 棋盤主體與左側行線索 (Row Clues) */}
+          {Array.from({ length: rows }).map((_, rIdx) => (
+            <React.Fragment key={`row-wrap-${rIdx}`}>
+              {/* 左側橫行線索 */}
+              <div
+                className={`flex items-center justify-end pr-1.5 bg-slate-900/40 border-r border-slate-700/80 text-[9px] sm:text-[10px] font-mono transition gap-1 ${
+                  rowStatus[rIdx] ? 'text-slate-600 line-through' : 'text-cyan-300'
+                } ${rIdx % 5 === 4 && rIdx !== rows - 1 ? 'border-b-2 border-b-slate-700' : ''}`}
+              >
+                {(rowClues[rIdx] || [0]).map((n, i) => (
+                  <span key={i}>{n}</span>
+                ))}
+              </div>
+
+              {/* 格子點陣 */}
+              {Array.from({ length: cols }).map((_, cIdx) => {
+                const cellState = grid[rIdx]?.[cIdx] || 0;
+                const isHintTarget = hintStep?.targetCell?.[0] === rIdx && hintStep?.targetCell?.[1] === cIdx;
+                const isThickBorderBottom = rIdx % 5 === 4 && rIdx !== rows - 1;
+                const isThickBorderRight = cIdx % 5 === 4 && cIdx !== cols - 1;
+
+                return (
+                  <button
+                    key={`cell-${rIdx}-${cIdx}`}
+                    data-r={rIdx}
+                    data-c={cIdx}
+                    onMouseDown={(e) => handleMouseDown(rIdx, cIdx, e)}
+                    onMouseEnter={() => handleMouseEnter(rIdx, cIdx)}
+                    className={`relative flex items-center justify-center rounded-[3px] transition text-xs font-bold ${
+                      cellState === 1
+                        ? 'bg-indigo-500 text-transparent border border-indigo-400 shadow-inner'
+                        : cellState === 2
+                        ? 'bg-slate-900 text-rose-400 border border-slate-800'
+                        : 'bg-slate-900/90 hover:bg-slate-800 border border-slate-800/80 text-transparent'
+                    } ${isHintTarget ? 'ring-2 ring-amber-400 animate-pulse z-10' : ''} ${
+                      isThickBorderBottom ? 'border-b-2 border-b-slate-600' : ''
+                    } ${isThickBorderRight ? 'border-r-2 border-r-slate-600' : ''}`}
+                  >
+                    {cellState === 2 ? '✕' : ''}
+                  </button>
+                );
+              })}
+            </React.Fragment>
+          ))}
+        </div>
+      </div>
+
+      {/* 底部功能與重設按鈕 */}
+      {!tournamentMode && (
+        <div className="mt-3 flex gap-2">
+          <button
+            onClick={handleRequestHint}
+            disabled={isCompleted}
+            className="px-3.5 py-1.5 bg-indigo-950/80 hover:bg-indigo-900 border border-indigo-700/60 text-indigo-300 text-[10px] font-mono rounded-lg shadow transition disabled:opacity-40"
+          >
+            💡 {isEn ? 'Logical Hint' : '單步演繹提示'}
+          </button>
+          <button
+            onClick={() => {
+              setHistory((hist) => [...hist, { grid: grid.map((r) => [...r]) }]);
+              setGrid(Array.from({ length: rows }, () => Array(cols).fill(0)));
+            }}
+            disabled={isCompleted}
+            className="px-3.5 py-1.5 bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-400 text-[10px] font-mono rounded-lg transition disabled:opacity-40"
+          >
+            ↺ {isEn ? 'Clear Grid' : '清空盤面'}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+};
