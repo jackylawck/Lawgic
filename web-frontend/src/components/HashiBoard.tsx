@@ -1,9 +1,8 @@
 // web-frontend/src/components/HashiBoard.tsx
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { PuzzleEntity } from '../generated';
-import { useLearnerProfile, TierKey } from '../hooks/useLearnerProfile';
+import { PuzzleEntity, TierKey } from '../generated';
+import { useLearnerProfile } from '../hooks/useLearnerProfile';
 import { useLanguage } from '../contexts/LanguageContext';
-import { HashiIsland, HashiHintStep, HashiBridge } from '../engines/hashiGenerator';
 import { MetricErrorBar } from './MetricErrorBar';
 import { CognitiveRadarChart } from './CognitiveRadarChart';
 import { PBCelebrationModal } from './PBCelebrationModal';
@@ -16,19 +15,53 @@ interface Props {
   tournamentMode?: boolean;
 }
 
-interface HintLogEntry {
-  timestamp: number;
-  secFromStart: number;
-  level: number;
-  targetIslandId: number;
+export interface Island {
+  id: number;
+  r: number;
+  c: number;
+  capacity: number;
 }
+
+export interface Bridge {
+  u: number;
+  v: number;
+  count: 1 | 2;
+}
+
+interface BridgeDelta {
+  u: number;
+  v: number;
+  from: 0 | 1 | 2;
+  to: 0 | 1 | 2;
+}
+
+export type HashiTechnique =
+  | 'corner_capacity_forced'
+  | 'degree_propagation'
+  | 'cut_edge_isolation'
+  | 'isolated_pair_block'
+  | 'spanning_bottleneck';
+
+interface HashiHintStep {
+  step: number;
+  u: number;
+  v: number;
+  forcedCount: 1 | 2;
+  technique: HashiTechnique;
+  evidenceIslands: number[];
+  rationale: string;
+  humanReadable: {
+    zh: string;
+    en: string;
+  };
+}
+
+const MAX_HISTORY_STEPS = 250;
 
 export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode = false }) => {
   const actualPuzzle = puzzleData || puzzle;
   const {
     recordAttempt,
-    saveBookmark,
-    removeBookmark,
     getBenchmarkMetrics,
     profile,
     getCompositeCognitiveIndex,
@@ -38,782 +71,884 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
   const { lang } = useLanguage();
   const isEn = lang === 'en';
 
-  const [internalAssessment, setInternalAssessment] = useState<boolean>(false);
-  const isAssessmentMode = tournamentMode || internalAssessment;
+  const spec = (actualPuzzle as any)?.puzzle || (actualPuzzle as any)?.spec || (actualPuzzle as any);
+  const rows = spec?.rows || 9;
+  const cols = spec?.cols || 9;
 
-  const [isPureMode, setIsPureMode] = useState<boolean>(false);
+  // 1. 提取島嶼
+  const islands: Island[] = useMemo(() => {
+    if (spec?.islands && Array.isArray(spec.islands)) {
+      return spec.islands;
+    }
+    if (spec?.grid) {
+      const list: Island[] = [];
+      let idCounter = 0;
+      for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+          const val = spec.grid[r]?.[c];
+          if (typeof val === 'number' && val > 0) {
+            list.push({ id: idCounter++, r, c, capacity: val });
+          }
+        }
+      }
+      return list;
+    }
+    return [];
+  }, [spec, rows, cols]);
 
-  const spec = actualPuzzle?.puzzle as any;
-  const size: number = spec?.size || 9;
-  const islands: HashiIsland[] = useMemo(() => spec?.islands || [], [spec]);
-  const hints: HashiHintStep[] = useMemo(() => spec?.hints || [], [spec]);
-  const solutionBridges: HashiBridge[] = useMemo(() => (actualPuzzle?.solution as HashiBridge[]) || [], [actualPuzzle]);
-  const metrics = (actualPuzzle?.metrics as any) || {};
   const currentTier = (actualPuzzle?.tier as TierKey) || 'kids';
-  const theoryTime = metrics.estimated_time_sec || 120;
-  const standardTimeLimit = currentTier === 'kids' ? 180 : currentTier === 'intermediate' ? 300 : 480;
 
-  // 自適應冷卻時間
-  const calculatedBaseCooldown = useMemo(() => {
-    const tierMap: Record<TierKey, number> = {
-      kids: 15,
-      intermediate: 20,
-      expert: 30,
-      master: 45,
-    };
-    const base = tierMap[currentTier] || 25;
-    const stat = profile.techniqueStats?.['GraphTopologyInference'];
-    if (stat && stat.accuracy >= 0.9) return Math.max(10, Math.round(base * 0.8));
-    return base;
-  }, [currentTier, profile.techniqueStats]);
+  // 2. 核心狀態：真實架設的橋樑 (u < v)
+  const [bridges, setBridges] = useState<Map<string, 1 | 2>>(new Map());
 
-  const benchmarkData = useMemo(() => {
-    return getBenchmarkMetrics('GraphTopologyInference', theoryTime, 'hashi');
-  }, [getBenchmarkMetrics, theoryTime]);
+  // 3. 候選筆記標記（Notes 模式：記錄玩家預設的可能橋數，不影響真實判定）
+  const [candidateNotes, setCandidateNotes] = useState<Map<string, 1 | 2>>(new Map());
+  const [isNoteMode, setIsNoteMode] = useState<boolean>(false);
 
-  const [bridges, setBridges] = useState<Map<string, number>>(new Map());
+  // 4. 歷史差量堆疊（壓縮儲存，上限 250 步）
+  const [history, setHistory] = useState<BridgeDelta[]>([]);
+  const [redoStack, setRedoStack] = useState<BridgeDelta[]>([]);
+
+  // 選取的起點島嶼
   const [selectedIslandId, setSelectedIslandId] = useState<number | null>(null);
+
+  // 輔助與提示狀態
+  const [noGuessMode, setNoGuessMode] = useState<boolean>(false);
+  const [noGuessWarning, setNoGuessWarning] = useState<string | null>(null);
+  const [activeHint, setActiveHint] = useState<HashiHintStep | null>(null);
+  const [hintLadderLevel, setHintLadderLevel] = useState<1 | 2 | 3>(1);
+
   const [isCompleted, setIsCompleted] = useState<boolean>(false);
-  const [isResigned, setIsResigned] = useState<boolean>(false);
-  const [isTimedOut, setIsTimedOut] = useState<boolean>(false);
-  const [elapsedSec, setElapsedSec] = useState<number>(0);
   const [showPBModal, setShowPBModal] = useState<boolean>(false);
   const [showSubmitModal, setShowSubmitModal] = useState<boolean>(false);
   const [proofSignature, setProofSignature] = useState<string | null>(null);
-  const [bookmarkToast, setBookmarkToast] = useState<string | null>(null);
 
-  // 提示狀態
-  const [hintLevel, setHintLevel] = useState<number>(0);
-  const [activeHintText, setActiveHintText] = useState<string | null>(null);
-  const [hintCooldown, setHintCooldown] = useState<number>(calculatedBaseCooldown);
-
-  const lastMatchSummaryRef = useRef<string | null>(null);
   const startTimeRef = useRef<number>(Date.now());
+  const [elapsedMs, setElapsedMs] = useState<number>(0);
   const conflictCountRef = useRef<number>(0);
+  const [conflictDisplay, setConflictDisplay] = useState<number>(0);
+  const movesCountRef = useRef<number>(0);
   const hasRecordedRef = useRef<boolean>(false);
-  const hintUsageLogRef = useRef<HintLogEntry[]>([]);
 
-  const getBridgeKey = (id1: number, id2: number) => {
-    return id1 < id2 ? `${id1}_${id2}` : `${id2}_${id1}`;
-  };
-
-  // 初始化與書籤恢復（修正 boardState 屬性名）
+  // 初始化
   useEffect(() => {
-    const bookmark = profile.bookmarks[actualPuzzle?.id || ''];
-    if (bookmark && bookmark.boardState) {
-      setBridges(new Map(bookmark.boardState));
-      setElapsedSec(bookmark.elapsedSec);
-      setBookmarkToast(isEn ? 'Restored bookmarked progress' : '已自動恢復上次暫存進度');
-      setTimeout(() => setBookmarkToast(null), 2500);
-    } else {
-      setBridges(new Map());
-      setElapsedSec(0);
-    }
-
+    setBridges(new Map());
+    setCandidateNotes(new Map());
+    setHistory([]);
+    setRedoStack([]);
     setSelectedIslandId(null);
     setIsCompleted(false);
-    setIsResigned(false);
-    setIsTimedOut(false);
+    setActiveHint(null);
+    setHintLadderLevel(1);
     setProofSignature(null);
-    setHintLevel(0);
-    setActiveHintText(null);
-    setHintCooldown(calculatedBaseCooldown);
-    startTimeRef.current = Date.now() - (bookmark?.elapsedSec ? bookmark.elapsedSec * 1000 : 0);
+    setNoGuessWarning(null);
+    startTimeRef.current = Date.now();
+    setElapsedMs(0);
     conflictCountRef.current = 0;
+    setConflictDisplay(0);
+    movesCountRef.current = 0;
     hasRecordedRef.current = false;
-    hintUsageLogRef.current = [];
-  }, [actualPuzzle?.id, calculatedBaseCooldown, profile.bookmarks, isEn]);
+  }, [actualPuzzle?.id, islands]);
 
-  // 計時與超時判定
+  // 計時器
   useEffect(() => {
-    if (isCompleted || isTimedOut || isResigned) return;
-    const timer = setInterval(() => {
-      const cur = Math.floor((Date.now() - startTimeRef.current) / 1000);
-      setElapsedSec(cur);
-      setHintCooldown((prev) => (prev > 0 ? prev - 1 : 0));
+    if (isCompleted) return;
+    let frameId: number;
+    const updateTimer = () => {
+      setElapsedMs(Date.now() - startTimeRef.current);
+      frameId = requestAnimationFrame(updateTimer);
+    };
+    frameId = requestAnimationFrame(updateTimer);
+    return () => cancelAnimationFrame(frameId);
+  }, [isCompleted]);
 
-      if (isAssessmentMode && cur >= standardTimeLimit) {
-        setIsTimedOut(true);
-        if (!hasRecordedRef.current) {
-          hasRecordedRef.current = true;
-          lastMatchSummaryRef.current = '⏱️ TIMED OUT';
-          recordAttempt({
-            puzzleId: actualPuzzle?.id || 'unknown',
-            engineType: 'hashi',
-            tier: currentTier,
-            cognitiveLoad: actualPuzzle?.cognitiveLoad || { spatial: 0.8, numeric: 0.5, workingMemory: 0.7, inhibition: 0.8 },
-            isSuccess: false,
-            timeSpentSec: standardTimeLimit,
-            conflictsCount: conflictCountRef.current,
-            technique: 'GraphTopologyInference',
-            isPureModeAttempt: isPureMode,
-            isPureClear: false,
-            hintLogs: hintUsageLogRef.current,
-          });
+  // 圖論分析：計算度數、超額、滿額與全圖連通分量
+  const graphAnalysis = useMemo(() => {
+    const degrees = new Map<number, number>();
+    islands.forEach((isl) => degrees.set(isl.id, 0));
+
+    bridges.forEach((count, key) => {
+      const [uStr, vStr] = key.split('-');
+      const u = Number(uStr);
+      const v = Number(vStr);
+      degrees.set(u, (degrees.get(u) || 0) + count);
+      degrees.set(v, (degrees.get(v) || 0) + count);
+    });
+
+    const satisfiedIslands = new Set<number>();
+    const overflowIslands = new Set<number>();
+
+    islands.forEach((isl) => {
+      const deg = degrees.get(isl.id) || 0;
+      if (deg === isl.capacity) satisfiedIslands.add(isl.id);
+      else if (deg > isl.capacity) overflowIslands.add(isl.id);
+    });
+
+    // 連通分量計算 (BFS)
+    const visited = new Set<number>();
+    let connectedComponents = 0;
+
+    if (islands.length > 0) {
+      for (const isl of islands) {
+        if (!visited.has(isl.id)) {
+          connectedComponents++;
+          const queue = [isl.id];
+          visited.add(isl.id);
+
+          while (queue.length > 0) {
+            const curr = queue.shift()!;
+            bridges.forEach((_, key) => {
+              const [uStr, vStr] = key.split('-');
+              const u = Number(uStr);
+              const v = Number(vStr);
+              if (u === curr && !visited.has(v)) {
+                visited.add(v);
+                queue.push(v);
+              } else if (v === curr && !visited.has(u)) {
+                visited.add(u);
+                queue.push(u);
+              }
+            });
+          }
         }
       }
-    }, 1000);
-    return () => clearInterval(timer);
-  }, [isCompleted, isTimedOut, isResigned, isAssessmentMode, isPureMode, standardTimeLimit, actualPuzzle, currentTier, recordAttempt]);
+    }
 
-  const currentIslandCounts = useMemo(() => {
-    const counts: Record<number, number> = {};
-    islands.forEach((isl) => (counts[isl.id] = 0));
-    bridges.forEach((count, key) => {
-      const [id1, id2] = key.split('_').map(Number);
-      counts[id1] = (counts[id1] || 0) + count;
-      counts[id2] = (counts[id2] || 0) + count;
-    });
-    return counts;
+    const isFullyConnected = connectedComponents === 1 && visited.size === islands.length;
+    const allSatisfied = islands.length > 0 && satisfiedIslands.size === islands.length;
+
+    return {
+      degrees,
+      satisfiedIslands,
+      overflowIslands,
+      connectedComponents,
+      isFullyConnected,
+      allSatisfied,
+      totalConflicts: overflowIslands.size + (!isFullyConnected && allSatisfied ? 1 : 0),
+    };
   }, [islands, bridges]);
 
-  const connectedComponentsCount = useMemo(() => {
-    if (islands.length === 0) return 0;
-    const adj = new Map<number, number[]>();
-    islands.forEach((i) => adj.set(i.id, []));
+  // 衝突累計
+  const prevConflictsRef = useRef<number>(0);
+  useEffect(() => {
+    if (graphAnalysis.totalConflicts > prevConflictsRef.current) {
+      conflictCountRef.current += graphAnalysis.totalConflicts - prevConflictsRef.current;
+      setConflictDisplay(conflictCountRef.current);
+    }
+    prevConflictsRef.current = graphAnalysis.totalConflicts;
+  }, [graphAnalysis.totalConflicts]);
 
-    bridges.forEach((count, key) => {
-      if (count > 0) {
-        const [id1, id2] = key.split('_').map(Number);
-        adj.get(id1)!.push(id2);
-        adj.get(id2)!.push(id1);
+  // 正交視線鄰居檢索（射線障礙物檢測）
+  const getOrthogonalNeighbors = useCallback((islId: number): number[] => {
+    const src = islands.find((i) => i.id === islId);
+    if (!src) return [];
+
+    const neighbors: number[] = [];
+    const dirs = [
+      [-1, 0], [1, 0], [0, -1], [0, 1],
+    ];
+
+    for (const [dr, dc] of dirs) {
+      let r = src.r + dr;
+      let c = src.c + dc;
+      while (r >= 0 && r < rows && c >= 0 && c < cols) {
+        const found = islands.find((i) => i.r === r && i.c === c);
+        if (found) {
+          neighbors.push(found.id);
+          break;
+        }
+        r += dr;
+        c += dc;
       }
-    });
+    }
+    return neighbors;
+  }, [islands, rows, cols]);
 
-    const visited = new Set<number>();
-    let compCount = 0;
+  // 跨橋碰撞檢測（阻止正交橋樑在空間中交叉相截）
+  const checkBridgeCrossingCollision = useCallback(
+    (uId: number, vId: number): boolean => {
+      const u = islands.find((i) => i.id === uId)!;
+      const v = islands.find((i) => i.id === vId)!;
+      const isHorizontal = u.r === v.r;
 
+      for (const [key] of bridges) {
+        const [buIdStr, bvIdStr] = key.split('-');
+        const buId = Number(buIdStr);
+        const bvId = Number(bvIdStr);
+        if (buId === uId || buId === vId || bvId === uId || bvId === vId) continue;
+
+        const bu = islands.find((i) => i.id === buId)!;
+        const bv = islands.find((i) => i.id === bvId)!;
+        const isBHorizontal = bu.r === bv.r;
+
+        if (isHorizontal !== isBHorizontal) {
+          const hBridge = isHorizontal
+            ? { y: u.r, x1: Math.min(u.c, v.c), x2: Math.max(u.c, v.c) }
+            : { y: bu.r, x1: Math.min(bu.c, bv.c), x2: Math.max(bu.c, bv.c) };
+          const vBridge = !isHorizontal
+            ? { x: u.c, y1: Math.min(u.r, v.r), y2: Math.max(u.r, v.r) }
+            : { x: bu.c, y1: Math.min(bu.r, bv.r), y2: Math.max(bu.r, bv.r) };
+
+          if (
+            vBridge.x > hBridge.x1 &&
+            vBridge.x < hBridge.x2 &&
+            hBridge.y > vBridge.y1 &&
+            hBridge.y < vBridge.y2
+          ) {
+            return true;
+          }
+        }
+      }
+      return false;
+    },
+    [islands, bridges]
+  );
+
+  // 高階全局 No-Guess 定式引擎（納入「割邊隔離」與「度數傳播」）
+  const getNextForcedDeduction = useCallback((): HashiHintStep | null => {
+    // 定式 1: 剩餘可用方向容量極限收斂 (度數連鎖傳播)
     for (const isl of islands) {
-      if (!visited.has(isl.id)) {
-        compCount++;
-        const q = [isl.id];
-        visited.add(isl.id);
-        while (q.length > 0) {
-          const c = q.shift()!;
-          for (const nxt of adj.get(c) || []) {
-            if (!visited.has(nxt)) {
-              visited.add(nxt);
-              q.push(nxt);
+      const currentDeg = graphAnalysis.degrees.get(isl.id) || 0;
+      if (currentDeg === isl.capacity) continue;
+
+      const remainingNeeded = isl.capacity - currentDeg;
+      const validNeighbors = getOrthogonalNeighbors(isl.id).filter((nId) => {
+        const minId = Math.min(isl.id, nId);
+        const maxId = Math.max(isl.id, nId);
+        const currentBridgeCount = bridges.get(`${minId}-${maxId}`) || 0;
+        const neighborDeg = graphAnalysis.degrees.get(nId) || 0;
+        const neighborCap = islands.find((i) => i.id === nId)!.capacity;
+        return (
+          currentBridgeCount < 2 &&
+          neighborDeg < neighborCap &&
+          !checkBridgeCrossingCollision(isl.id, nId)
+        );
+      });
+
+      // 剩餘所有方向即便全架滿 2 條橋，剛好滿足缺額
+      if (validNeighbors.length * 2 === remainingNeeded && validNeighbors.length > 0) {
+        const target = validNeighbors[0];
+        const minId = Math.min(isl.id, target);
+        const maxId = Math.max(isl.id, target);
+        const currentCount = bridges.get(`${minId}-${maxId}`) || 0;
+
+        return {
+          step: 1,
+          u: minId,
+          v: maxId,
+          forcedCount: (currentCount + 1) as 1 | 2,
+          technique: 'degree_propagation',
+          evidenceIslands: [isl.id, target],
+          rationale: `島嶼 [${isl.r + 1},${isl.c + 1}] (配額 ${isl.capacity}) 剩餘缺額 ${remainingNeeded}，所有剩餘方向必須全速連滿。`,
+          humanReadable: {
+            zh: `觀察島嶼 [${isl.r + 1},${isl.c + 1}]：扣除現有橋數後，其餘可用鄰居必須全部連滿方能湊齊度數，此處必然架橋。`,
+            en: `Island [${isl.r + 1},${isl.c + 1}] degree deficit requires maximum saturation across remaining neighbors.`,
+          },
+        };
+      }
+    }
+
+    // 定式 2: 割邊防孤島隔離定式 (Cut-Edge Isolation)
+    // 若連接某兩島會直接形成一個已閉合且滿額的子圖（但全圖島嶼尚未接齊），則此邊被嚴格禁連
+    if (islands.length > 2) {
+      for (const isl of islands) {
+        if (isl.capacity === 1 && (graphAnalysis.degrees.get(isl.id) || 0) === 0) {
+          const neighbors = getOrthogonalNeighbors(isl.id);
+          const oneCapNeighbors = neighbors.filter((nId) => {
+            const n = islands.find((i) => i.id === nId)!;
+            return n.capacity === 1 && (graphAnalysis.degrees.get(n.id) || 0) === 0;
+          });
+
+          // 若某鄰居也是容量 1 的島嶼，若連接這兩島將立刻形成 2 節點的孤立閉合圖
+          if (oneCapNeighbors.length > 0) {
+            const safeNeighbors = neighbors.filter((nId) => !oneCapNeighbors.includes(nId));
+            if (safeNeighbors.length === 1) {
+              const target = safeNeighbors[0];
+              const minId = Math.min(isl.id, target);
+              const maxId = Math.max(isl.id, target);
+              return {
+                step: 1,
+                u: minId,
+                v: maxId,
+                forcedCount: 1,
+                technique: 'cut_edge_isolation',
+                evidenceIslands: [isl.id, target, oneCapNeighbors[0]],
+                rationale: `島嶼 [${isl.r + 1},${isl.c + 1}] 若與相鄰的容量 1 島嶼連線，將形成封閉孤島切斷全域連通。因此必須連向 [${target}]。`,
+                humanReadable: {
+                  zh: `島嶼 [${isl.r + 1},${isl.c + 1}] 不能與同為容量 1 的鄰居相連（否則形成孤立閉環），故唯一安全方向必然連橋。`,
+                  en: `Connecting to another capacity 1 island creates an isolated sub-graph. Must connect to the alternate neighbor.`,
+                },
+              };
             }
           }
         }
       }
     }
-    return compCount;
-  }, [islands, bridges]);
 
-  // 勝利驗證
-  const checkVictory = useCallback(
-    async (nextBridges: Map<string, number>) => {
-      const counts: Record<number, number> = {};
-      islands.forEach((isl) => (counts[isl.id] = 0));
-      nextBridges.forEach((count, key) => {
-        const [id1, id2] = key.split('_').map(Number);
-        counts[id1] = (counts[id1] || 0) + count;
-        counts[id2] = (counts[id2] || 0) + count;
+    return null;
+  }, [islands, graphAnalysis.degrees, getOrthogonalNeighbors, bridges, checkBridgeCrossingCollision]);
+
+  // 差量變更應用 (含 No-Guess 阻擋與依據提示)
+  const mutateBridge = useCallback(
+    (uId: number, vId: number, targetCount: 0 | 1 | 2) => {
+      if (isCompleted) return;
+      const minId = Math.min(uId, vId);
+      const maxId = Math.max(uId, vId);
+      const key = `${minId}-${maxId}`;
+
+      // 筆記模式操作（不影響真實盤面）
+      if (isNoteMode) {
+        setCandidateNotes((prev) => {
+          const next = new Map(prev);
+          if (targetCount === 0) next.delete(key);
+          else next.set(key, targetCount);
+          return next;
+        });
+        if (navigator.vibrate) navigator.vibrate(6);
+        return;
+      }
+
+      const currentCount = bridges.get(key) || 0;
+      if (currentCount === targetCount) return;
+
+      // 碰撞檢測
+      if (targetCount > 0 && checkBridgeCrossingCollision(minId, maxId)) {
+        if (navigator.vibrate) navigator.vibrate([30, 40, 30]);
+        setNoGuessWarning(
+          isEn ? '[Collision Blocked] Bridges cannot cross each other!' : '【跨橋碰撞】星際橋樑不可正交相交穿透！'
+        );
+        setTimeout(() => setNoGuessWarning(null), 2400);
+        return;
+      }
+
+      // No-Guess 阻擋
+      if (noGuessMode && targetCount > currentCount) {
+        const step = getNextForcedDeduction();
+        if (step) {
+          const isTargetBridge = step.u === minId && step.v === maxId;
+          const isCountMatch = step.forcedCount === targetCount;
+          if (!isTargetBridge || !isCountMatch) {
+            if (navigator.vibrate) navigator.vibrate([25, 35, 25]);
+            const reason = isEn ? step.humanReadable.en : step.humanReadable.zh;
+            setNoGuessWarning(
+              isEn ? `[No-Guess Blocked] Strictly deduce: ${reason}` : `【無猜測攔截】依據因果定式應優先連線：${reason}`
+            );
+            setTimeout(() => setNoGuessWarning(null), 3000);
+            return;
+          }
+        }
+      }
+
+      if (navigator.vibrate) navigator.vibrate(8);
+      movesCountRef.current++;
+
+      const delta: BridgeDelta = { u: minId, v: maxId, from: currentCount, to: targetCount };
+      setHistory((prev) => [...prev.slice(-MAX_HISTORY_STEPS + 1), delta]);
+      setRedoStack([]);
+
+      setBridges((prev) => {
+        const next = new Map(prev);
+        if (targetCount === 0) next.delete(key);
+        else next.set(key, targetCount);
+        return next;
       });
 
-      const allMet = islands.every((isl) => counts[isl.id] === isl.expectedCount);
-      if (!allMet || connectedComponentsCount !== 1) return;
+      // 同步消除對應筆記
+      setCandidateNotes((prev) => {
+        if (prev.has(key)) {
+          const next = new Map(prev);
+          next.delete(key);
+          return next;
+        }
+        return prev;
+      });
 
+      if (activeHint && activeHint.u === minId && activeHint.v === maxId) {
+        setActiveHint(null);
+      }
+    },
+    [isCompleted, isNoteMode, bridges, checkBridgeCrossingCollision, noGuessMode, getNextForcedDeduction, activeHint, isEn]
+  );
+
+  // 循環切換 (0 -> 1 -> 2 -> 0)
+  const cycleBridge = useCallback(
+    (uId: number, vId: number) => {
+      const minId = Math.min(uId, vId);
+      const maxId = Math.max(uId, vId);
+      const key = `${minId}-${maxId}`;
+      const curr = (isNoteMode ? candidateNotes.get(key) : bridges.get(key)) || 0;
+      const next: 0 | 1 | 2 = curr === 0 ? 1 : curr === 1 ? 2 : 0;
+      mutateBridge(minId, maxId, next);
+    },
+    [isNoteMode, candidateNotes, bridges, mutateBridge]
+  );
+
+  // 點選島嶼
+  const handleIslandClick = useCallback(
+    (islId: number) => {
+      if (selectedIslandId === null) {
+        setSelectedIslandId(islId);
+        if (navigator.vibrate) navigator.vibrate(6);
+      } else if (selectedIslandId === islId) {
+        setSelectedIslandId(null);
+      } else {
+        const validNeighbors = getOrthogonalNeighbors(selectedIslandId);
+        if (validNeighbors.includes(islId)) {
+          cycleBridge(selectedIslandId, islId);
+        } else {
+          if (navigator.vibrate) navigator.vibrate(15);
+        }
+        setSelectedIslandId(null);
+      }
+    },
+    [selectedIslandId, getOrthogonalNeighbors, cycleBridge]
+  );
+
+  // 差量 Undo / Redo
+  const handleUndo = useCallback(() => {
+    if (history.length === 0 || isCompleted) return;
+    if (navigator.vibrate) navigator.vibrate(10);
+
+    const lastDelta = history[history.length - 1];
+    setBridges((prev) => {
+      const next = new Map(prev);
+      const key = `${lastDelta.u}-${lastDelta.v}`;
+      if (lastDelta.from === 0) next.delete(key);
+      else next.set(key, lastDelta.from);
+      return next;
+    });
+
+    setRedoStack((prev) => [...prev, lastDelta]);
+    setHistory((prev) => prev.slice(0, -1));
+  }, [history, isCompleted]);
+
+  const handleRedo = useCallback(() => {
+    if (redoStack.length === 0 || isCompleted) return;
+    if (navigator.vibrate) navigator.vibrate(10);
+
+    const nextDelta = redoStack[redoStack.length - 1];
+    setBridges((prev) => {
+      const next = new Map(prev);
+      const key = `${nextDelta.u}-${nextDelta.v}`;
+      if (nextDelta.to === 0) next.delete(key);
+      else next.set(key, nextDelta.to);
+      return next;
+    });
+
+    setHistory((prev) => [...prev, nextDelta]);
+    setRedoStack((prev) => prev.slice(0, -1));
+  }, [redoStack, isCompleted]);
+
+  // 鍵盤操控支援
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (isCompleted) return;
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') {
+        e.preventDefault();
+        if (e.shiftKey) handleRedo();
+        else handleUndo();
+      } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'y') {
+        e.preventDefault();
+        handleRedo();
+      } else if (e.code === 'KeyN') {
+        setIsNoteMode((prev) => !prev);
+      } else if (e.code === 'Escape') {
+        setSelectedIslandId(null);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isCompleted, handleUndo, handleRedo]);
+
+  // 勝利驗證與 SHA-256
+  useEffect(() => {
+    if (isCompleted) return;
+
+    if (graphAnalysis.allSatisfied && graphAnalysis.isFullyConnected) {
       setIsCompleted(true);
-      if (!hasRecordedRef.current) {
-        hasRecordedRef.current = true;
-        const timeSpent = Math.max(1, Math.round((Date.now() - startTimeRef.current) / 1000));
-        const pureClear = isPureMode || hintUsageLogRef.current.length === 0;
-        lastMatchSummaryRef.current = pureClear ? '🔥 PURE CLEAR' : `💡 WARM-UP (HINTS ×${hintUsageLogRef.current.length})`;
+      const timeSpent = Math.max(1, Math.round((Date.now() - startTimeRef.current) / 1000));
 
-        removeBookmark(actualPuzzle?.id || '');
+      if (!hasRecordedRef.current && actualPuzzle) {
+        hasRecordedRef.current = true;
+        const baseIrt = (actualPuzzle.metrics as any)?.irt_logit_difficulty || 1.6;
 
         recordAttempt({
-          puzzleId: actualPuzzle?.id || 'hashi',
+          puzzleId: actualPuzzle.id,
           engineType: 'hashi',
           tier: currentTier,
-          cognitiveLoad: actualPuzzle?.cognitiveLoad || { spatial: 0.8, numeric: 0.5, workingMemory: 0.7, inhibition: 0.8 },
+          cognitiveLoad: actualPuzzle.cognitiveLoad || {
+            spatial: 0.85,
+            numeric: 0.5,
+            workingMemory: 0.7,
+            inhibition: 0.8,
+          },
           isSuccess: true,
           timeSpentSec: timeSpent,
           conflictsCount: conflictCountRef.current,
-          technique: 'GraphTopologyInference',
-          isPureModeAttempt: isPureMode,
-          isPureClear: pureClear,
-          hintLogs: hintUsageLogRef.current,
+          technique: 'HashiSpanningEulerDeduction',
+          irtDifficulty: baseIrt,
+          isPureClear: conflictCountRef.current === 0 && !activeHint,
         });
 
         try {
-          const pureFlag = pureClear ? `PURE_STREAK_${profile.pureStreak + 1}` : `WARMUP_${hintUsageLogRef.current.length}_HINTS`;
-          const canonical = `${actualPuzzle?.id}|${timeSpent}|${conflictCountRef.current}|${pureFlag}|HASHI_VERIFIED`;
+          const canonical = `${actualPuzzle.id}|${timeSpent}|${movesCountRef.current}|${conflictCountRef.current}|HASHI_GLOBAL_LEGEND`;
           const enc = new TextEncoder();
-          const buf = await window.crypto.subtle.digest('SHA-256', enc.encode(canonical));
-          const hex = Array.from(new Uint8Array(buf))
-            .map((b) => b.toString(16).padStart(2, '0'))
-            .join('');
-          setProofSignature(`VERIFIED_${hex.slice(0, 24).toUpperCase()}`);
+          window.crypto.subtle.digest('SHA-256', enc.encode(canonical)).then((buf) => {
+            const hex = Array.from(new Uint8Array(buf))
+              .map((b) => b.toString(16).padStart(2, '0'))
+              .join('');
+            setProofSignature(`VERIFIED_${hex.slice(0, 24).toUpperCase()}`);
+          });
         } catch {
           setProofSignature(`LOCAL_${Date.now()}`);
         }
 
-        if (benchmarkData.isNewPB) {
+        if (timeSpent <= profile.personalBest.fastestTime) {
           setShowPBModal(true);
         }
       }
-    },
-    [islands, connectedComponentsCount, actualPuzzle, currentTier, recordAttempt, removeBookmark, benchmarkData.isNewPB, isPureMode, profile.pureStreak]
-  );
+    }
+  }, [graphAnalysis, isCompleted, actualPuzzle, currentTier, recordAttempt, profile.personalBest.fastestTime, activeHint]);
 
-  // 暫存此局進度
-  const handleBookmarkPuzzle = useCallback(() => {
-    if (isCompleted || isTimedOut || isResigned || !actualPuzzle) return;
-    saveBookmark({
-      puzzleId: actualPuzzle.id,
-      engineType: 'hashi',
-      tier: currentTier,
-      boardState: Array.from(bridges.entries()),
-      elapsedSec,
-      bookmarkedAt: new Date().toISOString(),
-    });
-    setBookmarkToast(isEn ? '📌 Progress bookmarked for later' : '📌 已暫存此局進度，可隨時接續');
-    setTimeout(() => setBookmarkToast(null), 2500);
-    if (navigator.vibrate) navigator.vibrate([25, 40]);
-  }, [isCompleted, isTimedOut, isResigned, actualPuzzle, currentTier, bridges, elapsedSec, saveBookmark, isEn]);
+  // 提示請求
+  const handleRequestHint = () => {
+    if (isCompleted || tournamentMode) return;
+    if (navigator.vibrate) navigator.vibrate(12);
 
-  // 優雅投降並覆盤官方解答
-  const handleGracefulResign = useCallback(() => {
-    if (isCompleted || isTimedOut || isResigned) return;
-    if (navigator.vibrate) navigator.vibrate([40, 60, 40]);
-
-    setIsResigned(true);
-    hasRecordedRef.current = true;
-    lastMatchSummaryRef.current = isPureMode ? '🕊️ PURE RESIGNED' : '🕊️ RESIGNED';
-
-    removeBookmark(actualPuzzle?.id || '');
-
-    const solutionMap = new Map<string, number>();
-    solutionBridges.forEach((b) => {
-      solutionMap.set(getBridgeKey(b.fromId, b.toId), b.count);
-    });
-    setBridges(solutionMap);
-
-    const timeSpent = Math.max(1, Math.round((Date.now() - startTimeRef.current) / 1000));
-    recordAttempt({
-      puzzleId: actualPuzzle?.id || 'hashi',
-      engineType: 'hashi',
-      tier: currentTier,
-      cognitiveLoad: actualPuzzle?.cognitiveLoad || { spatial: 0.8, numeric: 0.5, workingMemory: 0.7, inhibition: 0.8 },
-      isSuccess: false,
-      timeSpentSec: timeSpent,
-      conflictsCount: conflictCountRef.current,
-      technique: 'GraphTopologyInference',
-      partialCompletionRatio: 0.5,
-      isPureModeAttempt: isPureMode,
-      isPureClear: false,
-      hintLogs: hintUsageLogRef.current,
-    });
-  }, [isCompleted, isTimedOut, isResigned, isPureMode, solutionBridges, actualPuzzle, currentTier, recordAttempt, removeBookmark]);
-
-  const canConnect = (islA: HashiIsland, islB: HashiIsland): boolean => {
-    if (islA.x !== islB.x && islA.y !== islB.y) return false;
-
-    if (islA.x === islB.x) {
-      const minY = Math.min(islA.y, islB.y);
-      const maxY = Math.max(islA.y, islB.y);
-      if (islands.some((i) => i.id !== islA.id && i.id !== islB.id && i.x === islA.x && i.y > minY && i.y < maxY)) {
-        return false;
+    if (!activeHint) {
+      const step = getNextForcedDeduction();
+      if (step) {
+        setActiveHint(step);
+        setSelectedIslandId(step.u);
+        setHintLadderLevel(1);
       }
     } else {
-      const minX = Math.min(islA.x, islB.x);
-      const maxX = Math.max(islA.x, islB.x);
-      if (islands.some((i) => i.id !== islA.id && i.id !== islB.id && i.y === islA.y && i.x > minX && i.x < maxX)) {
-        return false;
-      }
+      setHintLadderLevel((prev) => (prev === 1 ? 2 : 3));
     }
-    return true;
   };
 
-  const currentHintStep = hints.find((h) => h.level === hintLevel);
-
-  const handleIslandClick = (clickedId: number) => {
-    if (isCompleted || isTimedOut || isResigned) return;
-
-    if (selectedIslandId === null) {
-      setSelectedIslandId(clickedId);
-      if (navigator.vibrate) navigator.vibrate(15);
-      return;
-    }
-
-    if (selectedIslandId === clickedId) {
-      setSelectedIslandId(null);
-      return;
-    }
-
-    const islA = islands.find((i) => i.id === selectedIslandId)!;
-    const islB = islands.find((i) => i.id === clickedId)!;
-
-    if (canConnect(islA, islB)) {
-      const key = getBridgeKey(islA.id, islB.id);
-      const curCount = bridges.get(key) || 0;
-      const nextCount = (curCount + 1) % 3;
-
-      const nextBridges = new Map(bridges);
-      if (nextCount === 0) nextBridges.delete(key);
-      else nextBridges.set(key, nextCount);
-
-      if (
-        hintLevel === 3 &&
-        currentHintStep &&
-        ((islA.id === currentHintStep.targetIslandId && islB.id === currentHintStep.neighborIslandId) ||
-          (islB.id === currentHintStep.targetIslandId && islA.id === currentHintStep.neighborIslandId))
-      ) {
-        setHintLevel(0);
-        setActiveHintText(isEn ? '✨ Strategic step confirmed!' : '✨ 必然推理步已由您手動確認！');
-        setTimeout(() => setActiveHintText(null), 3000);
-      }
-
-      setBridges(nextBridges);
-      checkVictory(nextBridges);
-      if (navigator.vibrate) navigator.vibrate(25);
-    } else {
-      conflictCountRef.current += 1;
-      if (navigator.vibrate) navigator.vibrate([30, 40, 30]);
-    }
-
-    setSelectedIslandId(null);
-  };
-
-  const triggerHintLadder = () => {
-    if (isPureMode || hintCooldown > 0 || hints.length === 0 || isCompleted || isTimedOut || isResigned) return;
-
-    const nextLevel = Math.min(3, hintLevel + 1);
-    const hintData = hints.find((h) => h.level === nextLevel) || hints[hints.length - 1];
-
-    setHintLevel(nextLevel);
-    setActiveHintText(isEn ? hintData.messageEn : hintData.messageZh);
-
-    hintUsageLogRef.current.push({
-      timestamp: Date.now(),
-      secFromStart: elapsedSec,
-      level: nextLevel,
-      targetIslandId: hintData.targetIslandId,
-    });
-
-    if (nextLevel === 1 || nextLevel === 2) {
-      setSelectedIslandId(hintData.targetIslandId);
-    } else if (nextLevel === 3) {
-      setSelectedIslandId(null);
-    }
-
-    if (navigator.vibrate) navigator.vibrate(30);
-  };
-
-  const handleNavigateTargetGame = (gameId: string) => {
-    window.dispatchEvent(new CustomEvent('logicore:navigate-game', { detail: { gameId } }));
-  };
+  const theoryTime = (actualPuzzle?.metrics as any)?.estimated_time_sec || islands.length * 5;
+  const benchmarkData = useMemo(() => {
+    return getBenchmarkMetrics('TopologicalLookahead', theoryTime, 'hashi');
+  }, [getBenchmarkMetrics, theoryTime]);
 
   const cci = useMemo(() => getCompositeCognitiveIndex(), [getCompositeCognitiveIndex, isCompleted]);
-  const remainingTime = Math.max(0, standardTimeLimit - elapsedSec);
 
-  const highlightedTargetId = currentHintStep?.targetIslandId;
-  const highlightedNeighborId = currentHintStep?.neighborIslandId;
+  // 根據大盤面維度動態計算雙橋平行間距
+  const dynamicBridgeOffset = useMemo(() => {
+    return Math.min(2.4, Math.max(1.1, 14 / Math.max(rows, cols)));
+  }, [rows, cols]);
 
-  const trendTotal = profile.hintTrend.totalCalls || 1;
-  const t1Pct = Math.round((profile.hintTrend.t1Count / trendTotal) * 100);
-  const t2Pct = Math.round((profile.hintTrend.t2Count / trendTotal) * 100);
-  const t3Pct = Math.round((profile.hintTrend.t3Count / trendTotal) * 100);
-
-  // 獨立閉環警示判定
-  const allCountsMet = islands.length > 0 && islands.every((isl) => (currentIslandCounts[isl.id] || 0) === isl.expectedCount);
-  const hasIsolatedCycleWarning = allCountsMet && connectedComponentsCount > 1;
+  const selectableNeighbors = useMemo(() => {
+    if (selectedIslandId === null) return new Set<number>();
+    return new Set(getOrthogonalNeighbors(selectedIslandId));
+  }, [selectedIslandId, getOrthogonalNeighbors]);
 
   return (
-    <div className="flex flex-col items-center w-full select-none py-1 font-mono">
-      {/* 暫存氣泡提示 */}
-      {bookmarkToast && (
-        <div className="fixed top-2 z-50 px-3 py-1.5 bg-indigo-600 border border-indigo-400 text-white font-bold text-xs rounded-full shadow-2xl animate-bounce">
-          {bookmarkToast}
-        </div>
-      )}
-
-      {/* 頂部 HUD 與狀態控制條 */}
-      <div className="w-[min(90vw,46vh)] flex items-center justify-between text-[8px] text-slate-500 mb-1 px-1">
-        <div className="flex items-center gap-1.5">
-          <button
-            onClick={() => setInternalAssessment((prev) => !prev)}
-            className={`px-1.5 py-0.5 rounded border transition text-[7px] font-bold ${
-              isAssessmentMode
-                ? 'bg-rose-950/80 border-rose-600 text-rose-300'
-                : 'bg-slate-900 border-slate-700 text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            {isAssessmentMode ? (isEn ? '● ASSESSMENT' : '● 標準施測') : (isEn ? '○ TRAINING' : '○ 自由訓練')}
-          </button>
-
-          <button
-            onClick={() => {
-              setIsPureMode((prev) => !prev);
-              setHintLevel(0);
-              setActiveHintText(null);
-            }}
-            className={`px-1.5 py-0.5 rounded border transition text-[7px] font-bold flex items-center gap-0.5 ${
-              isPureMode
-                ? 'bg-amber-950/90 border-amber-500 text-amber-300 shadow-xs shadow-amber-500/50'
-                : 'bg-slate-900 border-slate-800 text-slate-500 hover:text-slate-300'
-            }`}
-          >
-            <span>🔥</span>
-            <span>{isEn ? 'PURE' : '純挑戰'}</span>
-          </button>
-
-          {profile.pureStreak >= 2 && (
-            <span
-              className="px-1.5 py-0.2 bg-gradient-to-r from-amber-950 to-purple-950 border border-amber-500 text-amber-300 rounded text-[6.5px] font-bold flex items-center gap-0.5 animate-pulse"
-              title={!isPureMode ? 'Streak Shield Active: Warm-up mode will not break your streak.' : 'Pure Streak Active'}
-            >
-              <span>💎</span>
-              <span>STREAK ×{profile.pureStreak}</span>
-              {!isPureMode && <span className="text-[5.5px] text-emerald-400 ml-0.5">🛡️</span>}
-            </span>
-          )}
-
-          {lastMatchSummaryRef.current && (
-            <span className="px-1 py-0.2 bg-slate-900 border border-slate-800 text-slate-400 rounded text-[6.5px]">
-              {lastMatchSummaryRef.current}
-            </span>
-          )}
+    <div className="flex flex-col items-center justify-center p-1 select-none font-mono">
+      {/* 頂部賽事數據列 */}
+      <div className="w-full grid grid-cols-6 gap-1 px-0.5 mb-1.5 text-[8px] sm:text-[9px]">
+        <div className="bg-slate-950 border border-slate-800 p-1 rounded text-center">
+          <div className="text-slate-500 text-[6.5px]">{isEn ? '⏱️ Speed' : '⏱️ 競速'}</div>
+          <div className="text-slate-200 font-bold">{(elapsedMs / 1000).toFixed(1)}s</div>
         </div>
 
-        <div className="flex items-center gap-1.5">
-          {!isCompleted && !isTimedOut && !isResigned && (
-            <button
-              onClick={handleBookmarkPuzzle}
-              className="px-1.5 py-0.5 bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-400 text-[7px] rounded transition"
-              title={isEn ? 'Bookmark progress' : '暫存此局進度'}
-            >
-              📌 {isEn ? 'Save' : '暫存'}
-            </button>
-          )}
-
-          {!isCompleted && !isTimedOut && !isResigned && (
-            <button
-              onClick={handleGracefulResign}
-              className="px-1.5 py-0.5 bg-slate-900 hover:bg-rose-950/60 border border-slate-700 hover:border-rose-700 text-slate-400 hover:text-rose-300 text-[7px] rounded transition"
-              title={isEn ? 'Resign & Reveal Solution' : '優雅投降並覆盤官方解答'}
-            >
-              🕊️ {isEn ? 'Resign' : '投降'}
-            </button>
-          )}
-
-          {!isCompleted && !isTimedOut && !isResigned && !isPureMode && (
-            <button
-              onClick={triggerHintLadder}
-              disabled={hintCooldown > 0}
-              className={`px-2 py-0.5 border text-[7px] font-bold rounded flex items-center gap-1 transition shadow active:scale-95 ${
-                hintCooldown > 0
-                  ? 'bg-slate-900/60 border-slate-800 text-slate-600 cursor-not-allowed'
-                  : 'bg-amber-950 hover:bg-amber-900 border-amber-500 text-amber-300'
-              }`}
-            >
-              <span>💡</span>
-              <span>
-                {hintCooldown > 0
-                  ? `⏳ ${hintCooldown}s`
-                  : hintLevel === 0
-                  ? isEn ? 'Hint 1' : '提示一'
-                  : hintLevel === 1
-                  ? isEn ? 'Hint 2' : '提示二'
-                  : isEn ? 'Hint 3' : '提示三'}
-              </span>
-            </button>
-          )}
-
-          {isAssessmentMode ? (
-            <span className="text-rose-400 font-bold">
-              ⏱️ {String(Math.floor(remainingTime / 60)).padStart(2, '0')}:{String(remainingTime % 60).padStart(2, '0')}
-            </span>
-          ) : (
-            <span>
-              Target: <strong className="text-amber-300">{benchmarkData.benchmarkTime}s</strong>
-            </span>
-          )}
+        <div className="bg-slate-950 border border-slate-800 p-1 rounded text-center">
+          <div className="text-slate-500 text-[6.5px]">{isEn ? '♟️ Moves' : '♟️ 步數'}</div>
+          <div className="text-cyan-300 font-bold">{movesCountRef.current}</div>
         </div>
+
+        <div className="bg-slate-950 border border-slate-800 p-1 rounded text-center">
+          <div className="text-slate-500 text-[6.5px]">{isEn ? '⚠️ Conflicts' : '⚠️ 衝突累加'}</div>
+          <div className={`font-bold ${conflictDisplay > 0 ? 'text-rose-400' : 'text-slate-300'}`}>
+            {conflictDisplay}
+          </div>
+        </div>
+
+        {/* 候選筆記模式 (Notes) */}
+        <button
+          onClick={() => setIsNoteMode((prev) => !prev)}
+          className={`p-1 rounded border text-center transition ${
+            isNoteMode
+              ? 'bg-amber-950 border-amber-500 text-amber-300 font-bold shadow-xs'
+              : 'bg-slate-950 border-slate-800 text-slate-500 hover:text-slate-300'
+          }`}
+          title={isEn ? 'Toggle Candidate Notes Mode (Key: N)' : '切換候選筆記模式'}
+        >
+          <div className="text-[6.5px]">✏️ {isEn ? 'Notes' : '筆記'}</div>
+          <div className="text-[7.5px]">{isNoteMode ? (isEn ? 'ON' : '開啟') : (isEn ? 'OFF' : '關閉')}</div>
+        </button>
+
+        {/* 無猜測模式 */}
+        <button
+          onClick={() => setNoGuessMode((prev) => !prev)}
+          className={`p-1 rounded border text-center transition ${
+            noGuessMode
+              ? 'bg-purple-950 border-purple-500 text-purple-300 font-bold shadow-xs'
+              : 'bg-slate-950 border-slate-800 text-slate-500 hover:text-slate-300'
+          }`}
+        >
+          <div className="text-[6.5px]">🛡️ {isEn ? 'No-Guess' : '無猜測'}</div>
+          <div className="text-[7.5px]">{noGuessMode ? (isEn ? 'Strict ON' : '強制嚴謹') : (isEn ? 'OFF' : '關閉')}</div>
+        </button>
+
+        {/* 提示階梯 */}
+        <button
+          onClick={handleRequestHint}
+          disabled={isCompleted || tournamentMode}
+          className={`p-1 rounded border text-center transition ${
+            tournamentMode
+              ? 'bg-slate-900 border-slate-800 text-slate-600 cursor-not-allowed'
+              : activeHint
+              ? 'bg-amber-950/90 border-amber-500 text-amber-300 font-bold shadow-xs'
+              : 'bg-indigo-950/80 border-indigo-500/60 text-indigo-300 hover:bg-indigo-900'
+          }`}
+        >
+          <div className="text-[6.5px]">💡 {isEn ? 'Hint Ladder' : '提示階梯'}</div>
+          <div className="text-[7.5px] truncate">
+            {tournamentMode
+              ? (isEn ? 'Locked' : '賽事鎖定')
+              : activeHint
+              ? `${isEn ? 'Lv.' : '階梯 '}${hintLadderLevel}/3`
+              : (isEn ? 'Get Hint' : '因果提示')}
+          </div>
+        </button>
       </div>
 
-      {/* 獨立閉環結構提醒 */}
-      {hasIsolatedCycleWarning && (
-        <div className="w-[min(90vw,46vh)] bg-rose-950/90 border border-rose-500 text-rose-200 text-[7.5px] px-2 py-1 rounded-lg mb-1 animate-pulse text-center font-bold">
-          ⚠️ {isEn ? 'All island numbers met, but network is split into multiple isolated cycles! Global spanning tree required.' : '所有島嶼數字已滿足，但形成多個獨立孤島閉環！必須全圖單一樹狀連通。'}
+      {/* 警示橫條 */}
+      {noGuessWarning && (
+        <div className="w-[min(88vw,42vh)] mb-1.5 p-1 bg-rose-950 border border-rose-500 text-rose-300 text-[8px] rounded-lg animate-pulse text-center shadow-lg font-bold">
+          {noGuessWarning}
         </div>
       )}
 
-      {/* 提示訊息橫條 */}
-      {!isPureMode && activeHintText && (
-        <div className="w-[min(90vw,46vh)] bg-amber-950/90 border border-amber-500 text-amber-200 text-[7.5px] px-2 py-1.5 rounded-lg mb-1 animate-fade-in flex items-start justify-between gap-1 shadow-lg">
-          <div className="flex items-start gap-1">
-            <span className="text-amber-400 font-bold">L{hintLevel}</span>
-            <span className="leading-snug">{activeHintText}</span>
+      {/* 提示說明卡片 */}
+      {activeHint && (
+        <div className="w-[min(88vw,42vh)] mb-1.5 p-1.5 bg-amber-950/80 border border-amber-500/70 rounded-lg text-amber-200 text-[8px] animate-fade-in text-left shadow-lg">
+          <div className="font-bold flex items-center justify-between text-[7px] text-amber-400 border-b border-amber-900/60 pb-0.5 mb-1">
+            <span>[HASHI HINT LADDER LEVEL {hintLadderLevel}/3]</span>
+            <span className="uppercase">{activeHint.technique.replace(/_/g, ' ')}</span>
           </div>
-          <button onClick={() => setActiveHintText(null)} className="text-amber-400 shrink-0 font-bold ml-1">✕</button>
+          {hintLadderLevel === 1 && (
+            <div>
+              {isEn
+                ? `Focus on Island #${activeHint.u}. An inevitable bridge connection is forced here.`
+                : `請關注島嶼 #${activeHint.u} 與 #${activeHint.v}。兩者間存在必然的架橋定式。`}
+            </div>
+          )}
+          {hintLadderLevel === 2 && (
+            <div>{isEn ? activeHint.humanReadable.en : activeHint.humanReadable.zh}</div>
+          )}
+          {hintLadderLevel === 3 && (
+            <div className="font-bold text-amber-300">
+              {activeHint.rationale}
+              <span className="ml-1 text-cyan-300 underline">
+                {isEn ? `Must build ${activeHint.forcedCount} bridge(s)` : `必然架設 ${activeHint.forcedCount} 條橋`}
+              </span>
+            </div>
+          )}
         </div>
       )}
 
-      {/* 核心網格與 SVG 橋樑 */}
+      {/* 數橋星空畫布 */}
       <div
-        className={`relative bg-slate-950 border rounded-xl shadow-2xl p-2 transition-colors ${
-          isResigned ? 'border-rose-900/60 bg-rose-950/20' : 'border-slate-800'
-        }`}
-        style={{ width: 'min(90vw, 46vh)', height: 'min(90vw, 46vh)' }}
+        className="relative overflow-hidden p-2 rounded-xl bg-slate-950 border-2 border-slate-800 shadow-2xl"
+        style={{ width: 'min(88vw, 42vh)', height: 'min(88vw, 42vh)', touchAction: 'none' }}
       >
-        <svg className="absolute inset-0 w-full h-full pointer-events-none p-2" viewBox={`0 0 ${size} ${size}`}>
-          {!isPureMode && !isResigned && hintLevel === 2 && highlightedTargetId !== undefined && highlightedNeighborId !== undefined && (
-            (() => {
-              const islA = islands.find((i) => i.id === highlightedTargetId);
-              const islB = islands.find((i) => i.id === highlightedNeighborId);
-              if (!islA || !islB) return null;
-              return (
-                <line
-                  x1={islA.x + 0.5}
-                  y1={islA.y + 0.5}
-                  x2={islB.x + 0.5}
-                  y2={islB.y + 0.5}
-                  stroke="#f59e0b"
-                  strokeWidth="0.12"
-                  strokeDasharray="0.2 0.15"
-                  className="animate-pulse"
-                />
-              );
-            })()
-          )}
+        {/* SVG 橋樑與筆記渲染層 */}
+        <svg className="absolute inset-0 w-full h-full pointer-events-none z-10">
+          {/* 1. 候選筆記虛線橋樑 */}
+          {Array.from(candidateNotes.entries()).map(([key, count]) => {
+            const [uIdStr, vIdStr] = key.split('-');
+            const u = islands.find((i) => i.id === Number(uIdStr))!;
+            const v = islands.find((i) => i.id === Number(vIdStr))!;
+            const x1 = ((u.c + 0.5) / cols) * 100;
+            const y1 = ((u.r + 0.5) / rows) * 100;
+            const x2 = ((v.c + 0.5) / cols) * 100;
+            const y2 = ((v.r + 0.5) / rows) * 100;
 
-          {!isPureMode && !isResigned && hintLevel === 3 && highlightedTargetId !== undefined && highlightedNeighborId !== undefined && (
-            (() => {
-              const islA = islands.find((i) => i.id === highlightedTargetId);
-              const islB = islands.find((i) => i.id === highlightedNeighborId);
-              if (!islA || !islB) return null;
-              return (
-                <line
-                  x1={islA.x + 0.5}
-                  y1={islA.y + 0.5}
-                  x2={islB.x + 0.5}
-                  y2={islB.y + 0.5}
-                  stroke="#10b981"
-                  strokeWidth="0.16"
-                  strokeDasharray="0.25 0.15"
-                  strokeLinecap="round"
-                  className="animate-pulse"
-                />
-              );
-            })()
-          )}
+            const isHorizontal = u.r === v.r;
+            return (
+              <line
+                key={`note-${key}`}
+                x1={`${x1}%`}
+                y1={`${y1}%`}
+                x2={`${x2}%`}
+                y2={`${y2}%`}
+                stroke="#fbbf24"
+                strokeWidth={count === 2 ? '3.5' : '2'}
+                strokeDasharray="4 4"
+                strokeOpacity="0.7"
+              />
+            );
+          })}
 
+          {/* 2. 真實橋樑實線渲染（含動態間距補償） */}
           {Array.from(bridges.entries()).map(([key, count]) => {
-            const [id1, id2] = key.split('_').map(Number);
-            const islA = islands.find((i) => i.id === id1);
-            const islB = islands.find((i) => i.id === id2);
-            if (!islA || !islB) return null;
+            const [uIdStr, vIdStr] = key.split('-');
+            const u = islands.find((i) => i.id === Number(uIdStr))!;
+            const v = islands.find((i) => i.id === Number(vIdStr))!;
 
-            const isHoriz = islA.y === islB.y;
-            const offset = 0.12;
+            const x1 = ((u.c + 0.5) / cols) * 100;
+            const y1 = ((u.r + 0.5) / rows) * 100;
+            const x2 = ((v.c + 0.5) / cols) * 100;
+            const y2 = ((v.r + 0.5) / rows) * 100;
+
+            const isHorizontal = u.r === v.r;
+            const offset = dynamicBridgeOffset;
 
             if (count === 1) {
               return (
                 <line
                   key={key}
-                  x1={islA.x + 0.5}
-                  y1={islA.y + 0.5}
-                  x2={islB.x + 0.5}
-                  y2={islB.y + 0.5}
-                  stroke={isResigned ? '#f43f5e' : '#38bdf8'}
-                  strokeWidth="0.12"
+                  x1={`${x1}%`}
+                  y1={`${y1}%`}
+                  x2={`${x2}%`}
+                  y2={`${y2}%`}
+                  stroke="#38bdf8"
+                  strokeWidth="3.2"
                   strokeLinecap="round"
                 />
               );
-            } else if (count === 2) {
+            } else {
               return (
                 <g key={key}>
                   <line
-                    x1={islA.x + 0.5 + (isHoriz ? 0 : -offset)}
-                    y1={islA.y + 0.5 + (isHoriz ? -offset : 0)}
-                    x2={islB.x + 0.5 + (isHoriz ? 0 : -offset)}
-                    y2={islB.y + 0.5 + (isHoriz ? -offset : 0)}
-                    stroke={isResigned ? '#fb7185' : '#818cf8'}
-                    strokeWidth="0.09"
+                    x1={`${isHorizontal ? x1 : x1 - offset}%`}
+                    y1={`${isHorizontal ? y1 - offset : y1}%`}
+                    x2={`${isHorizontal ? x2 : x2 - offset}%`}
+                    y2={`${isHorizontal ? y2 - offset : y2}%`}
+                    stroke="#38bdf8"
+                    strokeWidth="2.5"
                     strokeLinecap="round"
                   />
                   <line
-                    x1={islA.x + 0.5 + (isHoriz ? 0 : offset)}
-                    y1={islA.y + 0.5 + (isHoriz ? offset : 0)}
-                    x2={islB.x + 0.5 + (isHoriz ? 0 : offset)}
-                    y2={islB.y + 0.5 + (isHoriz ? offset : 0)}
-                    stroke={isResigned ? '#fb7185' : '#818cf8'}
-                    strokeWidth="0.09"
+                    x1={`${isHorizontal ? x1 : x1 + offset}%`}
+                    y1={`${isHorizontal ? y1 + offset : y1}%`}
+                    x2={`${isHorizontal ? x2 : x2 + offset}%`}
+                    y2={`${isHorizontal ? y2 + offset : y2}%`}
+                    stroke="#38bdf8"
+                    strokeWidth="2.5"
                     strokeLinecap="round"
                   />
                 </g>
               );
             }
-            return null;
           })}
         </svg>
 
-        {islands.map((isl) => {
-          const curCount = currentIslandCounts[isl.id] || 0;
-          const isSelected = selectedIslandId === isl.id;
-          const isSatisfied = curCount === isl.expectedCount;
-          const isOver = curCount > isl.expectedCount;
-          const isHintTarget = !isPureMode && !isResigned && hintLevel >= 1 && highlightedTargetId === isl.id;
-          const isLevel3Partner = !isPureMode && !isResigned && hintLevel === 3 && highlightedNeighborId === isl.id;
+        {/* 網格與島嶼節點層 */}
+        <div
+          className="relative w-full h-full"
+          style={{
+            display: 'grid',
+            gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
+            gridTemplateRows: `repeat(${rows}, minmax(0, 1fr))`,
+          }}
+        >
+          {islands.map((isl) => {
+            const currentDeg = graphAnalysis.degrees.get(isl.id) || 0;
+            const isSatisfied = currentDeg === isl.capacity;
+            const isOverflow = currentDeg > isl.capacity;
+            const isSelected = selectedIslandId === isl.id;
+            const isSelectable = selectableNeighbors.has(isl.id);
+            const isHintEvidence = activeHint && (activeHint.u === isl.id || activeHint.v === isl.id);
 
-          return (
-            <button
-              key={isl.id}
-              onClick={() => handleIslandClick(isl.id)}
-              style={{
-                left: `${((isl.x + 0.5) / size) * 100}%`,
-                top: `${((isl.y + 0.5) / size) * 100}%`,
-                transform: 'translate(-50%, -50%)',
-              }}
-              className={`absolute w-7 h-7 sm:w-8 sm:h-8 rounded-full flex items-center justify-center font-bold text-xs sm:text-sm border-2 transition-transform active:scale-90 ${
-                isResigned
-                  ? 'bg-rose-950 border-rose-500 text-rose-200'
-                  : isLevel3Partner || (hintLevel === 3 && isHintTarget)
-                  ? 'bg-emerald-900 border-emerald-400 text-emerald-200 ring-4 ring-emerald-500/80 z-30 animate-pulse'
-                  : isHintTarget
-                  ? 'bg-amber-600 border-amber-300 text-white ring-4 ring-amber-400/80 z-30 animate-pulse'
-                  : isSelected
-                  ? 'bg-indigo-600 border-indigo-300 text-white ring-4 ring-indigo-500/40 z-20'
-                  : isOver
-                  ? 'bg-rose-950 border-rose-500 text-rose-200 z-10 animate-pulse'
-                  : isSatisfied
-                  ? 'bg-emerald-950/90 border-emerald-400 text-emerald-300 z-10 shadow-sm shadow-emerald-500/30'
-                  : 'bg-slate-900 border-slate-600 text-slate-200 hover:border-slate-400 z-10'
-              }`}
-            >
-              {isl.expectedCount}
-            </button>
-          );
-        })}
+            return (
+              <div
+                key={isl.id}
+                style={{
+                  gridColumnStart: isl.c + 1,
+                  gridRowStart: isl.r + 1,
+                }}
+                className="relative flex items-center justify-center"
+              >
+                <button
+                  onClick={() => handleIslandClick(isl.id)}
+                  className={`w-[85%] h-[85%] rounded-full flex items-center justify-center font-black text-xs sm:text-sm transition-all duration-150 z-20 shadow-md ${
+                    isOverflow
+                      ? 'bg-red-950 border-2 border-rose-500 text-rose-300 ring-2 ring-rose-500/50 scale-105'
+                      : isSatisfied
+                      ? 'bg-emerald-950 border-2 border-emerald-400 text-emerald-300'
+                      : isSelected
+                      ? 'bg-cyan-500 border-2 border-white text-slate-950 ring-4 ring-cyan-400/50 scale-110'
+                      : isSelectable
+                      ? 'bg-slate-900 border-2 border-cyan-400 text-cyan-200 animate-pulse scale-105 ring-2 ring-cyan-400/40'
+                      : 'bg-slate-900 border-2 border-slate-700 text-slate-200 hover:border-slate-500'
+                  } ${isHintEvidence ? 'ring-4 ring-amber-400 animate-bounce' : ''}`}
+                >
+                  {isl.capacity}
+                </button>
+              </div>
+            );
+          })}
+        </div>
       </div>
 
-      <div className="text-[8px] text-slate-500 mt-2 text-center">
-        {isResigned
-          ? isEn ? '🕊️ Official solution revealed for strategic review.' : '🕊️ 已揭曉官方正解以供覆盤研究。'
-          : !isPureMode && hintLevel === 3
-          ? isEn ? '👉 Tap both green-highlighted islands to confirm the deduction.' : '👉 請親自點選兩座綠色高亮島嶼完成架橋'
-          : selectedIslandId !== null
-          ? isEn ? 'Click aligned island to bridge (1/2/Remove)' : '點選目標島嶼架設（循環切換 單線 / 雙線 / 清除）'
-          : isEn ? 'Tap island to select connection' : '點選島嶼開始拓撲架設'}
+      {/* 底部撤銷重做與快捷欄 */}
+      <div className="w-full max-w-[340px] flex items-center justify-between px-1 mt-1.5 text-[7.5px] text-slate-400">
+        <div className="flex gap-1">
+          <button
+            onClick={handleUndo}
+            disabled={history.length === 0 || isCompleted}
+            className="px-2 py-0.5 bg-slate-900 border border-slate-800 rounded hover:bg-slate-800 disabled:opacity-40"
+          >
+            ↩ {isEn ? 'Undo (Z)' : '撤銷'}
+          </button>
+          <button
+            onClick={handleRedo}
+            disabled={redoStack.length === 0 || isCompleted}
+            className="px-2 py-0.5 bg-slate-900 border border-slate-800 rounded hover:bg-slate-800 disabled:opacity-40"
+          >
+            ↪ {isEn ? 'Redo (Y)' : '重做'}
+          </button>
+        </div>
+        <div className="text-slate-500">
+          <span>點選兩島連線：無 ➔ 單 ➔ 雙 ➔ 拆除 / N 切換筆記</span>
+        </div>
       </div>
 
-      {/* 賽事級反思面板 */}
-      {(isCompleted || isResigned) && (
-        <div className="mt-3 p-3 bg-slate-950/95 border border-indigo-500/60 rounded-xl text-center w-[min(90vw,46vh)] shadow-2xl animate-fade-in font-mono">
-          <div className="flex items-center justify-between border-b border-slate-800 pb-1.5 mb-2">
+      {/* 即時圖例與全圖連通警示 */}
+      <div className="w-full max-w-[340px] flex items-center justify-around px-1 mt-1 text-[6.5px] text-slate-500">
+        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-950 border border-emerald-500 inline-block" />滿度島嶼</span>
+        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-950 border border-rose-500 inline-block" />超度違規</span>
+        <span className="flex items-center gap-1"><span className="w-2.5 h-[2px] bg-amber-400 border border-amber-400 border-dashed inline-block" />候選筆記</span>
+        {!graphAnalysis.isFullyConnected && graphAnalysis.connectedComponents > 1 && (
+          <span className="text-amber-400 font-bold animate-pulse">⚠️ 孤立子圖 ({graphAnalysis.connectedComponents} 區塊)</span>
+        )}
+      </div>
+
+      {/* 通關結算面板 */}
+      {isCompleted && (
+        <div className="mt-2 p-2.5 bg-slate-950/95 border border-indigo-500/60 rounded-xl text-center w-[min(88vw,42vh)] shadow-2xl animate-fade-in font-mono">
+          <div className="flex items-center justify-between border-b border-slate-800 pb-1 mb-1.5">
             <div className="text-left">
-              <div className="text-[8px] text-slate-500 tracking-wider flex items-center gap-1">
-                <span>GRAPH SPANNING TOPOLOGY</span>
-                {isPureMode ? (
-                  <span className="text-[6.5px] px-1 py-0.2 bg-amber-950 border border-amber-500 text-amber-300 font-bold rounded">
-                    🔥 PURE CHALLENGE
-                  </span>
-                ) : (
-                  <span className="text-[6.5px] px-1 py-0.2 bg-slate-900 border border-slate-700 text-slate-400 rounded">
-                    WARM-UP / SHIELDED
-                  </span>
-                )}
-                {profile.pureStreak >= 2 && (
-                  <span className="text-[6.5px] px-1 py-0.2 bg-purple-950 border border-purple-500 text-purple-300 font-bold rounded">
-                    💎 STREAK ×{profile.pureStreak}
-                  </span>
-                )}
-              </div>
-              <div className="text-xs text-indigo-300 font-bold">
-                {isResigned
-                  ? '🕊️ Resigned (Solution Master Analysis)'
-                  : isPureMode || hintUsageLogRef.current.length === 0
-                  ? '🏆 Pure Autonomous Master Clear'
-                  : '✨ Spanning Topology Verified'}
-              </div>
+              <div className="text-[7.5px] text-slate-500 tracking-wider">HASHIWOKAKERO RESOLVED</div>
+              <div className="text-xs text-indigo-300 font-bold">🌉 星際數橋・完美歐拉連通</div>
             </div>
-
-            <div className="flex flex-col items-end">
-              <div className="px-2 py-0.5 border border-cyan-500 bg-cyan-950/80 rounded text-[10px] font-bold text-cyan-300">
-                IQ {cci.standardIQ} (95% CI: [{cci.ci95IQ[0]}-{cci.ci95IQ[1]}])
-              </div>
-              <span className="text-[6.5px] text-slate-400 mt-0.5">
-                年齡層 ({cci.ageNorm.cohort}): {cci.ageNorm.ageAdjustedZ >= 0 ? `+${cci.ageNorm.ageAdjustedZ}` : cci.ageNorm.ageAdjustedZ} SD (Top {Number((100 - cci.ageNorm.agePercentile).toFixed(1))}%)
-              </span>
+            <div className="px-2 py-0.5 border border-cyan-500 bg-cyan-950/80 rounded text-[9px] font-bold text-cyan-300">
+              Gf: IQ {cci.standardIQ} (Top {Number((100 - cci.percentileRank).toFixed(1))}%)
             </div>
           </div>
 
-          <div className="grid grid-cols-3 gap-1 text-[8px] text-slate-400 mb-2">
-            <div className="bg-slate-900/80 p-1.5 rounded">
+          <div className="grid grid-cols-3 gap-1 text-[7.5px] text-slate-400 mb-1.5">
+            <div className="bg-slate-900/80 p-1 rounded">
               <div>耗時</div>
-              <div className="text-slate-200 font-bold text-xs">{elapsedSec}s</div>
-              <div className="text-[7px] text-slate-500">Benchmark: {benchmarkData.benchmarkTime}s</div>
+              <div className="text-slate-200 font-bold text-[10px]">{(elapsedMs / 1000).toFixed(1)}s</div>
             </div>
-            <div className="bg-slate-900/80 p-1.5 rounded">
-              <div>純挑戰認證</div>
-              <div className="text-amber-300 font-bold text-xs">
-                {isResigned
-                  ? '🕊️ Resigned'
-                  : isPureMode
-                  ? `🔥 Streak ×${profile.pureStreak}`
-                  : hintUsageLogRef.current.length === 0
-                  ? '0 Hints'
-                  : '🛡️ Warm-up'}
-              </div>
-              <div className="text-[7px] text-slate-500">
-                {isResigned ? 'Full Reviewed' : isPureMode ? 'Locked Ladder' : 'Shield Preserved'}
-              </div>
+            <div className="bg-slate-900/80 p-1 rounded">
+              <div>操作步數</div>
+              <div className="text-cyan-300 font-bold text-[10px]">{movesCountRef.current}</div>
             </div>
-            <div className="bg-slate-900/80 p-1.5 rounded">
-              <div>架設衝突</div>
-              <div className="text-amber-300 font-bold text-xs">{conflictCountRef.current} 次</div>
-              <div className="text-[7px] text-slate-500">IRT: {metrics.irt_logit_difficulty ?? 0.0}</div>
+            <div className="bg-slate-900/80 p-1 rounded">
+              <div>衝突次數</div>
+              <div className="text-amber-300 font-bold text-[10px]">{conflictCountRef.current} 次</div>
             </div>
           </div>
 
-          {/* 長期提示時段趨勢 HUD */}
-          {profile.hintTrend.totalCalls > 0 && (
-            <div className="bg-slate-900/80 border border-slate-800 rounded-lg p-2 mb-2 text-left text-[7px]">
-              <div className="flex justify-between items-center text-slate-400 font-bold mb-1 uppercase tracking-wider">
-                <span>📈 LONGITUDINAL BOTTLENECK PROFILE</span>
-                <span className="text-cyan-400 font-mono">{profile.hintTrend.totalCalls} calls</span>
-              </div>
-              <div className="w-full h-1.5 bg-slate-950 rounded-full flex overflow-hidden border border-slate-800 mb-1">
-                <div style={{ width: `${t1Pct}%` }} className="bg-emerald-500 h-full" title={`T1 (0-30s): ${t1Pct}%`} />
-                <div style={{ width: `${t2Pct}%` }} className="bg-amber-500 h-full" title={`T2 (30-60s): ${t2Pct}%`} />
-                <div style={{ width: `${t3Pct}%` }} className="bg-rose-500 h-full" title={`T3 (60s+): ${t3Pct}%`} />
-              </div>
-              <div className="flex justify-between text-[6.5px] text-slate-500">
-                <span>T1 初步 ({t1Pct}%)</span>
-                <span>T2 中期 ({t2Pct}%)</span>
-                <span>T3 深水 ({t3Pct}%)</span>
-              </div>
-            </div>
-          )}
-
-          {/* 該局提示時序 */}
-          {hintUsageLogRef.current.length > 0 && (
-            <div className="bg-slate-900/80 border border-slate-800 rounded-lg p-2 mb-2 text-left text-[7px]">
-              <div className="text-slate-500 font-bold mb-1 uppercase tracking-wider">
-                ⏳ SESSION HINT TIMELINE ({hintUsageLogRef.current.length} calls)
-              </div>
-              <div className="flex flex-wrap gap-1">
-                {hintUsageLogRef.current.map((log, idx) => (
-                  <span
-                    key={idx}
-                    className="px-1.5 py-0.5 bg-slate-950 border border-amber-600/40 text-amber-300 rounded font-mono"
-                  >
-                    T+{log.secFromStart}s (Lv{log.level})
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* 心理計量信賴區間誤差棒 */}
-          <div className="mb-2">
+          <div className="mb-1.5">
             <MetricErrorBar
-              actualVal={elapsedSec}
+              actualVal={Math.round(elapsedMs / 1000)}
               benchmarkVal={benchmarkData.benchmarkTime}
               ci95={benchmarkData.ci95}
               sem={benchmarkData.sem}
@@ -822,57 +957,39 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
             />
           </div>
 
-          {/* 五維認知能力雷達 */}
-          <div className="bg-slate-900/40 p-2 rounded-lg border border-slate-800 flex flex-col items-center mb-2">
+          <div className="bg-slate-900/40 p-1 rounded-lg border border-slate-800 flex flex-col items-center mb-1.5">
             <CognitiveRadarChart
               dimensions={profile.cognitiveDimensions}
               previousDimensions={profile.previousCognitiveDimensions}
-              size={150}
+              size={135}
             />
           </div>
 
-          {/* 交叉弱點引導 */}
-          <div className="bg-indigo-950/40 p-2 rounded-lg border border-indigo-800/60 text-left mb-2 flex items-center justify-between gap-2">
-            <div className="flex-1 text-[8px] text-slate-300">
-              {isEn ? benchmarkData.recommendedFocus.reasonEn : benchmarkData.recommendedFocus.reasonZh}
-            </div>
-            <button
-              onClick={() => handleNavigateTargetGame(benchmarkData.recommendedFocus.targetGame)}
-              className="shrink-0 px-2 py-1 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[8px] rounded transition active:scale-95"
-            >
-              ➜ {isEn ? 'Train' : '立即訓練'}
-            </button>
-          </div>
-
-          {/* 操作按鈕群：縱向數據匯出 + 官方賽事提交 */}
-          <div className="flex gap-1.5 mb-2">
+          <div className="flex gap-1 mb-1.5">
             <button
               onClick={exportLongitudinalDataset}
-              className="flex-1 py-1.5 bg-slate-900 hover:bg-slate-800 border border-cyan-600/50 hover:border-cyan-400 text-cyan-300 text-[8px] font-bold rounded-lg transition shadow flex items-center justify-center gap-1 active:scale-95"
+              className="flex-1 py-1 bg-slate-900 hover:bg-slate-800 border border-cyan-600/50 hover:border-cyan-400 text-cyan-300 text-[7.5px] font-bold rounded transition shadow flex items-center justify-center gap-0.5 active:scale-95"
             >
               <span>📊</span>
-              <span>{isEn ? 'Export Dataset' : '匯出縱向數據'}</span>
+              <span>{isEn ? 'Dataset' : '匯出數據'}</span>
             </button>
 
             <button
               onClick={() => setShowSubmitModal(true)}
-              className="flex-1 py-1.5 bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 text-slate-950 text-[8px] font-black rounded-lg shadow transition active:scale-95 flex items-center justify-center gap-1"
+              className="flex-1 py-1 bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 text-slate-950 text-[7.5px] font-black rounded shadow transition active:scale-95 flex items-center justify-center gap-0.5"
             >
               <span>📤</span>
-              <span>{isEn ? 'Submit Result' : '官方賽事提交'}</span>
+              <span>{isEn ? 'Submit' : '賽事提交'}</span>
             </button>
           </div>
 
-          {/* 本地 Web Crypto SHA-256 存證指紋 */}
           {proofSignature && (
-            <div className="p-1.5 bg-slate-900 border border-slate-800 rounded text-left">
-              <div className="text-[7px] text-slate-500 font-bold uppercase flex justify-between">
+            <div className="p-1 bg-slate-900 border border-slate-800 rounded text-left">
+              <div className="text-[6.5px] text-slate-500 font-bold uppercase flex justify-between">
                 <span>LOCAL RECEIPT (SHA-256)</span>
-                <span className="text-emerald-400 font-mono text-[6px]">
-                  {isPureMode ? 'PURE HARDCORE' : 'TAMPER-PROOF'}
-                </span>
+                <span className="text-emerald-400 font-mono text-[5.5px]">TAMPER-PROOF</span>
               </div>
-              <div className="text-[6.5px] font-mono text-cyan-400/80 break-all select-all mt-0.5">
+              <div className="text-[6px] font-mono text-cyan-400/80 break-all select-all mt-0.5">
                 {proofSignature}
               </div>
             </div>
@@ -894,7 +1011,7 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
             puzzleId: actualPuzzle.id,
             engineType: 'hashi',
             tier: currentTier,
-            timeSpentSec: elapsedSec,
+            timeSpentSec: Math.round(elapsedMs / 1000),
             conflictsCount: conflictCountRef.current,
             infractionScore: calculateInfractionScore({
               tabSwitches: 0,
