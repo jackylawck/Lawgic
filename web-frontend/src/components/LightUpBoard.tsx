@@ -20,7 +20,7 @@ interface Props {
   tournamentMode?: boolean;
 }
 
-type CellState = 0 | 1 | 2 | 3;
+type CellState = 0 | 1 | 2 | 3; // 0: 空白, 1: 燈泡 (💡), 2: 黑塊, 3: 防護點 (•)
 
 export const LightUpBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode = false }) => {
   const actualPuzzle = puzzleData || puzzle;
@@ -60,7 +60,6 @@ export const LightUpBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMo
   const [proofSignature, setProofSignature] = useState<string | null>(null);
   const [isFav, setIsFav] = useState<boolean>(false);
 
-  // 模式控制
   const [isNoGuessMode, setIsNoGuessMode] = useState<boolean>(!tournamentMode);
   const [isNoteMode, setIsNoteMode] = useState<boolean>(false);
   const [isFocusDarkness, setIsFocusDarkness] = useState<boolean>(false);
@@ -112,6 +111,27 @@ export const LightUpBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMo
     return () => clearInterval(interval);
   }, [isCompleted, tournamentMode, timeLimitSec]);
 
+  // 雙燈互照衝突檢測 (Beam Collision)
+  const lampClashes = useMemo(() => {
+    const set = new Set<string>();
+    const isBlock = (r: number, c: number) => board[r][c] === 2;
+
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        if (board[r][c] === 1) {
+          const cells = WebLightUpGenerator.getIlluminatedCells(r, c, rows, cols, isBlock);
+          for (const [ir, ic] of cells) {
+            if (!(ir === r && ic === c) && board[ir][ic] === 1) {
+              set.add(`${r},${c}`);
+              set.add(`${ir},${ic}`);
+            }
+          }
+        }
+      }
+    }
+    return set;
+  }, [board, rows, cols]);
+
   const litMatrix = useMemo(() => {
     const lit: boolean[][] = Array.from({ length: rows }, () => Array(cols).fill(false));
     const isBlock = (r: number, c: number) => board[r][c] === 2;
@@ -149,35 +169,36 @@ export const LightUpBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMo
   const cellSize = Math.min(300 / Math.max(rows, cols), 42);
 
   const rayLines = useMemo(() => {
-    const lines: { x1: number; y1: number; x2: number; y2: number }[] = [];
+    const lines: { x1: number; y1: number; x2: number; y2: number; isClash: boolean }[] = [];
     const isBlock = (r: number, c: number) => board[r][c] === 2;
 
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         if (board[r][c] === 1) {
+          const isClash = lampClashes.has(`${r},${c}`);
           const cx = c * (cellSize + 4) + cellSize / 2 + 6;
           const cy = r * (cellSize + 4) + cellSize / 2 + 6;
 
           let tr = r - 1;
           while (tr >= 0 && !isBlock(tr, c)) tr--;
-          lines.push({ x1: cx, y1: cy, x2: cx, y2: (tr + 1) * (cellSize + 4) + 6 });
+          lines.push({ x1: cx, y1: cy, x2: cx, y2: (tr + 1) * (cellSize + 4) + 6, isClash });
 
           let br = r + 1;
           while (br < rows && !isBlock(br, c)) br++;
-          lines.push({ x1: cx, y1: cy, x2: cx, y2: br * (cellSize + 4) + cellSize + 6 });
+          lines.push({ x1: cx, y1: cy, x2: cx, y2: br * (cellSize + 4) + cellSize + 6, isClash });
 
           let lc = c - 1;
           while (lc >= 0 && !isBlock(r, lc)) lc--;
-          lines.push({ x1: cx, y1: cy, x2: (lc + 1) * (cellSize + 4) + 6, y2: cy });
+          lines.push({ x1: cx, y1: cy, x2: (lc + 1) * (cellSize + 4) + 6, y2: cy, isClash });
 
           let rc = c + 1;
           while (rc < cols && !isBlock(r, rc)) rc++;
-          lines.push({ x1: cx, y1: cy, x2: rc * (cellSize + 4) + cellSize + 6, y2: cy });
+          lines.push({ x1: cx, y1: cy, x2: rc * (cellSize + 4) + cellSize + 6, y2: cy, isClash });
         }
       }
     }
     return lines;
-  }, [board, rows, cols, cellSize]);
+  }, [board, rows, cols, cellSize, lampClashes]);
 
   const checkVictory = useCallback(
     (curBoard: CellState[][]): boolean => {
@@ -259,7 +280,12 @@ export const LightUpBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMo
 
     const deductions = WebLightUpGenerator.getStrictDeductions(rows, cols, blackBlocks, board);
     if (deductions.size === 0) {
-      setGuessWarning(isEn ? 'Observe corridor ray alignments!' : '請觀察光束走廊的交叉對齊！');
+      setGuessWarning(
+        isEn
+          ? 'Observe corridor ray alignments and parity!'
+          : '請觀察光束走廊的交叉對齊與排他奇偶性！'
+      );
+      setTimeout(() => setGuessWarning(null), 3000);
       return;
     }
 
@@ -315,7 +341,7 @@ export const LightUpBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMo
       if (!deduction) {
         setGuessWarning(
           isEn
-            ? '🤔 Not a forced move yet! Check black clues or beam coverage first.'
+            ? '🤔 Not a forced deduction yet! Check black clues or beam coverage first.'
             : '🤔 這格還不是必然定式喔！先觀察線索黑塊或射線交叉吧。'
         );
         setTimeout(() => setGuessWarning(null), 3000);
@@ -433,11 +459,11 @@ export const LightUpBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMo
           ) : (
             <button
               onClick={handleToggleFavorite}
-              className={`px-1.5 py-0.5 rounded text-[7.5px] border font-bold ${
+              className={`px-1.5 py-0.5 rounded text-[7.5px] border font-bold cursor-pointer ${
                 isFav ? 'bg-amber-950 border-amber-500 text-amber-300' : 'bg-slate-900 border-slate-800 text-slate-500'
               }`}
             >
-              {isFav ? '★ 傳奇' : '☆ 收藏'}
+              {isFav ? (isEn ? '★ Vault' : '★ 傳奇') : (isEn ? '☆ Star' : '☆ 收藏')}
             </button>
           )}
 
@@ -457,7 +483,7 @@ export const LightUpBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMo
 
           <button
             onClick={() => setIsFocusDarkness((prev) => !prev)}
-            className={`px-1.5 py-0.5 rounded text-[7px] border transition ${
+            className={`px-1.5 py-0.5 rounded text-[7px] border transition cursor-pointer ${
               isFocusDarkness
                 ? 'bg-amber-400 text-slate-950 font-bold border-amber-300 shadow-[0_0_6px_rgba(251,191,36,0.5)]'
                 : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200'
@@ -470,7 +496,7 @@ export const LightUpBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMo
         <div className="flex items-center gap-1">
           <button
             onClick={() => setBoardScale((s) => Math.max(0.75, Number((s - 0.05).toFixed(2))))}
-            className="w-5 h-5 rounded bg-slate-900 border border-slate-800 text-slate-400 hover:text-slate-200 text-xs flex items-center justify-center active:scale-95"
+            className="w-5 h-5 rounded bg-slate-900 border border-slate-800 text-slate-400 hover:text-slate-200 text-xs flex items-center justify-center active:scale-95 cursor-pointer"
             title={isEn ? 'Zoom Out' : '縮小'}
           >
             -
@@ -480,7 +506,7 @@ export const LightUpBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMo
           </span>
           <button
             onClick={() => setBoardScale((s) => Math.min(1.25, Number((s + 0.05).toFixed(2))))}
-            className="w-5 h-5 rounded bg-slate-900 border border-slate-800 text-slate-400 hover:text-slate-200 text-xs flex items-center justify-center active:scale-95"
+            className="w-5 h-5 rounded bg-slate-900 border border-slate-800 text-slate-400 hover:text-slate-200 text-xs flex items-center justify-center active:scale-95 cursor-pointer"
             title={isEn ? 'Zoom In' : '放大'}
           >
             +
@@ -507,6 +533,10 @@ export const LightUpBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMo
                 <stop offset="0%" stopColor="#f59e0b" stopOpacity="0.6" />
                 <stop offset="100%" stopColor="#fbbf24" stopOpacity="0.15" />
               </linearGradient>
+              <linearGradient id="rayClashGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stopColor="#ef4444" stopOpacity="0.8" />
+                <stop offset="100%" stopColor="#f87171" stopOpacity="0.4" />
+              </linearGradient>
             </defs>
             {rayLines.map((line, idx) => (
               <line
@@ -515,10 +545,10 @@ export const LightUpBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMo
                 y1={line.y1}
                 x2={line.x2}
                 y2={line.y2}
-                stroke="url(#rayGradient)"
-                strokeWidth="3"
-                strokeDasharray="5 3"
-                className="animate-pulse"
+                stroke={line.isClash ? 'url(#rayClashGradient)' : 'url(#rayGradient)'}
+                strokeWidth={line.isClash ? '4' : '3'}
+                strokeDasharray={line.isClash ? '3 2' : '5 3'}
+                className={line.isClash ? 'animate-bounce' : 'animate-pulse'}
               />
             ))}
           </svg>
@@ -532,17 +562,19 @@ export const LightUpBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMo
           >
             {board.map((row, r) =>
               row.map((cell, c) => {
+                const cellKey = `${r},${c}`;
                 const isHintTarget = activeHintStep?.r === r && activeHintStep?.c === c;
                 const isLit = litMatrix[r][c];
+                const isClash = lampClashes.has(cellKey);
                 const blockInfo = blackBlocks.find((b) => b.r === r && b.c === c);
-                const blockStatus = blockStatusMap.get(`${r},${c}`);
+                const blockStatus = blockStatusMap.get(cellKey);
                 const hasPencilX = pencilNotes[r][c];
 
                 const isDimmed = isFocusDarkness && cell !== 2 && isLit && cell !== 1;
 
                 return (
                   <div
-                    key={`${r}-${c}`}
+                    key={cellKey}
                     onClick={() => toggleCell(r, c)}
                     className={`relative flex items-center justify-center rounded-md font-black transition select-none ${
                       isHintTarget && hintLevel >= 1
@@ -553,6 +585,8 @@ export const LightUpBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMo
                           : blockStatus?.state === 'over'
                           ? 'bg-slate-950 border-2 border-rose-500 text-rose-400 shadow-[0_0_8px_rgba(244,63,94,0.4)] z-20 cursor-default'
                           : 'bg-slate-950 border border-slate-700 text-slate-200 cursor-default shadow-inner z-20'
+                        : isClash
+                        ? 'bg-rose-600 text-white ring-4 ring-rose-500 shadow-[0_0_16px_rgba(239,68,68,0.9)] z-20 cursor-pointer animate-pulse'
                         : cell === 1
                         ? 'bg-amber-400/90 text-amber-950 shadow-[0_0_14px_rgba(251,191,36,0.9)] z-20 cursor-pointer'
                         : isDimmed
@@ -621,7 +655,7 @@ export const LightUpBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMo
 
       {/* 無猜測模式警告浮動條 */}
       {guessWarning && (
-        <div className="mt-2 px-3 py-1 bg-amber-950/90 border border-amber-500/70 text-amber-300 text-[8px] rounded-lg animate-bounce text-center max-w-xs">
+        <div className="mt-2 px-3 py-1 bg-amber-950/90 border border-amber-500/70 text-amber-300 text-[8px] rounded-lg animate-bounce text-center max-w-xs font-bold">
           {guessWarning}
         </div>
       )}
@@ -632,31 +666,31 @@ export const LightUpBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMo
           {!tournamentMode && (
             <button
               onClick={() => setIsNoGuessMode((prev) => !prev)}
-              className={`px-2 py-1 text-[8px] font-bold rounded-md border transition ${
+              className={`px-2 py-1 text-[8px] font-bold rounded-md border transition cursor-pointer ${
                 isNoGuessMode
                   ? 'bg-emerald-500/20 border-emerald-400 text-emerald-300 shadow-[0_0_8px_rgba(16,185,129,0.3)]'
                   : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
               }`}
             >
-              🧠 {isNoGuessMode ? '無猜測 ON' : '無猜測'}
+              🧠 {isEn ? `No-Guess: ${isNoGuessMode ? 'ON' : 'OFF'}` : `無猜測 ${isNoGuessMode ? 'ON' : 'OFF'}`}
             </button>
           )}
 
           <button
             onClick={() => setIsNoteMode((prev) => !prev)}
-            className={`px-2 py-1 text-[8px] font-bold rounded-md border transition ${
+            className={`px-2 py-1 text-[8px] font-bold rounded-md border transition cursor-pointer ${
               isNoteMode
                 ? 'bg-cyan-500/20 border-cyan-400 text-cyan-300 shadow-[0_0_8px_rgba(6,182,212,0.3)]'
                 : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
             }`}
           >
-            ✏️ {isNoteMode ? '草稿 ✕ ON' : '草稿 ✕'}
+            ✏️ {isEn ? `Notes ✕: ${isNoteMode ? 'ON' : 'OFF'}` : `草稿 ✕ ${isNoteMode ? 'ON' : 'OFF'}`}
           </button>
 
           {!tournamentMode && (
             <button
               onClick={handleRequestHint}
-              className="px-2 py-1 text-[8px] font-bold rounded-md border bg-slate-900 border-amber-500/50 text-amber-300 hover:bg-amber-950/40 transition flex items-center gap-0.5"
+              className="px-2 py-1 text-[8px] font-bold rounded-md border bg-slate-900 border-amber-500/50 text-amber-300 hover:bg-amber-950/40 transition flex items-center gap-0.5 cursor-pointer"
             >
               💡 {isEn ? 'Hint' : '提示'}
             </button>
@@ -689,7 +723,7 @@ export const LightUpBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMo
             </div>
           )}
           <div className="text-[9px] text-slate-400 mb-2">
-            {isEn ? 'Time' : '耗時'}: {(elapsedMs / 1000).toFixed(2)}s | Gf: IQ {cci.standardIQ} | 空間量尺: {sci.standardScore}/19
+            {isEn ? 'Time' : '耗時'}: {(elapsedMs / 1000).toFixed(2)}s | Gf: IQ {cci.standardIQ} | {isEn ? 'Spatial Scale' : '空間量尺'}: {sci.standardScore}/19
           </div>
 
           {/* 定式推理診斷清單 */}
@@ -698,25 +732,25 @@ export const LightUpBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMo
               🔬 {isEn ? 'Deduction Pattern Breakdown' : '因果定式診斷清單'}
             </div>
             <div className="grid grid-cols-2 gap-1 text-slate-300">
-              <div>⬛ 0 禁絕定式: {techniqueCounts.zero} 次</div>
-              <div>📐 缺額必放定式: {techniqueCounts.forced} 次</div>
-              <div>🔒 滿額防護定式: {techniqueCounts.saturated} 次</div>
-              <div>⚡ 1-2 XOR 複合: {techniqueCounts.xor} 次</div>
-              <div>🔀 對角互斥定式: {techniqueCounts.diagonal} 次</div>
-              <div>🔦 孤立光源收斂: {techniqueCounts.isolated} 次</div>
+              <div>⬛ {isEn ? '0-Exclusion' : '0 禁絕定式'}: {techniqueCounts.zero} {isEn ? 'steps' : '次'}</div>
+              <div>📐 {isEn ? 'Forced Lights' : '缺額必放定式'}: {techniqueCounts.forced} {isEn ? 'steps' : '次'}</div>
+              <div>🔒 {isEn ? 'Saturated Dots' : '滿額防護定式'}: {techniqueCounts.saturated} {isEn ? 'steps' : '次'}</div>
+              <div>⚡ {isEn ? '1-2 XOR Compound' : '1-2 XOR 複合'}: {techniqueCounts.xor} {isEn ? 'steps' : '次'}</div>
+              <div>🔀 {isEn ? 'Diagonal Exclusion' : '對角互斥定式'}: {techniqueCounts.diagonal} {isEn ? 'steps' : '次'}</div>
+              <div>🔦 {isEn ? 'Isolated Ray Converge' : '孤立光源收斂'}: {techniqueCounts.isolated} {isEn ? 'steps' : '次'}</div>
             </div>
           </div>
 
           {/* 空間推理綜合指數 (SCI) 卡片 */}
           <div className="bg-slate-900/90 border border-cyan-800/80 p-2 rounded-lg mb-2 text-left text-[7.5px]">
             <div className="text-cyan-300 font-bold mb-1 flex justify-between">
-              <span>🧭 空間綜合能力指數 (SCI)</span>
+              <span>🧭 {isEn ? 'Spatial Composite Index (SCI)' : '空間綜合能力指數 (SCI)'}</span>
               <span className="text-emerald-400">PR {sci.spatialPercentile}%</span>
             </div>
             <div className="grid grid-cols-3 gap-1 text-center py-1 bg-slate-950/80 rounded mb-1 text-[7px]">
-              <div>迴路控制: <strong className="text-cyan-300">{sci.eulerianLoopControl}</strong></div>
-              <div>黑海分割: <strong className="text-cyan-300">{sci.planarPartitioning}</strong></div>
-              <div>射線投射: <strong className="text-amber-300">{sci.rayTracingControl}</strong></div>
+              <div>{isEn ? 'Loop Control' : '迴路控制'}: <strong className="text-cyan-300">{sci.eulerianLoopControl}</strong></div>
+              <div>{isEn ? 'Planar Partition' : '黑海分割'}: <strong className="text-cyan-300">{sci.planarPartitioning}</strong></div>
+              <div>{isEn ? 'Ray Casting' : '射線投射'}: <strong className="text-amber-300">{sci.rayTracingControl}</strong></div>
             </div>
             <div className="text-[6.5px] text-slate-400 mt-1">
               💡 {sci.recommendedDrill}
@@ -740,8 +774,8 @@ export const LightUpBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMo
               />
             </div>
             <div className="flex justify-between text-[7px] text-slate-400 mt-1">
-              <span>⬛ {isEn ? 'Block Clues' : '黑塊定式'}: {deductionStats.blockCount} 步</span>
-              <span>🔦 {isEn ? 'Ray Coverage' : '射線覆蓋'}: {deductionStats.rayCount} 步</span>
+              <span>⬛ {isEn ? 'Block Clues' : '黑塊定式'}: {deductionStats.blockCount} {isEn ? 'steps' : '步'}</span>
+              <span>🔦 {isEn ? 'Ray Coverage' : '射線覆蓋'}: {deductionStats.rayCount} {isEn ? 'steps' : '步'}</span>
             </div>
 
             <div className="mt-2 pt-1.5 border-t border-slate-800 flex justify-between items-center text-[7.5px]">
@@ -759,7 +793,7 @@ export const LightUpBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMo
           <div className="flex gap-1.5">
             <button
               onClick={exportLongitudinalDataset}
-              className="flex-1 py-1.5 bg-slate-900 hover:bg-slate-800 border border-cyan-600/50 text-cyan-300 text-[8px] font-bold rounded-lg transition"
+              className="flex-1 py-1.5 bg-slate-900 hover:bg-slate-800 border border-cyan-600/50 text-cyan-300 text-[8px] font-bold rounded-lg transition cursor-pointer"
             >
               📊 {isEn ? 'Export Data' : '匯出數據'}
             </button>
@@ -768,7 +802,7 @@ export const LightUpBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMo
           {proofSignature && (
             <div className="mt-2 p-1.5 bg-slate-900 border border-slate-800 rounded text-left">
               <div className="text-[6.5px] font-mono text-cyan-400/80 break-all select-all">
-                🛡️ SHA-256 賽事認證: {proofSignature}
+                {isEn ? '🛡️ SHA-256 Sanctioned Receipt:' : '🛡️ SHA-256 賽事認證:'} {proofSignature}
               </div>
             </div>
           )}
