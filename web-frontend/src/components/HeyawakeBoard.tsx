@@ -277,14 +277,12 @@ export const HeyawakeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
     setRedoStack((prev) => prev.slice(0, -1));
   }, [redoStack, isCompleted]);
 
-  // 🌟 核心防禦：加入 movesCountRef.current > 0 與非空盤面檢驗，杜絕初始化誤通關
+  // 核心防禦：加入 movesCountRef.current > 0 與非空盤面檢驗，杜絕初始化誤通關
   useEffect(() => {
     if (isCompleted || !solution || solution.length === 0) return;
     
-    // 🛑 核心防禦 1：若未曾進行任何走步，絕不判定通關
     if (movesCountRef.current === 0 || history.length === 0) return;
 
-    // 🛑 核心防禦 2：若盤面全為 0（空白），絕不判定通關
     const hasAnyInput = board.some((row) => row.some((cell) => cell !== 0));
     if (!hasAnyInput) return;
 
@@ -372,8 +370,10 @@ export const HeyawakeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
 
   const cci = useMemo(() => getCompositeCognitiveIndex(), [getCompositeCognitiveIndex, isCompleted]);
 
-  const roomLabelPos = useMemo(() => {
-    const map = new Map<number, [number, number]>();
+  const roomStatus = useMemo(() => {
+    const labelPosMap = new Map<number, [number, number]>();
+    const satisfiedRooms = new Set<number>();
+
     for (const room of rooms) {
       let minR = rows;
       let minC = cols;
@@ -383,10 +383,15 @@ export const HeyawakeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
           minC = c;
         }
       }
-      map.set(room.id, [minR, minC]);
+      labelPosMap.set(room.id, [minR, minC]);
+
+      if (room.clue !== null) {
+        const count = room.cells.filter(([r, c]) => board[r][c] === 1).length;
+        if (count === room.clue) satisfiedRooms.add(room.id);
+      }
     }
-    return map;
-  }, [rooms, rows, cols]);
+    return { labelPosMap, satisfiedRooms };
+  }, [rooms, rows, cols, board]);
 
   return (
     <div className="flex flex-col items-center justify-center p-1 select-none font-mono">
@@ -407,7 +412,7 @@ export const HeyawakeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
         </div>
         <button
           onClick={() => setNoGuessMode((prev) => !prev)}
-          className={`p-1 rounded border text-center transition ${
+          className={`p-1 rounded border text-center transition cursor-pointer ${
             noGuessMode
               ? 'bg-purple-950 border-purple-500 text-purple-300 font-bold shadow-xs'
               : 'bg-slate-950 border-slate-800 text-slate-500 hover:text-slate-300'
@@ -419,7 +424,7 @@ export const HeyawakeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
         <button
           onClick={handleRequestHint}
           disabled={isCompleted || tournamentMode}
-          className={`p-1 rounded border text-center transition ${
+          className={`p-1 rounded border text-center transition cursor-pointer ${
             tournamentMode
               ? 'bg-slate-900 border-slate-800 text-slate-600 cursor-not-allowed'
               : activeHint
@@ -484,8 +489,9 @@ export const HeyawakeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
             Array.from({ length: cols }).map((__, c) => {
               const roomId = gridRooms[r]?.[c] ?? 0;
               const room = rooms.find((rm) => rm.id === roomId);
-              const labelCoord = roomLabelPos.get(roomId);
+              const labelCoord = roomStatus.labelPosMap.get(roomId);
               const isLabelCell = labelCoord && labelCoord[0] === r && labelCoord[1] === c && room?.clue !== null;
+              const isRoomSatisfied = roomStatus.satisfiedRooms.has(roomId);
 
               const borderTop = r === 0 || gridRooms[r - 1]?.[c] !== roomId;
               const borderBottom = r === rows - 1 || gridRooms[r + 1]?.[c] !== roomId;
@@ -514,7 +520,7 @@ export const HeyawakeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
                         ? 'bg-fuchsia-950 border border-fuchsia-500 text-fuchsia-200'
                         : 'bg-slate-950 text-slate-100 shadow-inner'
                       : isRayConflict
-                      ? 'bg-amber-950/60 text-amber-300'
+                      ? 'bg-amber-950/70 text-amber-300 ring-1 ring-amber-500/50'
                       : 'bg-slate-900 hover:bg-slate-800/80 text-slate-400'
                   } ${isCursor ? 'outline outline-2 outline-cyan-400 -outline-offset-2 z-10' : ''} ${
                     isHintTarget ? 'ring-2 ring-amber-400 ring-inset animate-bounce z-20' : ''
@@ -528,8 +534,12 @@ export const HeyawakeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
                 >
                   {isLabelCell && (
                     <span
-                      className={`absolute top-0.5 left-0.5 text-[8px] sm:text-[9px] font-black leading-none pointer-events-none z-10 ${
-                        isQuotaConflict ? 'text-fuchsia-400 animate-bounce' : 'text-indigo-400'
+                      className={`absolute top-0.5 left-0.5 text-[8px] sm:text-[9px] font-black leading-none pointer-events-none z-10 transition-colors ${
+                        isQuotaConflict
+                          ? 'text-fuchsia-400 animate-bounce'
+                          : isRoomSatisfied
+                          ? 'text-emerald-400/90'
+                          : 'text-indigo-400'
                       }`}
                     >
                       {room?.clue}
@@ -555,20 +565,20 @@ export const HeyawakeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
           <button
             onClick={handleUndo}
             disabled={history.length === 0 || isCompleted}
-            className="px-2 py-0.5 bg-slate-900 border border-slate-800 rounded hover:bg-slate-800 disabled:opacity-40"
+            className="px-2 py-0.5 bg-slate-900 border border-slate-800 rounded hover:bg-slate-800 disabled:opacity-40 cursor-pointer"
           >
             ↩ {isEn ? 'Undo (Z)' : '撤銷'}
           </button>
           <button
             onClick={handleRedo}
             disabled={redoStack.length === 0 || isCompleted}
-            className="px-2 py-0.5 bg-slate-900 border border-slate-800 rounded hover:bg-slate-800 disabled:opacity-40"
+            className="px-2 py-0.5 bg-slate-900 border border-slate-800 rounded hover:bg-slate-800 disabled:opacity-40 cursor-pointer"
           >
             ↪ {isEn ? 'Redo (Y)' : '重做'}
           </button>
         </div>
-        <div className="text-slate-500">
-          <span>點擊循環：空白 ➔ 塗黑 ➔ 標叉 (留白)</span>
+        <div className="text-slate-500 text-[8px]">
+          {isEn ? 'Click cycle: Blank ➔ Filled ➔ Cross (White)' : '點擊循環：空白 ➔ 塗黑 ➔ 標叉 (留白)'}
         </div>
       </div>
 
@@ -577,7 +587,9 @@ export const HeyawakeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
           <div className="flex items-center justify-between border-b border-slate-800 pb-1 mb-1.5">
             <div className="text-left">
               <div className="text-[7.5px] text-slate-500 tracking-wider">HEYAWAKE RESOLVED</div>
-              <div className="text-xs text-indigo-300 font-bold">✨ 黑白分明・完美解題</div>
+              <div className="text-xs text-indigo-300 font-bold">
+                {isEn ? '✨ Heyawake Fully Partitioned!' : '✨ 黑白分明・完美解題'}
+              </div>
             </div>
             <div className="px-2 py-0.5 border border-cyan-500 bg-cyan-950/80 rounded text-[9px] font-bold text-cyan-300">
               Gf: IQ {cci.standardIQ} (Top {Number((100 - cci.percentileRank).toFixed(1))}%)
@@ -586,16 +598,18 @@ export const HeyawakeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
 
           <div className="grid grid-cols-3 gap-1 text-[7.5px] text-slate-400 mb-1.5">
             <div className="bg-slate-900/80 p-1 rounded">
-              <div>耗時</div>
+              <div>{isEn ? 'Time' : '耗時'}</div>
               <div className="text-slate-200 font-bold text-[10px]">{(elapsedMs / 1000).toFixed(1)}s</div>
             </div>
             <div className="bg-slate-900/80 p-1 rounded">
-              <div>有效步數</div>
+              <div>{isEn ? 'Moves' : '有效步數'}</div>
               <div className="text-cyan-300 font-bold text-[10px]">{movesCountRef.current}</div>
             </div>
             <div className="bg-slate-900/80 p-1 rounded">
-              <div>衝突懲罰</div>
-              <div className="text-amber-300 font-bold text-[10px]">{conflictCountRef.current} 次</div>
+              <div>{isEn ? 'Conflicts' : '衝突懲罰'}</div>
+              <div className="text-amber-300 font-bold text-[10px]">
+                {conflictCountRef.current} {isEn ? '' : '次'}
+              </div>
             </div>
           </div>
 
@@ -621,14 +635,14 @@ export const HeyawakeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
           <div className="flex gap-1 mb-1.5">
             <button
               onClick={exportLongitudinalDataset}
-              className="flex-1 py-1 bg-slate-900 hover:bg-slate-800 border border-cyan-600/50 hover:border-cyan-400 text-cyan-300 text-[7.5px] font-bold rounded transition shadow flex items-center justify-center gap-0.5 active:scale-95"
+              className="flex-1 py-1 bg-slate-900 hover:bg-slate-800 border border-cyan-600/50 hover:border-cyan-400 text-cyan-300 text-[7.5px] font-bold rounded transition shadow flex items-center justify-center gap-0.5 active:scale-95 cursor-pointer"
             >
               <span>📊</span>
               <span>{isEn ? 'Dataset' : '匯出數據'}</span>
             </button>
             <button
               onClick={() => setShowSubmitModal(true)}
-              className="flex-1 py-1 bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 text-slate-950 text-[7.5px] font-black rounded shadow transition active:scale-95 flex items-center justify-center gap-0.5"
+              className="flex-1 py-1 bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 text-slate-950 text-[7.5px] font-black rounded shadow transition active:scale-95 flex items-center justify-center gap-0.5 cursor-pointer"
             >
               <span>📤</span>
               <span>{isEn ? 'Submit' : '賽事提交'}</span>
@@ -638,7 +652,7 @@ export const HeyawakeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
           {proofSignature && (
             <div className="p-1 bg-slate-900 border border-slate-800 rounded text-left">
               <div className="text-[6.5px] text-slate-500 font-bold uppercase flex justify-between">
-                <span>LOCAL RECEIPT (SHA-256)</span>
+                <span>{isEn ? 'LOCAL RECEIPT (SHA-256)' : '本地存證 (SHA-256)'}</span>
                 <span className="text-emerald-400 font-mono text-[5.5px]">TAMPER-PROOF</span>
               </div>
               <div className="text-[6px] font-mono text-cyan-400/80 break-all select-all mt-0.5">
