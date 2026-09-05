@@ -574,7 +574,7 @@ export const ShikakuBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
         >
           <div className="text-[6.5px]">⊞ {isEn ? 'Area' : '面積'}</div>
           <div className="text-[7.5px] font-bold">
-            {analysis.unassignedCount === 0 ? 'Full' : `${analysis.unassignedCount}格`}
+            {analysis.unassignedCount === 0 ? (isEn ? 'Full' : '滿額') : `${analysis.unassignedCount} ${isEn ? 'cells' : '格'}`}
           </div>
         </div>
 
@@ -587,7 +587,7 @@ export const ShikakuBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
           }`}
         >
           <div className="text-[6.5px]">🌓 {isEn ? 'Theme' : '主題'}</div>
-          <div className="text-[7.5px]">{highContrast ? 'Paper' : 'Dark'}</div>
+          <div className="text-[7.5px]">{highContrast ? (isEn ? 'Paper' : '紙感') : (isEn ? 'Dark' : '深色')}</div>
         </button>
 
         <button
@@ -623,7 +623,7 @@ export const ShikakuBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
               <span className="text-slate-400">[{replayStepIndex}/{replayStepsList.length}]</span>
             </span>
             <div className="flex items-center gap-1">
-              <span className="text-[6.5px] text-slate-400">SPEED:</span>
+              <span className="text-[6.5px] text-slate-400">{isEn ? 'SPEED:' : '速度:'}</span>
               {[1, 2, 4].map((spd) => (
                 <button
                   key={spd}
@@ -644,7 +644,7 @@ export const ShikakuBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
             </div>
           </div>
           <div className="truncate text-cyan-300">
-            {currentReplayStep?.rationale || 'Demonstrating deductive rectangle partition...'}
+            {currentReplayStep?.rationale || (isEn ? 'Demonstrating deductive rectangle partition...' : '演示因果演繹矩形分割...')}
           </div>
         </div>
       )}
@@ -809,14 +809,14 @@ export const ShikakuBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
             <button
               onClick={handleCopySeedShareCode}
               className="px-2 py-0.5 bg-slate-900 border border-slate-800 rounded hover:bg-slate-800 text-amber-300"
-              title="Copy Duel Link"
+              title={isEn ? 'Copy Duel Link' : '複製對決連結'}
             >
               🔗 {isEn ? 'Duel Link' : '對決連結'}
             </button>
           )}
         </div>
-        <div className="text-slate-500">
-          <span>拖曳畫框矩形 / 點擊既有框可刪除</span>
+        <div className="text-slate-500 text-[9px]">
+          {isEn ? 'Drag to draw rectangle / Click box to delete' : '拖曳畫框矩形 / 點擊既有框可刪除'}
         </div>
       </div>
 
@@ -825,7 +825,9 @@ export const ShikakuBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
           <div className="flex items-center justify-between border-b border-slate-800 pb-1 mb-1.5">
             <div className="text-left">
               <div className="text-[7.5px] text-slate-500 tracking-wider">SHIKAKU RESOLVED</div>
-              <div className="text-xs text-indigo-300 font-bold">📐 四角分割・完美面積鋪砌</div>
+              <div className="text-xs text-indigo-300 font-bold">
+                {isEn ? '📐 Shikaku Partition Mastered' : '📐 四角分割・完美面積鋪砌'}
+              </div>
             </div>
             <div className="px-2 py-0.5 border border-cyan-500 bg-cyan-950/80 rounded text-[9px] font-bold text-cyan-300">
               Gf: IQ {cci.standardIQ} (Top {Number((100 - cci.percentileRank).toFixed(1))}%)
@@ -834,16 +836,16 @@ export const ShikakuBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
 
           <div className="grid grid-cols-3 gap-1 text-[7.5px] text-slate-400 mb-1.5">
             <div className="bg-slate-900/80 p-1 rounded">
-              <div>耗時</div>
+              <div>{isEn ? 'Time' : '耗時'}</div>
               <div className="text-slate-200 font-bold text-[10px]">{(elapsedMs / 1000).toFixed(1)}s</div>
             </div>
             <div className="bg-slate-900/80 p-1 rounded">
-              <div>劃框步數</div>
+              <div>{isEn ? 'Moves' : '劃框步數'}</div>
               <div className="text-cyan-300 font-bold text-[10px]">{movesCountRef.current}</div>
             </div>
             <div className="bg-slate-900/80 p-1 rounded">
-              <div>衝突次數</div>
-              <div className="text-amber-300 font-bold text-[10px]">{conflictCountRef.current} 次</div>
+              <div>{isEn ? 'Conflicts' : '衝突次數'}</div>
+              <div className="text-amber-300 font-bold text-[10px]">{conflictCountRef.current} {isEn ? '' : '次'}</div>
             </div>
           </div>
 
