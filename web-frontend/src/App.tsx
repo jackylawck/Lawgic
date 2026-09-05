@@ -3,10 +3,10 @@ import React, { useState, useMemo, useRef, useEffect, useCallback, memo } from '
 import { ErrorBoundary } from 'react-error-boundary';
 import { LanguageProvider, useLanguage } from './contexts/LanguageContext';
 import { PuzzleRenderer, CognitiveDashboard } from './registry/RendererRegistry';
-import { PUZZLE_CATALOG, PuzzleEntity } from './generated';
+import { PUZZLE_CATALOG, PuzzleEntity, TierKey as GeneratedTierKey } from './generated';
 import { LangSwitcher } from './components/LangSwitcher';
 import { VirtualGamepad } from './components/VirtualGamepad';
-import { useLearnerProfile, TierKey } from './hooks/useLearnerProfile';
+import { useLearnerProfile, ExtendedTierKey } from './hooks/useLearnerProfile';
 import { ChallengeCodec } from './utils/challengeCodec';
 
 // 匯入所有演算法生成器 (涵蓋全套 18 款謎題引擎)
@@ -28,8 +28,6 @@ import { WebDominoesGenerator } from './engines/dominoesGenerator';
 import { WebHeyawakeGenerator } from './engines/heyawakeGenerator';
 import { WebYajilinGenerator } from './engines/yajilinGenerator';
 import { WebShikakuGenerator } from './engines/shikakuGenerator';
-
-export type ExtendedTierKey = TierKey | 'legendary' | 'ultimate';
 
 interface PuzzleMeta {
   id: string;
@@ -104,7 +102,8 @@ PuzzleTimer.displayName = 'PuzzleTimer';
 function generateEnginePuzzle(gameId: string, tier: ExtendedTierKey): PuzzleEntity | null {
   try {
     let puzzle: PuzzleEntity | null = null;
-    const baseTier: TierKey = (tier === 'legendary' || tier === 'ultimate') ? 'master' : (tier as TierKey);
+    // 嚴格將 ExtendedTier 映射至生成的標準 4 個核心等級，確保完全符合引擎參數型別
+    const baseTier: GeneratedTierKey = (tier === 'legendary' || tier === 'ultimate') ? 'master' : (tier as GeneratedTierKey);
 
     switch (gameId) {
       case 'maze':
@@ -114,10 +113,10 @@ function generateEnginePuzzle(gameId: string, tier: ExtendedTierKey): PuzzleEnti
         puzzle = WebSudokuGenerator.generate(baseTier);
         break;
       case 'nonogram':
-        puzzle = WebNonogramGenerator.generate(tier as any);
+        puzzle = WebNonogramGenerator.generate(baseTier);
         break;
       case 'nurikabe':
-        puzzle = WebNurikabeGenerator.generate(tier as any);
+        puzzle = WebNurikabeGenerator.generate(baseTier);
         break;
       case 'skyscraper':
         puzzle = WebSkyscraperGenerator.generate(baseTier);
@@ -135,19 +134,19 @@ function generateEnginePuzzle(gameId: string, tier: ExtendedTierKey): PuzzleEnti
         puzzle = WebTentsGenerator.generate(baseTier);
         break;
       case 'lightup':
-        puzzle = WebLightUpGenerator.generate((tier === 'ultimate' ? 'legendary' : tier) as any);
+        puzzle = WebLightUpGenerator.generate(baseTier);
         break;
       case 'futoshiki':
-        puzzle = WebFutoshikiGenerator.generate(tier as any);
+        puzzle = WebFutoshikiGenerator.generate(baseTier);
         break;
       case 'hitori':
-        puzzle = WebHitoriGenerator.generate(tier as any);
+        puzzle = WebHitoriGenerator.generate(baseTier);
         break;
       case 'kakuro':
-        puzzle = WebKakuroGenerator.generate(tier as any);
+        puzzle = WebKakuroGenerator.generate(baseTier);
         break;
       case 'masyu':
-        puzzle = WebMasyuGenerator.generate(tier as any);
+        puzzle = WebMasyuGenerator.generate(baseTier);
         break;
       case 'dominoes':
         puzzle = WebDominoesGenerator.generate(baseTier);
@@ -156,10 +155,10 @@ function generateEnginePuzzle(gameId: string, tier: ExtendedTierKey): PuzzleEnti
         puzzle = WebHeyawakeGenerator.generate(baseTier);
         break;
       case 'yajilin':
-        puzzle = WebYajilinGenerator.generate(tier as any);
+        puzzle = WebYajilinGenerator.generate(baseTier);
         break;
       case 'shikaku':
-        puzzle = WebShikakuGenerator.generate(tier as any);
+        puzzle = WebShikakuGenerator.generate(baseTier);
         break;
       default:
         return null;
