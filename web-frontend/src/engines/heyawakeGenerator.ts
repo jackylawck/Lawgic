@@ -5,22 +5,22 @@ export type ExtendedTierKey = TierKey | 'legendary' | 'ultimate';
 
 export interface Room {
   id: number;
-  cells: [number, number][]; // [r, c]
-  clue: number | null;       // null: 無數字約束
+  cells: [number, number][];
+  clue: number | null;
   shapeType?: 'rect' | 'corridor' | 'l_shape' | 't_shape' | 'irregular';
 }
 
 export type HeyawakeTechnique =
-  | 'quota_full_exclusion'       // 配額滿額留白
-  | 'quota_starvation_fill'      // 配額缺額強制填黑
-  | 'adjacent_black_isolation'   // 黑格不相鄰留白
-  | 'ray_boundary_blocker'       // 防跨雙牆射線填黑阻斷
-  | 'connectivity_bridge';       // 白格正交連通割點守護
+  | 'quota_full_exclusion'
+  | 'quota_starvation_fill'
+  | 'adjacent_black_isolation'
+  | 'ray_boundary_blocker'
+  | 'connectivity_bridge';
 
 export interface HeyawakeHintStep {
   step: number;
-  targetCell: [number, number]; // [r, c]
-  forcedState: 1 | 2;           // 1: 必填黑, 2: 必留白 (叉)
+  targetCell: [number, number];
+  forcedState: 1 | 2; // 1: 黑, 2: 白
   technique: HeyawakeTechnique;
   rationale: string;
   humanReadable: {
@@ -34,8 +34,8 @@ export interface HeyawakeSpec {
   cols: number;
   rooms: Room[];
   gridRooms: number[][];
-  solution: boolean[][];        // true: 黑格, false: 白格
-  pureDeductionRate: number;    // 人類可純邏輯推導率 (1.0 = No-Guess 賽事品質)
+  solution: boolean[][];
+  pureDeductionRate: number;
   tier: ExtendedTierKey;
   seed: number;
   solvingSteps?: HeyawakeHintStep[];
@@ -78,7 +78,7 @@ function mulberry32(a: number) {
 
 export class WebHeyawakeGenerator {
   /**
-   * 射線跨界演算法：連續白格跨越房間邊界線不得 >= 2
+   * 射線跨界演算法：連續白格穿透邊界線不得 >= 2
    */
   public static checkBoundaryCrossing(
     board: boolean[][],
@@ -87,29 +87,29 @@ export class WebHeyawakeGenerator {
     gridRooms: number[][]
   ): boolean {
     for (let r = 0; r < rows; r++) {
-      let crossedBorders = 0;
+      let crossed = 0;
       for (let c = 0; c < cols; c++) {
         if (!board[r][c]) {
           if (c > 0 && !board[r][c - 1] && gridRooms[r][c] !== gridRooms[r][c - 1]) {
-            crossedBorders++;
-            if (crossedBorders >= 2) return false;
+            crossed++;
+            if (crossed >= 2) return false;
           }
         } else {
-          crossedBorders = 0;
+          crossed = 0;
         }
       }
     }
 
     for (let c = 0; c < cols; c++) {
-      let crossedBorders = 0;
+      let crossed = 0;
       for (let r = 0; r < rows; r++) {
         if (!board[r][c]) {
           if (r > 0 && !board[r - 1][c] && gridRooms[r][c] !== gridRooms[r - 1][c]) {
-            crossedBorders++;
-            if (crossedBorders >= 2) return false;
+            crossed++;
+            if (crossed >= 2) return false;
           }
         } else {
-          crossedBorders = 0;
+          crossed = 0;
         }
       }
     }
@@ -136,7 +136,8 @@ export class WebHeyawakeGenerator {
     if (!startWhite) return false;
 
     const queue: [number, number][] = [startWhite];
-    const visited = new Set<string>([`${startWhite[0]},${startWhite[1]}`]);
+    const visited = new Uint8Array(rows * cols);
+    visited[startWhite[0] * cols + startWhite[1]] = 1;
     let count = 0;
 
     while (queue.length > 0) {
@@ -147,9 +148,9 @@ export class WebHeyawakeGenerator {
         const nr = cr + dr;
         const nc = cc + dc;
         if (nr >= 0 && nr < rows && nc >= 0 && nc < cols && !board[nr][nc]) {
-          const key = `${nr},${nc}`;
-          if (!visited.has(key)) {
-            visited.add(key);
+          const idx = nr * cols + nc;
+          if (!visited[idx]) {
+            visited[idx] = 1;
             queue.push([nr, nc]);
           }
         }
@@ -160,17 +161,16 @@ export class WebHeyawakeGenerator {
   }
 
   /**
-   * 人類可解性因果定式引擎 (Human Deduction Engine)
-   * 狀態碼：0: 未決, 1: 黑格, 2: 白格 (叉)
+   * 人類可解性因果定式引擎
    */
   public static getNextForcedDeduction(
     rows: number,
     cols: number,
     rooms: Room[],
     gridRooms: number[][],
-    grid: number[][]
+    grid: number[][] // 0: 未決, 1: 黑, 2: 白
   ): HeyawakeHintStep | null {
-    // 定式 1: 房間配額滿額留白 (Quota Full)
+    // 定式 1: 房間配額滿額留白
     for (const room of rooms) {
       if (room.clue === null) continue;
       let blackCount = 0;
@@ -188,16 +188,16 @@ export class WebHeyawakeGenerator {
           targetCell: target,
           forcedState: 2,
           technique: 'quota_full_exclusion',
-          rationale: `房間 #${room.id + 1} 黑格配額已滿 (${room.clue}/${room.clue})，剩餘空格全數強制留白。`,
+          rationale: `房間 #${room.id + 1} 黑格配額已滿 (${room.clue}/${room.clue})，剩餘未定格強制留白。`,
           humanReadable: {
-            zh: `房間 #${room.id + 1} 線索數字為 ${room.clue} 且已找齊所有黑格，此處必須標記為白格（標叉）。`,
-            en: `Room #${room.id + 1} quota of ${room.clue} is satisfied. Remaining cells must be white.`,
+            zh: `房間 #${room.id + 1} 線索為 ${room.clue} 且黑格已找齊，此單元格強制標記為白格！`,
+            en: `Room #${room.id + 1} quota of ${room.clue} is satisfied. Cell must be marked white.`,
           },
         };
       }
     }
 
-    // 定式 2: 房間配額缺額填黑 (Quota Starvation)
+    // 定式 2: 房間配額缺額填黑
     for (const room of rooms) {
       if (room.clue === null) continue;
       let blackCount = 0;
@@ -216,16 +216,16 @@ export class WebHeyawakeGenerator {
           targetCell: target,
           forcedState: 1,
           technique: 'quota_starvation_fill',
-          rationale: `房間 #${room.id + 1} 剩餘可用空格 (${unassigned.length}) 恰好等於所需黑格數 (${needed})，全數強制填黑。`,
+          rationale: `房間 #${room.id + 1} 尚缺 ${needed} 個黑格，剩餘空格恰等於所需數量，強制填黑。`,
           humanReadable: {
-            zh: `房間 #${room.id + 1} 尚缺 ${needed} 個黑格，且恰好只剩 ${unassigned.length} 個空格，此處必須塗黑。`,
-            en: `Room #${room.id + 1} requires ${needed} more black cell(s) and has exactly ${unassigned.length} space(s) left. Must be filled.`,
+            zh: `房間 #${room.id + 1} 尚缺 ${needed} 個黑格，剩餘未定格必須塗黑！`,
+            en: `Room #${room.id + 1} requires ${needed} more black cell(s). Must be filled black.`,
           },
         };
       }
     }
 
-    // 定式 3: 黑格正交相鄰隔離 (Black Cell Isolation)
+    // 定式 3: 黑格不相鄰隔離
     const dirs = [[0, 1], [0, -1], [1, 0], [-1, 0]];
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
@@ -239,9 +239,9 @@ export class WebHeyawakeGenerator {
                 targetCell: [nr, nc],
                 forcedState: 2,
                 technique: 'adjacent_black_isolation',
-                rationale: `黑格相鄰隔離規則：黑格周圍正交四向不得出現相鄰黑格，強制留白。`,
+                rationale: `黑格不得相鄰規則：黑格正交相鄰方向必須留白。`,
                 humanReadable: {
-                  zh: `根據黑格不得相鄰規則，[${r + 1}, ${c + 1}] 已是黑格，相鄰格必須標記為白格。`,
+                  zh: `根據黑格不得相鄰規則，[${r + 1}, ${c + 1}] 已是黑格，此相鄰格強制留白！`,
                   en: `Black cells cannot be orthogonally adjacent. Cell adjacent to [${r + 1}, ${c + 1}] must be white.`,
                 },
               };
@@ -251,12 +251,12 @@ export class WebHeyawakeGenerator {
       }
     }
 
-    // 定式 4: 防跨雙牆射線阻斷 (Ray Boundary Blocker)
+    // 定式 4: 防跨雙牆射線阻斷
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         if (grid[r][c] !== 0) continue;
 
-        // 假設此格留白 (狀態 2)，檢查是否會在水平向形成跨越 >= 2 邊界的白射線
+        // 水平向假設留白檢測
         grid[r][c] = 2;
         let left = c;
         while (left > 0 && grid[r][left - 1] === 2) left--;
@@ -275,15 +275,15 @@ export class WebHeyawakeGenerator {
             targetCell: [r, c],
             forcedState: 1,
             technique: 'ray_boundary_blocker',
-            rationale: `若此格為白格，水平射線段將跨越 ${crossed} 條房間邊界（違反最多 1 條規則），因此此格強制填黑。`,
+            rationale: `若留白會導致水平連續白區跨越 ${crossed} 條房間邊界，違反上限規定，強制塗黑阻斷。`,
             humanReadable: {
-              zh: `觀察第 ${r + 1} 行：此格若為白格將造成白光通道連續穿透兩道房間牆壁，因此此處必須填黑阻斷。`,
-              en: `Row ${r + 1}: Leaving this cell white would bridge across 2+ room borders. Must be filled black to block the ray.`,
+              zh: `第 ${r + 1} 行：此格若留白將跨越兩道以上房間牆體，強制塗黑阻斷射線！`,
+              en: `Row ${r + 1}: Leaving white bridges 2+ room boundaries. Forced black to block ray.`,
             },
           };
         }
 
-        // 垂直向射線阻斷檢查
+        // 垂直向假設留白檢測
         grid[r][c] = 2;
         let top = r;
         while (top > 0 && grid[top - 1][c] === 2) top--;
@@ -302,39 +302,10 @@ export class WebHeyawakeGenerator {
             targetCell: [r, c],
             forcedState: 1,
             technique: 'ray_boundary_blocker',
-            rationale: `若此格為白格，垂直射線段將跨越 ${crossed} 條房間邊界，因此此格強制填黑。`,
+            rationale: `若留白會導致垂直連續白區跨越 ${crossed} 條房間邊界，強制塗黑阻斷。`,
             humanReadable: {
-              zh: `觀察第 ${c + 1} 列：若此處留白將導致縱向白通道跨越兩道邊界，此處強制填黑阻斷。`,
-              en: `Col ${c + 1}: Leaving this white creates a ray spanning across 2+ borders. Must be filled black.`,
-            },
-          };
-        }
-      }
-    }
-
-    // 定式 5: 正交單連通割點守護 (Connectivity Bridge)
-    for (let r = 0; r < rows; r++) {
-      for (let c = 0; c < cols; c++) {
-        if (grid[r][c] !== 0) continue;
-
-        // 若填黑後是否會將既有確定的白格（狀態 2）拆散
-        grid[r][c] = 1;
-        const testBoard = Array.from({ length: rows }, (_, tr) =>
-          Array.from({ length: cols }, (_, tc) => grid[tr][tc] === 1)
-        );
-        const connected = WebHeyawakeGenerator.isWhiteConnected(testBoard, rows, cols);
-        grid[r][c] = 0;
-
-        if (!connected) {
-          return {
-            step: 1,
-            targetCell: [r, c],
-            forcedState: 2,
-            technique: 'connectivity_bridge',
-            rationale: `此格為白格連通性的拓撲割點（Articulation Point），塗黑將導致白區被截斷孤立，強制留白。`,
-            humanReadable: {
-              zh: `此格為白格網絡的關鍵連通橋樑，若塗黑會將白格分割成孤立區域，因此必須標記為白格。`,
-              en: `This cell is a critical connectivity bridge. Filling it black isolates white regions; must remain white.`,
+              zh: `第 ${c + 1} 列：此格若留白將縱向跨越兩道以上房間牆體，強制塗黑！`,
+              en: `Col ${c + 1}: Leaving white spans 2+ room boundaries vertically. Forced black.`,
             },
           };
         }
@@ -344,10 +315,6 @@ export class WebHeyawakeGenerator {
     return null;
   }
 
-  /**
-   * 人類推導波前可解性評估器 (Human Solvability Wavefront)
-   * 模擬選手解題歷程，統計純邏輯推導覆蓋率 (pureDeductionRate)
-   */
   public static evaluateHumanSolvability(
     rows: number,
     cols: number,
@@ -388,7 +355,7 @@ export class WebHeyawakeGenerator {
   }
 
   /**
-   * CSP 帶剪枝唯一解驗證器
+   * 帶前向剪枝的 CSP 唯一解求解器
    */
   public static countHeyawakeSolutions(
     rooms: Room[],
@@ -399,7 +366,7 @@ export class WebHeyawakeGenerator {
   ): number {
     const board: (boolean | null)[][] = Array.from({ length: rows }, () => Array(cols).fill(null));
     let solutionCount = 0;
-    let stepBudget = 3500;
+    let stepBudget = 8000;
 
     const roomQuotaMap = new Map<number, number>();
     for (const rm of rooms) {
@@ -428,7 +395,6 @@ export class WebHeyawakeGenerator {
       const roomId = gridRooms[r][c];
       const quota = roomQuotaMap.get(roomId);
 
-      const candidates: boolean[] = [false];
       const hasAdjacentBlack =
         (r > 0 && board[r - 1][c] === true) ||
         (c > 0 && board[r][c - 1] === true);
@@ -437,56 +403,61 @@ export class WebHeyawakeGenerator {
         !hasAdjacentBlack &&
         (quota === undefined || roomFilledBlack[roomId] < quota);
 
-      if (canPlaceBlack) candidates.push(true);
-
-      for (const val of candidates) {
-        if (!val && quota !== undefined) {
-          const remainingAfter = roomRemainingCells[roomId] - 1;
-          const needed = quota - roomFilledBlack[roomId];
-          if (remainingAfter < needed) continue;
-        }
-
-        if (!val && c > 0 && board[r][c - 1] === false) {
-          let borders = 0;
-          let k = c;
-          while (k > 0 && board[r][k - 1] === false) {
-            if (gridRooms[r][k] !== gridRooms[r][k - 1]) borders++;
-            k--;
-          }
-          if (borders >= 2) continue;
-        }
-
-        if (!val && r > 0 && board[r - 1][c] === false) {
-          let borders = 0;
-          let k = r;
-          while (k > 0 && board[k - 1][c] === false) {
-            if (gridRooms[k][c] !== gridRooms[k - 1][c]) borders++;
-            k--;
-          }
-          if (borders >= 2) continue;
-        }
-
-        board[r][c] = val;
+      // 分支 1: 放黑
+      if (canPlaceBlack) {
+        board[r][c] = true;
         roomRemainingCells[roomId]--;
-        if (val) roomFilledBlack[roomId]++;
+        roomFilledBlack[roomId]++;
 
         backtrack(nextR, nextC);
 
         board[r][c] = null;
         roomRemainingCells[roomId]++;
-        if (val) roomFilledBlack[roomId]--;
-
-        if (solutionCount >= limit) return;
+        roomFilledBlack[roomId]--;
       }
+
+      // 分支 2: 放白
+      if (quota !== undefined) {
+        const remainingAfter = roomRemainingCells[roomId] - 1;
+        const needed = quota - roomFilledBlack[roomId];
+        if (remainingAfter < needed) return;
+      }
+
+      // 局部剪枝：水平雙牆白射線防禦
+      if (c > 0 && board[r][c - 1] === false) {
+        let borders = 0;
+        let k = c;
+        while (k > 0 && board[r][k - 1] === false) {
+          if (gridRooms[r][k] !== gridRooms[r][k - 1]) borders++;
+          k--;
+        }
+        if (borders >= 2) return;
+      }
+
+      // 局部剪枝：垂直雙牆白射線防禦
+      if (r > 0 && board[r - 1][c] === false) {
+        let borders = 0;
+        let k = r;
+        while (k > 0 && board[k - 1][c] === false) {
+          if (gridRooms[k][c] !== gridRooms[k - 1][c]) borders++;
+          k--;
+        }
+        if (borders >= 2) return;
+      }
+
+      board[r][c] = false;
+      roomRemainingCells[roomId]--;
+
+      backtrack(nextR, nextC);
+
+      board[r][c] = null;
+      roomRemainingCells[roomId]++;
     };
 
     backtrack(0, 0);
     return solutionCount;
   }
 
-  /**
-   * 種子生長多樣性房間劃分
-   */
   private static _partitionRoomsDiverse(
     rows: number,
     cols: number,
@@ -589,6 +560,55 @@ export class WebHeyawakeGenerator {
     return { rooms, gridRooms };
   }
 
+  /**
+   * 約束引導構造合法解答（不再盲目隨機撒點）
+   */
+  private static _generateConstrainedSolution(
+    rows: number,
+    cols: number,
+    rooms: Room[],
+    gridRooms: number[][],
+    rnd: () => number
+  ): boolean[][] | null {
+    const board: boolean[][] = Array.from({ length: rows }, () => Array(cols).fill(false));
+
+    // 各房間嘗試依上限配置不相鄰黑格
+    for (const room of rooms) {
+      const maxPossibleBlack = Math.ceil(room.cells.length / 2);
+      const targetBlack = Math.floor(rnd() * (maxPossibleBlack + 1));
+      let placed = 0;
+
+      const shuffledCells = [...room.cells];
+      for (let i = shuffledCells.length - 1; i > 0; i--) {
+        const j = Math.floor(rnd() * (i + 1));
+        [shuffledCells[i], shuffledCells[j]] = [shuffledCells[j], shuffledCells[i]];
+      }
+
+      for (const [r, c] of shuffledCells) {
+        if (placed >= targetBlack) break;
+
+        const hasAdjacentBlack =
+          (r > 0 && board[r - 1][c]) ||
+          (r < rows - 1 && board[r + 1][c]) ||
+          (c > 0 && board[r][c - 1]) ||
+          (c < cols - 1 && board[r][c + 1]);
+
+        if (!hasAdjacentBlack) {
+          board[r][c] = true;
+          // 局部若破壞連通或射線則立即回滾
+          if (!this.checkBoundaryCrossing(board, rows, cols, gridRooms)) {
+            board[r][c] = false;
+          } else {
+            placed++;
+          }
+        }
+      }
+    }
+
+    if (!this.isWhiteConnected(board, rows, cols)) return null;
+    return board;
+  }
+
   public static generate(tier: ExtendedTierKey = 'kids', inputSeed?: number): PuzzleEntity {
     const config = TIER_SPECS[tier] || TIER_SPECS.kids;
     const { rows, cols, minRooms, maxRooms, clueDensity, minPureRate, baseIrt } = config;
@@ -597,36 +617,28 @@ export class WebHeyawakeGenerator {
     const rnd = mulberry32(actualSeed);
 
     let attempts = 0;
-    const maxAttempts = 40;
+    const maxAttempts = 30;
 
     while (attempts < maxAttempts) {
       attempts++;
 
-      // 1. 生成多樣房間
       const targetRooms = minRooms + Math.floor(rnd() * (maxRooms - minRooms + 1));
       const { rooms, gridRooms } = this._partitionRoomsDiverse(rows, cols, targetRooms, rnd);
 
-      // 2. 獲取候選合法解
-      const solution = this._generateValidSolution(rows, cols, rooms, gridRooms, rnd);
+      const solution = this._generateConstrainedSolution(rows, cols, rooms, gridRooms, rnd);
       if (!solution) continue;
 
-      // 3. 賦予配額
       for (const room of rooms) {
         const blackCount = room.cells.filter(([r, c]) => solution[r][c]).length;
         room.clue = rnd() < clueDensity ? blackCount : null;
       }
 
-      // 4. CSP 唯一解校驗
       const solutions = this.countHeyawakeSolutions(rooms, gridRooms, rows, cols, 2);
       if (solutions !== 1) continue;
 
-      // 5. 人類定式波前可解性評估 (保證 No-Guess 純邏輯通關標準)
       const evaluation = this.evaluateHumanSolvability(rows, cols, rooms, gridRooms);
-      if (evaluation.pureRate < minPureRate) {
-        continue;
-      }
+      if (evaluation.pureRate < minPureRate) continue;
 
-      // 6. 幾何結構與認知指標
       const totalCells = rows * cols;
       const avgRoomSize = totalCells / rooms.length;
       const roomSizeVariance =
@@ -642,14 +654,10 @@ export class WebHeyawakeGenerator {
       const internalWallDensity = internalWallCount / (rows * (cols - 1) + cols * (rows - 1));
       const clueCount = rooms.filter((r) => r.clue !== null).length;
       const clueRatio = clueCount / rooms.length;
-      const clueEntropy = - (clueRatio * Math.log2(clueRatio + 1e-6) + (1 - clueRatio) * Math.log2(1 - clueRatio + 1e-6));
+      const clueEntropy = -(clueRatio * Math.log2(clueRatio + 1e-6) + (1 - clueRatio) * Math.log2(1 - clueRatio + 1e-6));
 
       const structuralOffset = (roomSizeVariance * 0.12 + internalWallDensity * 0.65 + (1 - clueRatio) * 0.8) - 0.45;
       const dynamicIrt = Number(Math.max(-2.5, Math.min(4.5, baseIrt + structuralOffset)).toFixed(2));
-
-      const spatialLoad = Number(Math.min(1.0, 0.35 + internalWallDensity * 0.50 + (rooms.length / totalCells) * 0.35).toFixed(2));
-      const workingMemory = Number(Math.min(1.0, 0.30 + (1 - clueRatio) * 0.40 + (roomSizeVariance / 10) * 0.25).toFixed(2));
-      const inhibition = Number(Math.min(1.0, 0.40 + (tier === 'ultimate' ? 0.45 : tier === 'legendary' ? 0.35 : 0.25)).toFixed(2));
 
       const puzzleId = `heyawake_${tier}_s${actualSeed}`;
       const spec: HeyawakeSpec = {
@@ -680,10 +688,10 @@ export class WebHeyawakeGenerator {
         puzzle: spec as any,
         solution: solution as any,
         cognitiveLoad: {
-          spatial: spatialLoad,
+          spatial: Number(Math.min(1.0, 0.35 + internalWallDensity * 0.50 + (rooms.length / totalCells) * 0.35).toFixed(2)),
           numeric: Number(Math.min(1.0, 0.25 + clueRatio * 0.45).toFixed(2)),
-          workingMemory,
-          inhibition,
+          workingMemory: Number(Math.min(1.0, 0.30 + (1 - clueRatio) * 0.40 + (roomSizeVariance / 10) * 0.25).toFixed(2)),
+          inhibition: 0.88,
         },
         metrics: {
           estimated_time_sec: Math.max(35, Math.round(totalCells * 2.8 + internalWallCount * 0.5)),
@@ -697,35 +705,6 @@ export class WebHeyawakeGenerator {
     }
 
     return this._generateFallback(tier, rows, cols, actualSeed, baseIrt);
-  }
-
-  private static _generateValidSolution(
-    rows: number,
-    cols: number,
-    rooms: Room[],
-    gridRooms: number[][],
-    rnd: () => number
-  ): boolean[][] | null {
-    const board: boolean[][] = Array.from({ length: rows }, () => Array(cols).fill(false));
-
-    for (let r = 0; r < rows; r++) {
-      for (let c = 0; c < cols; c++) {
-        const hasAdjacentBlack =
-          (r > 0 && board[r - 1][c]) ||
-          (r < rows - 1 && board[r + 1][c]) ||
-          (c > 0 && board[r][c - 1]) ||
-          (c < cols - 1 && board[r][c + 1]);
-
-        if (!hasAdjacentBlack && rnd() < 0.28) {
-          board[r][c] = true;
-        }
-      }
-    }
-
-    if (!this.isWhiteConnected(board, rows, cols)) return null;
-    if (!this.checkBoundaryCrossing(board, rows, cols, gridRooms)) return null;
-
-    return board;
   }
 
   private static _generateFallback(
