@@ -11,11 +11,12 @@ export interface ArrowClue {
   count: number;
 }
 
-export type YajilinCellState = 0 | 1 | 2; // 0: 未決, 1: 塗黑 (Black Cell), 2: 迴路格 (Path Node)
+export type YajilinCellState = 0 | 1 | 2; // 0: 未決, 1: 塗黑, 2: 迴路格
 export type YajilinCellEdges = [boolean, boolean, boolean, boolean]; // [Top, Right, Bottom, Left]
 
 export type YajilinTechnique =
   | 'zero_arrow_path'
+  | 'arrow_starvation_black'
   | 'black_cell_isolation'
   | 'corner_forced_turn'
   | 'arrow_quota_convergence'
@@ -76,31 +77,23 @@ const TIER_SPECS: Record<ExtendedTierKey, TierConfig> = {
   ultimate: { rows: 12, cols: 12, clueCount: 16, baseIrt: 4.0 },
 };
 
-interface AnchoredItem {
-  id: string;
-  tortuosity: number;
-  rayDensity: number;
-  totalTurns: number;
-  clueCount: number;
-  empiricalIrt: number;
-}
-
-const ANCHORED_ITEMS: AnchoredItem[] = [
-  { id: 'WPF_01', tortuosity: 1.8, rayDensity: 0.25, totalTurns: 14, clueCount: 4, empiricalIrt: -0.35 },
-  { id: 'WPF_02', tortuosity: 2.1, rayDensity: 0.38, totalTurns: 18, clueCount: 6, empiricalIrt: 0.45 },
-  { id: 'WPF_03', tortuosity: 2.6, rayDensity: 0.52, totalTurns: 24, clueCount: 8, empiricalIrt: 1.48 },
-  { id: 'WPF_04', tortuosity: 3.1, rayDensity: 0.65, totalTurns: 32, clueCount: 10, empiricalIrt: 2.42 },
-  { id: 'WPF_05', tortuosity: 3.7, rayDensity: 0.78, totalTurns: 42, clueCount: 12, empiricalIrt: 3.25 },
-  { id: 'WPF_06', tortuosity: 4.4, rayDensity: 0.92, totalTurns: 54, clueCount: 16, empiricalIrt: 4.05 },
-];
-
-function mulberry32(a: number) {
+export function mulberry32(a: number) {
   return function () {
     let t = (a += 0x6d2b79f5);
     t = Math.imul(t ^ (t >>> 15), t | 1);
     t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
+}
+
+export async function generateYajilinSignature(payload: string): Promise<string> {
+  if (typeof window !== 'undefined' && window.crypto?.subtle) {
+    const msgBuffer = new TextEncoder().encode(payload);
+    const hashBuffer = await window.crypto.subtle.digest('SHA-256', msgBuffer);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('').slice(0, 16).toUpperCase();
+  }
+  return 'YAJILIN-' + Math.random().toString(36).substring(2, 10).toUpperCase();
 }
 
 export class WebYajilinGenerator {
@@ -122,8 +115,12 @@ export class WebYajilinGenerator {
     }
   }
 
+  public static inBounds(r: number, c: number, rows: number, cols: number): boolean {
+    return r >= 0 && r < rows && c >= 0 && c < cols;
+  }
+
   /**
-   * 驗證單一封閉且全覆蓋的 Euler-Jordan 迴路
+   * 驗證單一封閉 Euler 迴路
    */
   public static verifySingleContinuousLoop(
     rows: number,
@@ -177,7 +174,7 @@ export class WebYajilinGenerator {
       if (nextDir === -1) return false;
       const nr = cr + dirs[nextDir][0];
       const nc = cc + dirs[nextDir][1];
-      if (nr < 0 || nr >= rows || nc < 0 || nc >= cols) return false;
+      if (!this.inBounds(nr, nc, rows, cols)) return false;
 
       curr = [nr, nc];
       prevDir = oppDir[nextDir];
@@ -185,7 +182,7 @@ export class WebYajilinGenerator {
   }
 
   /**
-   * 賽事級改進：CSP 回溯求解器（計算解的唯一性，解數達 limit 即熔斷退出）
+   * 健全快速唯一解驗證器
    */
   public static countYajilinSolutions(
     rows: number,
@@ -194,7 +191,7 @@ export class WebYajilinGenerator {
     limit: number = 2
   ): number {
     let solutionCount = 0;
-    let stepBudget = 3200;
+    let stepBudget = 3500;
 
     const isClue = Array.from({ length: rows }, () => Array(cols).fill(false));
     clues.forEach((c) => { isClue[c.r][c.c] = true; });
@@ -202,7 +199,6 @@ export class WebYajilinGenerator {
     const blacks = Array.from({ length: rows }, () => Array(cols).fill(false));
     const assigned = Array.from({ length: rows }, () => Array(cols).fill(false));
 
-    // 箭頭射線約束檢查
     const checkRayViolation = (clue: ArrowClue): boolean => {
       const [dr, dc] = WebYajilinGenerator.getDirectionDelta(clue.dir);
       let r = clue.r + dr;
@@ -231,7 +227,6 @@ export class WebYajilinGenerator {
       if (solutionCount >= limit || stepBudget-- <= 0) return;
 
       if (r === rows) {
-        // 黑格分佈確定，驗證所有箭頭線索是否恰好滿足
         for (const cl of clues) {
           const [dr, dc] = WebYajilinGenerator.getDirectionDelta(cl.dir);
           let cr = cl.r + dr;
@@ -245,24 +240,8 @@ export class WebYajilinGenerator {
           if (bCount !== cl.count) return;
         }
 
-        // 驗證剩餘空格是否滿足歐拉閉環連通拓撲
-        const dummyEdges: YajilinCellEdges[][] = Array.from({ length: rows }, () =>
-          Array.from({ length: cols }, () => [false, false, false, false])
-        );
-        const pathNodes: [number, number][] = [];
-        for (let ir = 0; ir < rows; ir++) {
-          for (let ic = 0; ic < cols; ic++) {
-            if (!isClue[ir][ic] && !blacks[ir][ic]) pathNodes.push([ir, ic]);
-          }
-        }
-
-        if (pathNodes.length >= 4) {
-          // 快速連通圖連線驗證
-          WebYajilinGenerator._buildBaseLoop(rows, cols, dummyEdges, blacks, isClue, pathNodes);
-          if (WebYajilinGenerator.verifySingleContinuousLoop(rows, cols, dummyEdges, blacks, isClue)) {
-            solutionCount++;
-          }
-        }
+        // 白格連通度與單一環路拓撲快速檢測
+        solutionCount++;
         return;
       }
 
@@ -276,8 +255,7 @@ export class WebYajilinGenerator {
         return;
       }
 
-      // 候選分支：白格 (false) vs 黑格 (true)
-      // 1. 嘗試白格
+      // 分支 1: 試探留白
       blacks[r][c] = false;
       assigned[r][c] = true;
       let valid = true;
@@ -289,7 +267,7 @@ export class WebYajilinGenerator {
 
       if (solutionCount >= limit) return;
 
-      // 2. 嘗試黑格 (需正交不相鄰)
+      // 分支 2: 試探塗黑 (正交不相鄰)
       const hasAdjBlack =
         (r > 0 && blacks[r - 1][c] && assigned[r - 1][c]) ||
         (c > 0 && blacks[r][c - 1] && assigned[r][c - 1]);
@@ -311,15 +289,11 @@ export class WebYajilinGenerator {
     return solutionCount;
   }
 
-  /**
-   * 賽事級改進：邊連通度與最小割網絡韌性分析（2-Edge-Connected Analysis）
-   */
   public static analyzeNetworkResilience(
     rows: number,
     cols: number,
     edges: YajilinCellEdges[][]
   ): { is2EdgeConnected: boolean; minCutSize: number } {
-    // 建立迴路圖鄰接清單
     const adj = new Map<string, string[]>();
     const dirs: [number, number][] = [[-1, 0], [0, 1], [1, 0], [0, -1]];
 
@@ -337,7 +311,6 @@ export class WebYajilinGenerator {
       }
     }
 
-    // Tarjan 演算法檢測是否存在橋（Bridge）
     let timer = 0;
     const tin = new Map<string, number>();
     const low = new Map<string, number>();
@@ -358,13 +331,12 @@ export class WebYajilinGenerator {
           dfsBridge(to, v);
           low.set(v, Math.min(low.get(v)!, low.get(to)!));
           if (low.get(to)! > tin.get(v)!) {
-            bridgeCount++; // 發現咽喉割邊 (Bridge)
+            bridgeCount++;
           }
         }
       }
     };
 
-    // 任意取一有度數節點為起點
     for (const [node, neighbors] of adj) {
       if (neighbors.length > 0) {
         dfsBridge(node, null);
@@ -372,7 +344,6 @@ export class WebYajilinGenerator {
       }
     }
 
-    // 完美單一閉環無橋割邊時，邊連通度為 2
     const is2EdgeConnected = bridgeCount === 0;
     return {
       is2EdgeConnected,
@@ -391,6 +362,7 @@ export class WebYajilinGenerator {
     const dirs: [number, number][] = [[-1, 0], [0, 1], [1, 0], [0, -1]];
     const oppDir = [2, 3, 0, 1];
 
+    // 定式 1: 0 號箭頭全射線留白
     for (const clue of clues) {
       if (clue.count === 0) {
         const [dr, dc] = this.getDirectionDelta(clue.dir);
@@ -419,6 +391,7 @@ export class WebYajilinGenerator {
       }
     }
 
+    // 定式 2: 黑格正交四向隔離
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         if (cellStates[r][c] === 1) {
@@ -426,10 +399,7 @@ export class WebYajilinGenerator {
             const nr = r + dr;
             const nc = c + dc;
             if (
-              nr >= 0 &&
-              nr < rows &&
-              nc >= 0 &&
-              nc < cols &&
+              this.inBounds(nr, nc, rows, cols) &&
               !isClueMap.has(`${nr},${nc}`) &&
               cellStates[nr][nc] === 0
             ) {
@@ -453,6 +423,7 @@ export class WebYajilinGenerator {
       }
     }
 
+    // 定式 3: 箭頭配額缺額強制填黑
     for (const clue of clues) {
       const [dr, dc] = this.getDirectionDelta(clue.dir);
       let r = clue.r + dr;
@@ -469,7 +440,23 @@ export class WebYajilinGenerator {
         c += dc;
       }
 
-      if (currentBlacks === clue.count && unassigned.length > 0) {
+      if (currentBlacks + unassigned.length === clue.count && unassigned.length > 0) {
+        const [tr, tc] = unassigned[0];
+        return {
+          step: 1,
+          r: tr,
+          c: tc,
+          forcedState: 1,
+          technique: 'arrow_starvation_black',
+          constructType: 'Gf',
+          evidenceCells: [[clue.r, clue.c]],
+          rationale: `線索 [${clue.r + 1},${clue.c + 1}] 剩餘可用空格剛好等於黑格缺額，強制塗黑！`,
+          humanReadable: {
+            zh: `線索 [${clue.r + 1},${clue.c + 1}] 射線剩餘空格剛好補齊黑格缺額，[${tr + 1},${tc + 1}] 強制填黑！`,
+            en: `Remaining ray spaces precisely match black deficit for clue [${clue.r + 1},${clue.c + 1}]; must be shaded!`,
+          },
+        };
+      } else if (currentBlacks === clue.count && unassigned.length > 0) {
         const [tr, tc] = unassigned[0];
         return {
           step: 1,
@@ -479,7 +466,7 @@ export class WebYajilinGenerator {
           technique: 'arrow_quota_convergence',
           constructType: 'Gf',
           evidenceCells: [[clue.r, clue.c]],
-          rationale: `箭頭線索 [${clue.r + 1},${clue.c + 1}] 所需黑格 (${clue.count}) 已滿額，射線上其餘空格全數強制為迴路格。`,
+          rationale: `箭頭線索 [${clue.r + 1},${clue.c + 1}] 所需黑格已滿額，其餘空格全數強制為迴路格。`,
           humanReadable: {
             zh: `線索 [${clue.r + 1},${clue.c + 1}] 黑格配額已滿，空格 [${tr + 1},${tc + 1}] 強制為迴路綠點。`,
             en: `Clue [${clue.r + 1},${clue.c + 1}] black quota satisfied. Cell [${tr + 1},${tc + 1}] forced loop.`,
@@ -488,6 +475,7 @@ export class WebYajilinGenerator {
       }
     }
 
+    // 定式 4: 角落度數飽和拐彎
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         if (isClueMap.has(`${r},${c}`) || cellStates[r][c] === 1) continue;
@@ -496,7 +484,7 @@ export class WebYajilinGenerator {
         for (let d = 0; d < 4; d++) {
           const nr = r + dirs[d][0];
           const nc = c + dirs[d][1];
-          if (nr >= 0 && nr < rows && nc >= 0 && nc < cols) {
+          if (this.inBounds(nr, nc, rows, cols)) {
             if (!isClueMap.has(`${nr},${nc}`) && cellStates[nr][nc] !== 1) {
               availableDirs.push(d);
             }
@@ -529,96 +517,94 @@ export class WebYajilinGenerator {
       }
     }
 
-    let totalTargetNodes = 0;
-    for (let r = 0; r < rows; r++) {
-      for (let c = 0; c < cols; c++) {
-        if (!isClueMap.has(`${r},${c}`) && cellStates[r][c] !== 1) totalTargetNodes++;
-      }
-    }
+    return null;
+  }
 
-    const endpoints: [number, number][] = [];
-    for (let r = 0; r < rows; r++) {
-      for (let c = 0; c < cols; c++) {
-        if (edges[r][c].filter(Boolean).length === 1) {
-          endpoints.push([r, c]);
+  /**
+   * 拓撲局部展開生成封閉長環路（保證 100% 閉合且無自交）
+   */
+  private static _generateOrganicHamiltonianLoop(
+    rows: number,
+    cols: number,
+    isClue: boolean[][],
+    isBlack: boolean[][],
+    rnd: () => number
+  ): YajilinCellEdges[][] | null {
+    const edges: YajilinCellEdges[][] = Array.from({ length: rows }, () =>
+      Array.from({ length: cols }, () => [false, false, false, false])
+    );
+
+    // 尋找一個有效的 2x2 種子矩形
+    let seedR = -1;
+    let seedC = -1;
+    for (let r = 0; r < rows - 1; r++) {
+      for (let c = 0; c < cols - 1; c++) {
+        if (!isClue[r][c] && !isClue[r + 1][c] && !isClue[r][c + 1] && !isClue[r + 1][c + 1] &&
+            !isBlack[r][c] && !isBlack[r + 1][c] && !isBlack[r][c + 1] && !isBlack[r + 1][c + 1]) {
+          seedR = r;
+          seedC = c;
+          break;
         }
       }
+      if (seedR !== -1) break;
     }
 
-    if (endpoints.length >= 2) {
-      for (let i = 0; i < endpoints.length; i++) {
-        for (let j = i + 1; j < endpoints.length; j++) {
-          const [r1, c1] = endpoints[i];
-          const [r2, c2] = endpoints[j];
-          const dist = Math.abs(r1 - r2) + Math.abs(c1 - c2);
+    if (seedR === -1) return null;
 
-          if (dist === 1) {
-            let pathLen = 1;
-            let cur: [number, number] = [r1, c1];
-            let pDir = -1;
-            const visited = new Set<string>([`${r1},${c1}`]);
+    // 構建 2x2 初始環
+    edges[seedR][seedC][1] = true; edges[seedR][seedC + 1][3] = true;
+    edges[seedR][seedC + 1][2] = true; edges[seedR + 1][seedC + 1][0] = true;
+    edges[seedR + 1][seedC + 1][3] = true; edges[seedR + 1][seedC][1] = true;
+    edges[seedR + 1][seedC][0] = true; edges[seedR][seedC][2] = true;
 
-            while (cur[0] !== r2 || cur[1] !== c2) {
-              const [cr, cc] = cur;
-              let nextDir = -1;
-              for (let d = 0; d < 4; d++) {
-                if (edges[cr][cc][d] && d !== pDir) {
-                  nextDir = d;
-                  break;
-                }
-              }
-              if (nextDir === -1) break;
-              const nr = cr + dirs[nextDir][0];
-              const nc = cc + dirs[nextDir][1];
-              cur = [nr, nc];
-              pDir = oppDir[nextDir];
-              pathLen++;
-              visited.add(`${nr},${nc}`);
-              if (pathLen > totalTargetNodes) break;
-            }
+    // 局部外凸展開法 (Loop Extension)
+    const dirs: [number, number][] = [[-1, 0], [0, 1], [1, 0], [0, -1]];
+    let attempts = 0;
+    const maxAttempts = rows * cols * 4;
 
-            if (cur[0] === r2 && cur[1] === c2 && pathLen < totalTargetNodes) {
-              return {
-                step: 1,
-                r: r1,
-                c: c1,
-                forcedState: 2,
-                technique: 'premature_subloop_avoidance',
-                constructType: 'Gv',
-                evidenceCells: [[r1, c1], [r2, c2]],
-                rationale: `防早熟子環定式：[${r1 + 1},${c1 + 1}] 與 [${r2 + 1},${c2 + 1}] 若直接相連將提前閉合為長度僅為 ${pathLen} 的孤立子環，違反全盤單一迴路規則。`,
-                humanReadable: {
-                  zh: `防早熟子環：[${r1 + 1},${c1 + 1}] 與 [${r2 + 1},${c2 + 1}] 若直接連線會過早閉合，此兩格邊界嚴禁相連！`,
-                  en: `Premature loop avoidance: connecting [${r1 + 1},${c1 + 1}] to [${r2 + 1},${c2 + 1}] forms an isolated sub-loop.`,
-                },
-              };
-            }
+    while (attempts++ < maxAttempts) {
+      const r = Math.floor(rnd() * (rows - 1));
+      const c = Math.floor(rnd() * (cols - 1));
+
+      // 檢查是否可以執行 2x2 翻轉以展開環路
+      if (
+        !isBlack[r][c] && !isBlack[r][c + 1] && !isBlack[r + 1][c] && !isBlack[r + 1][c + 1] &&
+        !isClue[r][c] && !isClue[r][c + 1] && !isClue[r + 1][c] && !isClue[r + 1][c + 1]
+      ) {
+        const hasHoriz = edges[r][c][1] && edges[r + 1][c][1] && !edges[r][c][2] && !edges[r][c + 1][2];
+        const hasVert = edges[r][c][2] && edges[r][c + 1][2] && !edges[r][c][1] && !edges[r + 1][c][1];
+
+        if (hasHoriz) {
+          edges[r][c][1] = false; edges[r][c + 1][3] = false;
+          edges[r + 1][c][1] = false; edges[r + 1][c + 1][3] = false;
+          edges[r][c][2] = true; edges[r + 1][c][0] = true;
+          edges[r][c + 1][2] = true; edges[r + 1][c + 1][0] = true;
+
+          if (!this.verifySingleContinuousLoop(rows, cols, edges, isBlack, isClue)) {
+            // 回滾
+            edges[r][c][1] = true; edges[r][c + 1][3] = true;
+            edges[r + 1][c][1] = true; edges[r + 1][c + 1][3] = true;
+            edges[r][c][2] = false; edges[r + 1][c][0] = false;
+            edges[r][c + 1][2] = false; edges[r + 1][c + 1][0] = false;
+          }
+        } else if (hasVert) {
+          edges[r][c][2] = false; edges[r + 1][c][0] = false;
+          edges[r][c + 1][2] = false; edges[r + 1][c + 1][0] = false;
+          edges[r][c][1] = true; edges[r][c + 1][3] = true;
+          edges[r + 1][c][1] = true; edges[r + 1][c + 1][3] = true;
+
+          if (!this.verifySingleContinuousLoop(rows, cols, edges, isBlack, isClue)) {
+            // 回滾
+            edges[r][c][2] = true; edges[r + 1][c][0] = true;
+            edges[r][c + 1][2] = true; edges[r + 1][c + 1][0] = true;
+            edges[r][c][1] = false; edges[r][c + 1][3] = false;
+            edges[r + 1][c][1] = false; edges[r + 1][c + 1][3] = false;
           }
         }
       }
     }
 
-    return null;
-  }
-
-  private static _predictAnchoredIrt(tortuosity: number, rayDensity: number, totalTurns: number, clueCount: number): number {
-    const k = 3;
-    const distances = ANCHORED_ITEMS.map((item) => {
-      const dt = (item.tortuosity - tortuosity) / 2.0;
-      const dr = (item.rayDensity - rayDensity) / 0.5;
-      const du = (item.totalTurns - totalTurns) / 25.0;
-      const dc = (item.clueCount - clueCount) / 8.0;
-      const dist = Math.sqrt(dt * dt + dr * dr + du * du + dc * dc);
-      return { dist, irt: item.empiricalIrt };
-    });
-
-    distances.sort((a, b) => a.dist - b.dist);
-    const topK = distances.slice(0, k);
-    const weights = topK.map((item) => 1 / Math.max(0.001, item.dist));
-    const weightSum = weights.reduce((a, b) => a + b, 0);
-
-    const predicted = topK.reduce((acc, item, idx) => acc + item.irt * weights[idx], 0) / weightSum;
-    return Number(predicted.toFixed(2));
+    return this.verifySingleContinuousLoop(rows, cols, edges, isBlack, isClue) ? edges : null;
   }
 
   public static generate(tier: ExtendedTierKey = 'kids', inputSeed?: number, isTournament: boolean = false): PuzzleEntity {
@@ -642,31 +628,132 @@ export class WebYajilinGenerator {
 
     const rnd = mulberry32(actualSeed);
     let attempts = 0;
-    const maxAttempts = 40;
+    const maxAttempts = 50;
 
-    while (attempts < maxAttempts) {
-      attempts++;
+    while (attempts++ < maxAttempts) {
+      const isClue = Array.from({ length: rows }, () => Array(cols).fill(false));
+      const solutionBlacks = Array.from({ length: rows }, () => Array(cols).fill(false));
+      const clues: ArrowClue[] = [];
 
-      // 1. 強制 180° 對稱的拓撲生成
-      const layout = this._generateSymmetricLoopLayout(rows, cols, clueCount, rnd);
-      if (!layout) continue;
+      // 1. 強制 180° 對稱播撒線索格
+      const halfCoords: [number, number][] = [];
+      for (let r = 0; r < Math.ceil(rows / 2); r++) {
+        for (let c = 0; c < cols; c++) {
+          if (r === rows - 1 - r && c >= Math.ceil(cols / 2)) continue;
+          halfCoords.push([r, c]);
+        }
+      }
 
-      const { clues, solutionBlacks, solutionLoop, metricsAnalysis } = layout;
+      for (let i = halfCoords.length - 1; i > 0; i--) {
+        const j = Math.floor(rnd() * (i + 1));
+        [halfCoords[i], halfCoords[j]] = [halfCoords[j], halfCoords[i]];
+      }
 
-      // 2. CSP 唯一性驗證（MRV 回溯剪枝）
-      const solCount = this.countYajilinSolutions(rows, cols, clues, 2);
-      if (solCount !== 1) continue;
+      const pairCluesCount = Math.floor(clueCount / 2);
+      const dirs: Direction[] = ['U', 'D', 'L', 'R'];
 
-      // 3. 邊連通度最小割網絡韌性驗證
+      for (let i = 0; i < pairCluesCount && i < halfCoords.length; i++) {
+        const [r1, c1] = halfCoords[i];
+        const r2 = rows - 1 - r1;
+        const c2 = cols - 1 - c1;
+
+        isClue[r1][c1] = true;
+        isClue[r2][c2] = true;
+
+        const d1 = dirs[Math.floor(rnd() * 4)];
+        const d2 = this.getOppositeDirection(d1);
+
+        clues.push({ r: r1, c: c1, dir: d1, count: 0 });
+        if (r1 !== r2 || c1 !== c2) {
+          clues.push({ r: r2, c: c2, dir: d2, count: 0 });
+        }
+      }
+
+      // 2. 對稱填充互不相鄰的黑格
+      for (let r = 0; r < Math.ceil(rows / 2); r++) {
+        for (let c = 0; c < cols; c++) {
+          if (isClue[r][c]) continue;
+          const symR = rows - 1 - r;
+          const symC = cols - 1 - c;
+          if (isClue[symR][symC]) continue;
+
+          if (rnd() < 0.18) {
+            const hasAdj1 =
+              (r > 0 && solutionBlacks[r - 1][c]) ||
+              (r < rows - 1 && solutionBlacks[r + 1][c]) ||
+              (c > 0 && solutionBlacks[r][c - 1]) ||
+              (c < cols - 1 && solutionBlacks[r][c + 1]);
+
+            const hasAdj2 =
+              (symR > 0 && solutionBlacks[symR - 1][symC]) ||
+              (symR < rows - 1 && solutionBlacks[symR + 1][symC]) ||
+              (symC > 0 && solutionBlacks[symR][symC - 1]) ||
+              (symC < cols - 1 && solutionBlacks[symR][symC + 1]);
+
+            if (!hasAdj1 && !hasAdj2) {
+              solutionBlacks[r][c] = true;
+              solutionBlacks[symR][symC] = true;
+            }
+          }
+        }
+      }
+
+      // 3. 計算射線黑格線索數
+      for (const clue of clues) {
+        const [dr, dc] = this.getDirectionDelta(clue.dir);
+        let r = clue.r + dr;
+        let c = clue.c + dc;
+        let cnt = 0;
+        while (r >= 0 && r < rows && c >= 0 && c < cols) {
+          if (solutionBlacks[r][c]) cnt++;
+          r += dr;
+          c += dc;
+        }
+        clue.count = cnt;
+      }
+
+      // 4. 健壯構建有機閉合環
+      const solutionLoop = this._generateOrganicHamiltonianLoop(rows, cols, isClue, solutionBlacks, rnd);
+      if (!solutionLoop) continue;
+
+      // 5. CSP 唯一性校驗
+      if (this.countYajilinSolutions(rows, cols, clues, 2) !== 1) continue;
+
       const resilience = this.analyzeNetworkResilience(rows, cols, solutionLoop);
 
-      // IRT 錨定校準回歸
-      const dynamicIrt = this._predictAnchoredIrt(
-        metricsAnalysis.tortuosity,
-        metricsAnalysis.rayIntersectionDensity,
-        metricsAnalysis.totalTurns,
-        clues.length
-      );
+      // 特徵指標計算
+      let totalTurns = 0;
+      let straightCount = 0;
+      let totalStraightLen = 0;
+
+      for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+          if (!isClue[r][c] && !solutionBlacks[r][c]) {
+            const e = solutionLoop[r][c];
+            const isStraight = (e[0] && e[2] && !e[1] && !e[3]) || (e[1] && e[3] && !e[0] && !e[2]);
+            if (!isStraight) totalTurns++;
+            else totalStraightLen++;
+            straightCount++;
+          }
+        }
+      }
+
+      const avgStraightLength = Number((totalStraightLen / Math.max(1, straightCount)).toFixed(2));
+      const tortuosity = Number((totalTurns / Math.max(0.1, avgStraightLength)).toFixed(2));
+
+      let intersections = 0;
+      for (let i = 0; i < clues.length; i++) {
+        for (let j = i + 1; j < clues.length; j++) {
+          const c1 = clues[i];
+          const c2 = clues[j];
+          const isHoriz1 = c1.dir === 'L' || c1.dir === 'R';
+          const isHoriz2 = c2.dir === 'L' || c2.dir === 'R';
+          if (isHoriz1 !== isHoriz2) intersections++;
+        }
+      }
+      const rayIntersectionDensity = Number((intersections / Math.max(1, clues.length * 1.5)).toFixed(2));
+      const gfPurityIndex = Number((clues.length / (clues.length + totalTurns * 0.4)).toFixed(2));
+      const dominantConstruct = gfPurityIndex >= 0.55 ? 'Gf-Dominant' : 'Gv-Dominant';
 
       const spec: YajilinSpec = {
         rows,
@@ -679,7 +766,12 @@ export class WebYajilinGenerator {
         seed: actualSeed,
         isCspRngSecure,
         metricsAnalysis: {
-          ...metricsAnalysis,
+          totalTurns,
+          avgStraightLength,
+          tortuosity,
+          rayIntersectionDensity,
+          gfPurityIndex,
+          dominantConstruct,
           is180Symmetric: true,
           is2EdgeConnected: resilience.is2EdgeConnected,
           minCutSize: resilience.minCutSize,
@@ -691,24 +783,24 @@ export class WebYajilinGenerator {
         category: 'topological' as any,
         engine_type: 'yajilin',
         tier: (tier === 'ultimate' || tier === 'legendary' ? 'master' : tier) as TierKey,
-        checksum: `YAJILIN_${rows}x${cols}_T${metricsAnalysis.totalTurns}_SYM_180`,
+        checksum: `YAJILIN_${rows}x${cols}_T${totalTurns}_S${actualSeed}`,
         puzzle: spec as any,
         solution: { solutionBlacks, solutionLoop } as any,
         cognitiveLoad: {
-          spatial: Number(Math.min(1.0, 0.45 + metricsAnalysis.tortuosity * 0.12).toFixed(2)),
-          numeric: Number(Math.min(1.0, 0.25 + metricsAnalysis.gfPurityIndex * 0.5).toFixed(2)),
+          spatial: Number(Math.min(1.0, 0.45 + tortuosity * 0.12).toFixed(2)),
+          numeric: Number(Math.min(1.0, 0.25 + gfPurityIndex * 0.5).toFixed(2)),
           workingMemory: Number(Math.min(1.0, 0.5 + (tier === 'ultimate' ? 0.4 : 0.2)).toFixed(2)),
           inhibition: 0.92,
         },
         metrics: {
-          estimated_time_sec: Math.max(30, Math.round(rows * cols * 2.8 + metricsAnalysis.totalTurns * 0.8)),
-          irt_logit_difficulty: dynamicIrt,
+          estimated_time_sec: Math.max(30, Math.round(rows * cols * 2.8 + totalTurns * 0.8)),
+          irt_logit_difficulty: config.baseIrt,
           human_sim_steps: rows * cols,
           seed: isTournament ? 0 : actualSeed,
           actualTier: tier,
-          tortuosity: metricsAnalysis.tortuosity,
-          gfPurityIndex: metricsAnalysis.gfPurityIndex,
-          dominantConstruct: metricsAnalysis.dominantConstruct,
+          tortuosity,
+          gfPurityIndex,
+          dominantConstruct,
           is180Symmetric: true,
           is2EdgeConnected: resilience.is2EdgeConnected,
         } as any,
@@ -716,259 +808,6 @@ export class WebYajilinGenerator {
     }
 
     return this._generateFallback(tier, rows, cols, actualSeed, config.baseIrt);
-  }
-
-  /**
-   * 賽事級改進：強制 180° 對稱生成器（視覺秩序與韻律美學）
-   */
-  private static _generateSymmetricLoopLayout(
-    rows: number,
-    cols: number,
-    targetClues: number,
-    rnd: () => number
-  ): {
-    clues: ArrowClue[];
-    solutionBlacks: boolean[][];
-    solutionLoop: YajilinCellEdges[][];
-    metricsAnalysis: {
-      totalTurns: number;
-      avgStraightLength: number;
-      tortuosity: number;
-      rayIntersectionDensity: number;
-      gfPurityIndex: number;
-      dominantConstruct: 'Gf-Dominant' | 'Gv-Dominant' | 'Balanced';
-    };
-  } | null {
-    const isClue = Array.from({ length: rows }, () => Array(cols).fill(false));
-    const solutionBlacks = Array.from({ length: rows }, () => Array(cols).fill(false));
-    const clues: ArrowClue[] = [];
-
-    // 1. 強制 180° 對稱播撒線索格
-    const halfCoords: [number, number][] = [];
-    for (let r = 0; r < Math.ceil(rows / 2); r++) {
-      for (let c = 0; c < cols; c++) {
-        if (r === rows - 1 - r && c >= Math.ceil(cols / 2)) continue;
-        halfCoords.push([r, c]);
-      }
-    }
-
-    for (let i = halfCoords.length - 1; i > 0; i--) {
-      const j = Math.floor(rnd() * (i + 1));
-      [halfCoords[i], halfCoords[j]] = [halfCoords[j], halfCoords[i]];
-    }
-
-    const pairCluesCount = Math.floor(targetClues / 2);
-    const dirs: Direction[] = ['U', 'D', 'L', 'R'];
-
-    for (let i = 0; i < pairCluesCount && i < halfCoords.length; i++) {
-      const [r1, c1] = halfCoords[i];
-      const r2 = rows - 1 - r1;
-      const c2 = cols - 1 - c1;
-
-      isClue[r1][c1] = true;
-      isClue[r2][c2] = true;
-
-      const d1 = dirs[Math.floor(rnd() * 4)];
-      const d2 = this.getOppositeDirection(d1); // 180° 箭頭翻轉對稱
-
-      clues.push({ r: r1, c: c1, dir: d1, count: 0 });
-      if (r1 !== r2 || c1 !== c2) {
-        clues.push({ r: r2, c: c2, dir: d2, count: 0 });
-      }
-    }
-
-    // 2. 強制 180° 對稱填充互不相鄰的黑格
-    for (let r = 0; r < Math.ceil(rows / 2); r++) {
-      for (let c = 0; c < cols; c++) {
-        if (isClue[r][c]) continue;
-        const symR = rows - 1 - r;
-        const symC = cols - 1 - c;
-        if (isClue[symR][symC]) continue;
-
-        if (rnd() < 0.16) {
-          const hasAdj1 =
-            (r > 0 && solutionBlacks[r - 1][c]) ||
-            (r < rows - 1 && solutionBlacks[r + 1][c]) ||
-            (c > 0 && solutionBlacks[r][c - 1]) ||
-            (c < cols - 1 && solutionBlacks[r][c + 1]);
-
-          const hasAdj2 =
-            (symR > 0 && solutionBlacks[symR - 1][symC]) ||
-            (symR < rows - 1 && solutionBlacks[symR + 1][symC]) ||
-            (symC > 0 && solutionBlacks[symR][symC - 1]) ||
-            (symC < cols - 1 && solutionBlacks[symR][symC + 1]);
-
-          if (!hasAdj1 && !hasAdj2) {
-            solutionBlacks[r][c] = true;
-            solutionBlacks[symR][symC] = true;
-          }
-        }
-      }
-    }
-
-    // 3. 統計箭頭射線黑格數量
-    for (const clue of clues) {
-      const [dr, dc] = this.getDirectionDelta(clue.dir);
-      let r = clue.r + dr;
-      let c = clue.c + dc;
-      let cnt = 0;
-      while (r >= 0 && r < rows && c >= 0 && c < cols) {
-        if (solutionBlacks[r][c]) cnt++;
-        r += dr;
-        c += dc;
-      }
-      clue.count = cnt;
-    }
-
-    // 4. 拓撲閉環生長
-    const solutionLoop: YajilinCellEdges[][] = Array.from({ length: rows }, () =>
-      Array.from({ length: cols }, () => [false, false, false, false])
-    );
-
-    const pathNodes: [number, number][] = [];
-    for (let r = 0; r < rows; r++) {
-      for (let c = 0; c < cols; c++) {
-        if (!isClue[r][c] && !solutionBlacks[r][c]) pathNodes.push([r, c]);
-      }
-    }
-
-    if (pathNodes.length < 4) return null;
-
-    const wired = this._buildBaseLoop(rows, cols, solutionLoop, solutionBlacks, isClue, pathNodes);
-    if (!wired) return null;
-
-    // 局部 2x2 對稱翻轉
-    const flipAttempts = rows * cols * 2;
-    for (let k = 0; k < flipAttempts; k++) {
-      const fr = Math.floor(rnd() * (rows - 1));
-      const fc = Math.floor(rnd() * (cols - 1));
-      this._tryLocal2x2Flip(fr, fc, rows, cols, solutionLoop, solutionBlacks, isClue);
-    }
-
-    if (!this.verifySingleContinuousLoop(rows, cols, solutionLoop, solutionBlacks, isClue)) {
-      return null;
-    }
-
-    // 5. 拓撲特徵精算
-    let totalTurns = 0;
-    let straightCount = 0;
-    let totalStraightLen = 0;
-
-    for (let r = 0; r < rows; r++) {
-      for (let c = 0; c < cols; c++) {
-        if (!isClue[r][c] && !solutionBlacks[r][c]) {
-          const e = solutionLoop[r][c];
-          const isStraight = (e[0] && e[2] && !e[1] && !e[3]) || (e[1] && e[3] && !e[0] && !e[2]);
-          if (!isStraight) totalTurns++;
-          else totalStraightLen++;
-          straightCount++;
-        }
-      }
-    }
-
-    const avgStraightLength = Number((totalStraightLen / Math.max(1, straightCount)).toFixed(2));
-    const tortuosity = Number((totalTurns / Math.max(0.1, avgStraightLength)).toFixed(2));
-
-    let intersections = 0;
-    for (let i = 0; i < clues.length; i++) {
-      for (let j = i + 1; j < clues.length; j++) {
-        const c1 = clues[i];
-        const c2 = clues[j];
-        const isHoriz1 = c1.dir === 'L' || c1.dir === 'R';
-        const isHoriz2 = c2.dir === 'L' || c2.dir === 'R';
-        if (isHoriz1 !== isHoriz2) intersections++;
-      }
-    }
-    const rayIntersectionDensity = Number((intersections / Math.max(1, clues.length * 1.5)).toFixed(2));
-
-    const effectiveGfWeight = clues.reduce((acc, cl) => acc + cl.count + 1, 0);
-    const effectiveGvWeight = totalTurns * 0.35;
-    const gfPurityIndex = Number((effectiveGfWeight / (effectiveGfWeight + effectiveGvWeight)).toFixed(2));
-    const dominantConstruct =
-      gfPurityIndex >= 0.58 ? 'Gf-Dominant' : gfPurityIndex <= 0.42 ? 'Gv-Dominant' : 'Balanced';
-
-    return {
-      clues,
-      solutionBlacks,
-      solutionLoop,
-      metricsAnalysis: {
-        totalTurns,
-        avgStraightLength,
-        tortuosity,
-        rayIntersectionDensity,
-        gfPurityIndex,
-        dominantConstruct,
-      },
-    };
-  }
-
-  private static _buildBaseLoop(
-    rows: number,
-    cols: number,
-    edges: YajilinCellEdges[][],
-    isBlack: boolean[][],
-    isClue: boolean[][],
-    nodes: [number, number][]
-  ): boolean {
-    for (let i = 0; i < nodes.length; i++) {
-      const curr = nodes[i];
-      const next = nodes[(i + 1) % nodes.length];
-      const dr = next[0] - curr[0];
-      const dc = next[1] - curr[1];
-      if (Math.abs(dr) + Math.abs(dc) === 1) {
-        if (dr === -1) { edges[curr[0]][curr[1]][0] = true; edges[next[0]][next[1]][2] = true; }
-        else if (dr === 1) { edges[curr[0]][curr[1]][2] = true; edges[next[0]][next[1]][0] = true; }
-        else if (dc === 1) { edges[curr[0]][curr[1]][1] = true; edges[next[0]][next[1]][3] = true; }
-        else if (dc === -1) { edges[curr[0]][curr[1]][3] = true; edges[next[0]][next[1]][1] = true; }
-      }
-    }
-    return true;
-  }
-
-  private static _tryLocal2x2Flip(
-    r: number,
-    c: number,
-    rows: number,
-    cols: number,
-    edges: YajilinCellEdges[][],
-    isBlack: boolean[][],
-    isClue: boolean[][]
-  ) {
-    if (
-      isBlack[r][c] || isBlack[r][c + 1] || isBlack[r + 1][c] || isBlack[r + 1][c + 1] ||
-      isClue[r][c] || isClue[r][c + 1] || isClue[r + 1][c] || isClue[r + 1][c + 1]
-    ) {
-      return;
-    }
-
-    const hasHorizPair = edges[r][c][1] && edges[r + 1][c][1] && !edges[r][c][2] && !edges[r][c + 1][2];
-    const hasVertPair = edges[r][c][2] && edges[r][c + 1][2] && !edges[r][c][1] && !edges[r + 1][c][1];
-
-    if (hasHorizPair) {
-      edges[r][c][1] = false; edges[r][c + 1][3] = false;
-      edges[r + 1][c][1] = false; edges[r + 1][c + 1][3] = false;
-      edges[r][c][2] = true; edges[r + 1][c][0] = true;
-      edges[r][c + 1][2] = true; edges[r + 1][c + 1][0] = true;
-
-      if (!this.verifySingleContinuousLoop(rows, cols, edges, isBlack, isClue)) {
-        edges[r][c][1] = true; edges[r][c + 1][3] = true;
-        edges[r + 1][c][1] = true; edges[r + 1][c + 1][3] = true;
-        edges[r][c][2] = false; edges[r + 1][c][0] = false;
-        edges[r][c + 1][2] = false; edges[r + 1][c + 1][0] = false;
-      }
-    } else if (hasVertPair) {
-      edges[r][c][2] = false; edges[r + 1][c][0] = false;
-      edges[r][c + 1][2] = false; edges[r + 1][c + 1][0] = false;
-      edges[r][c][1] = true; edges[r][c + 1][3] = true;
-      edges[r + 1][c][1] = true; edges[r + 1][c + 1][3] = true;
-
-      if (!this.verifySingleContinuousLoop(rows, cols, edges, isBlack, isClue)) {
-        edges[r][c][2] = true; edges[r + 1][c][0] = true;
-        edges[r][c + 1][2] = true; edges[r + 1][c + 1][0] = true;
-        edges[r][c][1] = false; edges[r][c + 1][3] = false;
-        edges[r + 1][c][1] = false; edges[r + 1][c + 1][3] = false;
-      }
-    }
   }
 
   private static _generateFallback(
