@@ -322,6 +322,7 @@ export const ShikakuBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
 
   useEffect(() => {
     if (isCompleted || isReplaying) return;
+    if (movesCountRef.current === 0 || history.length === 0) return;
 
     if (analysis.isPerfectPartition) {
       setIsCompleted(true);
@@ -369,7 +370,7 @@ export const ShikakuBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
         }
       }
     }
-  }, [analysis, isCompleted, isReplaying, actualPuzzle, currentTier, recordAttempt, profile.personalBest.fastestTime, activeHint, tournamentMode]);
+  }, [analysis, isCompleted, isReplaying, actualPuzzle, currentTier, recordAttempt, profile.personalBest.fastestTime, activeHint, tournamentMode, history.length]);
 
   const handleRequestHint = () => {
     if (isCompleted || tournamentMode || isReplaying) return;
@@ -529,20 +530,42 @@ export const ShikakuBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
   const cci = useMemo(() => getCompositeCognitiveIndex(), [getCompositeCognitiveIndex, isCompleted]);
   const currentReplayStep = replayStepsList[replayStepIndex - 1];
 
+  // 預覽矩形與即時因數分解長寬比提示
   const previewRect = useMemo(() => {
     if (!dragStart || !dragCurrent) return null;
     const minR = Math.min(dragStart[0], dragCurrent[0]);
     const maxR = Math.max(dragStart[0], dragCurrent[0]);
     const minC = Math.min(dragStart[1], dragCurrent[1]);
     const maxC = Math.max(dragStart[1], dragCurrent[1]);
+
+    const w = maxC - minC + 1;
+    const h = maxR - minR + 1;
+    const area = w * h;
+
+    let targetClue: number | null = null;
+    let clueCount = 0;
+    for (let r = minR; r <= maxR; r++) {
+      for (let c = minC; c <= maxC; c++) {
+        if (grid[r]?.[c] !== null) {
+          clueCount++;
+          targetClue = grid[r][c];
+        }
+      }
+    }
+
+    const isValidFactorization = clueCount === 1 && targetClue === area;
+
     return {
       top: `${(minR / rows) * 100}%`,
       left: `${(minC / cols) * 100}%`,
-      width: `${((maxC - minC + 1) / cols) * 100}%`,
-      height: `${((maxR - minR + 1) / rows) * 100}%`,
-      area: (maxR - minR + 1) * (maxC - minC + 1),
+      width: `${(w / cols) * 100}%`,
+      height: `${(h / rows) * 100}%`,
+      area,
+      w,
+      h,
+      isValidFactorization,
     };
-  }, [dragStart, dragCurrent, rows, cols]);
+  }, [dragStart, dragCurrent, rows, cols, grid]);
 
   return (
     <div className="flex flex-col items-center justify-center p-1 select-none font-mono">
@@ -570,7 +593,7 @@ export const ShikakuBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
               ? 'bg-emerald-950/60 border-emerald-500/50 text-emerald-300'
               : 'bg-slate-950 border-slate-800 text-slate-400'
           }`}
-          title={isEn ? 'Remaining Area Conservation' : '面積守恆指針'}
+          title={isEn ? 'Remaining Area Conservation' : '剩餘面積守恆指標'}
         >
           <div className="text-[6.5px]">⊞ {isEn ? 'Area' : '面積'}</div>
           <div className="text-[7.5px] font-bold">
@@ -580,7 +603,7 @@ export const ShikakuBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
 
         <button
           onClick={() => setHighContrast((prev) => !prev)}
-          className={`p-1 rounded border text-center transition ${
+          className={`p-1 rounded border text-center transition cursor-pointer ${
             highContrast
               ? 'bg-amber-950 border-amber-400 text-amber-300 font-bold shadow-xs'
               : 'bg-slate-950 border-slate-800 text-slate-500 hover:text-slate-300'
@@ -593,7 +616,7 @@ export const ShikakuBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
         <button
           onClick={handleRequestHint}
           disabled={isCompleted || tournamentMode || isReplaying}
-          className={`p-1 rounded border text-center transition ${
+          className={`p-1 rounded border text-center transition cursor-pointer ${
             tournamentMode
               ? 'bg-slate-900 border-slate-800 text-slate-600 cursor-not-allowed'
               : activeHint
@@ -628,7 +651,7 @@ export const ShikakuBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
                 <button
                   key={spd}
                   onClick={() => setReplaySpeed(spd as 1 | 2 | 4)}
-                  className={`px-1 py-0.2 rounded text-[6.5px] font-bold ${
+                  className={`px-1 py-0.2 rounded text-[6.5px] font-bold cursor-pointer ${
                     replaySpeed === spd ? 'bg-cyan-500 text-slate-950' : 'bg-slate-800 text-slate-400'
                   }`}
                 >
@@ -637,7 +660,7 @@ export const ShikakuBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
               ))}
               <button
                 onClick={handleRestoreUserBoard}
-                className="ml-1 px-1.5 py-0.2 bg-rose-950 hover:bg-rose-900 border border-rose-500/60 text-rose-300 rounded text-[6.5px] font-bold"
+                className="ml-1 px-1.5 py-0.2 bg-rose-950 hover:bg-rose-900 border border-rose-500/60 text-rose-300 rounded text-[6.5px] font-bold cursor-pointer"
               >
                 {isEn ? 'Restore Mine' : '還原我的盤面'}
               </button>
@@ -665,7 +688,11 @@ export const ShikakuBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
             <span>LEVEL {hintLadderLevel}/3</span>
           </div>
           {hintLadderLevel === 1 && (
-            <div>{isEn ? `Forced room around [${activeHint.numberPos[0] + 1},${activeHint.numberPos[1] + 1}].` : `請關注數字 [${activeHint.numberPos[0] + 1},${activeHint.numberPos[1] + 1}] 周圍。`}</div>
+            <div>
+              {isEn
+                ? `Focus on the rectangle around [${activeHint.numberPos[0] + 1}, ${activeHint.numberPos[1] + 1}].`
+                : `請關注數字 [${activeHint.numberPos[0] + 1}, ${activeHint.numberPos[1] + 1}] 周圍的展開空間。`}
+            </div>
           )}
           {hintLadderLevel === 2 && (
             <div>{isEn ? activeHint.humanReadable.en : activeHint.humanReadable.zh}</div>
@@ -727,7 +754,11 @@ export const ShikakuBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
 
           {previewRect && (
             <div
-              className="absolute rounded-sm border-2 border-dashed border-amber-400 bg-amber-500/20 shadow-[0_0_10px_rgba(251,191,36,0.6)] pointer-events-none z-20 flex items-center justify-center text-[9px] font-black text-amber-300"
+              className={`absolute rounded-sm border-2 border-dashed pointer-events-none z-20 flex items-center justify-center text-[9px] font-black transition-colors ${
+                previewRect.isValidFactorization
+                  ? 'border-emerald-400 bg-emerald-500/20 text-emerald-300 shadow-[0_0_12px_rgba(52,211,153,0.6)]'
+                  : 'border-amber-400 bg-amber-500/20 text-amber-300 shadow-[0_0_10px_rgba(251,191,36,0.6)]'
+              }`}
               style={{
                 top: previewRect.top,
                 left: previewRect.left,
@@ -735,7 +766,7 @@ export const ShikakuBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
                 height: previewRect.height,
               }}
             >
-              <span>{previewRect.area}</span>
+              <span>{previewRect.w}&times;{previewRect.h} ({previewRect.area})</span>
             </div>
           )}
         </div>
@@ -794,29 +825,29 @@ export const ShikakuBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
           <button
             onClick={handleUndo}
             disabled={history.length === 0 || isCompleted || isReplaying}
-            className="px-2 py-0.5 bg-slate-900 border border-slate-800 rounded hover:bg-slate-800 disabled:opacity-40"
+            className="px-2 py-0.5 bg-slate-900 border border-slate-800 rounded hover:bg-slate-800 disabled:opacity-40 cursor-pointer"
           >
             ↩ {isEn ? 'Undo' : '撤銷'}
           </button>
           <button
             onClick={handleRedo}
             disabled={redoStack.length === 0 || isCompleted || isReplaying}
-            className="px-2 py-0.5 bg-slate-900 border border-slate-800 rounded hover:bg-slate-800 disabled:opacity-40"
+            className="px-2 py-0.5 bg-slate-900 border border-slate-800 rounded hover:bg-slate-800 disabled:opacity-40 cursor-pointer"
           >
             ↪ {isEn ? 'Redo' : '重做'}
           </button>
           {!tournamentMode && (
             <button
               onClick={handleCopySeedShareCode}
-              className="px-2 py-0.5 bg-slate-900 border border-slate-800 rounded hover:bg-slate-800 text-amber-300"
+              className="px-2 py-0.5 bg-slate-900 border border-slate-800 rounded hover:bg-slate-800 text-amber-300 cursor-pointer"
               title={isEn ? 'Copy Duel Link' : '複製對決連結'}
             >
               🔗 {isEn ? 'Duel Link' : '對決連結'}
             </button>
           )}
         </div>
-        <div className="text-slate-500 text-[9px]">
-          {isEn ? 'Drag to draw rectangle / Click box to delete' : '拖曳畫框矩形 / 點擊既有框可刪除'}
+        <div className="text-slate-500 text-[8px]">
+          {isEn ? 'Drag to draw rect / Click box to delete' : '拖曳畫框矩形 / 點擊既有框可刪除'}
         </div>
       </div>
 
@@ -872,7 +903,7 @@ export const ShikakuBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
             <button
               onClick={handleStartReplay}
               disabled={isReplaying}
-              className="py-1 bg-indigo-950 hover:bg-indigo-900 border border-indigo-500/60 text-indigo-300 text-[7.5px] font-bold rounded transition shadow flex items-center justify-center gap-0.5 active:scale-95"
+              className="py-1 bg-indigo-950 hover:bg-indigo-900 border border-indigo-500/60 text-indigo-300 text-[7.5px] font-bold rounded transition shadow flex items-center justify-center gap-0.5 active:scale-95 cursor-pointer"
             >
               <span>🔁</span>
               <span>{isEn ? 'AI Replay' : '解法覆盤'}</span>
@@ -880,7 +911,7 @@ export const ShikakuBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
 
             <button
               onClick={handleGenerateCard}
-              className="py-1 bg-purple-950 hover:bg-purple-900 border border-purple-500/60 text-purple-300 text-[7.5px] font-bold rounded transition shadow flex items-center justify-center gap-0.5 active:scale-95"
+              className="py-1 bg-purple-950 hover:bg-purple-900 border border-purple-500/60 text-purple-300 text-[7.5px] font-bold rounded transition shadow flex items-center justify-center gap-0.5 active:scale-95 cursor-pointer"
             >
               <span>📸</span>
               <span>{isEn ? 'Share Card' : '高光戰績卡'}</span>
@@ -891,7 +922,7 @@ export const ShikakuBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
             {userRectsBackup && (
               <button
                 onClick={handleRestoreUserBoard}
-                className="flex-1 py-1 bg-slate-900 hover:bg-slate-800 border border-cyan-500/60 text-cyan-300 text-[7.5px] font-bold rounded transition shadow flex items-center justify-center gap-0.5 active:scale-95"
+                className="flex-1 py-1 bg-slate-900 hover:bg-slate-800 border border-cyan-500/60 text-cyan-300 text-[7.5px] font-bold rounded transition shadow flex items-center justify-center gap-0.5 active:scale-95 cursor-pointer"
               >
                 <span>↩️</span>
                 <span>{isEn ? 'My Board' : '我的盤面'}</span>
@@ -900,7 +931,7 @@ export const ShikakuBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
 
             <button
               onClick={handleCopySeedShareCode}
-              className="flex-1 py-1 bg-slate-900 hover:bg-slate-800 border border-amber-500/60 text-amber-300 text-[7.5px] font-bold rounded transition shadow flex items-center justify-center gap-0.5 active:scale-95"
+              className="flex-1 py-1 bg-slate-900 hover:bg-slate-800 border border-amber-500/60 text-amber-300 text-[7.5px] font-bold rounded transition shadow flex items-center justify-center gap-0.5 active:scale-95 cursor-pointer"
             >
               <span>🔗</span>
               <span>{isEn ? 'Duel Link' : '對決連結'}</span>
@@ -908,7 +939,7 @@ export const ShikakuBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
 
             <button
               onClick={() => setShowSubmitModal(true)}
-              className="flex-1 py-1 bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 text-slate-950 text-[7.5px] font-black rounded shadow transition active:scale-95 flex items-center justify-center gap-0.5"
+              className="flex-1 py-1 bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 text-slate-950 text-[7.5px] font-black rounded shadow transition active:scale-95 flex items-center justify-center gap-0.5 cursor-pointer"
             >
               <span>📤</span>
               <span>{isEn ? 'Submit' : '賽事提交'}</span>
