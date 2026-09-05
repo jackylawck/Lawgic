@@ -1,6 +1,7 @@
 // web-frontend/src/components/PBCelebrationModal.tsx
 import React, { useEffect, useMemo } from 'react';
 import { PersonalBest } from '../hooks/useLearnerProfile';
+import { useLanguage } from '../contexts/LanguageContext';
 
 interface Props {
   pb: PersonalBest;
@@ -12,42 +13,48 @@ interface Props {
 export const PBCelebrationModal: React.FC<Props> = ({
   pb,
   onClose,
-  isEn = true,
+  isEn: propIsEn,
   improvedDeltaSec,
 }) => {
-  // 1. 豪華音效合成器 (含 iOS Safari resume 與水晶泛音)
+  const { lang } = useLanguage();
+  const isEn = propIsEn !== undefined ? propIsEn : lang === 'en';
+
+  // 1. 豪華音效合成器 (含 iOS Safari resume、水晶泛音與自動 close 生命週期釋放)
   useEffect(() => {
-    if (navigator.vibrate) {
+    if (typeof window !== 'undefined' && 'navigator' in window && navigator.vibrate) {
       navigator.vibrate([30, 40, 30, 40, 150]);
     }
+
+    let audioCtx: AudioContext | null = null;
 
     try {
       const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
       if (AudioContextClass) {
-        const ctx = new AudioContextClass();
+        audioCtx = new AudioContextClass();
 
-        if (ctx.state === 'suspended') {
-          ctx.resume();
+        if (audioCtx.state === 'suspended') {
+          audioCtx.resume();
         }
 
         const playChime = (freq: number, start: number, duration: number, gainVal: number) => {
-          const osc = ctx.createOscillator();
-          const gain = ctx.createGain();
+          if (!audioCtx) return;
+          const osc = audioCtx.createOscillator();
+          const gain = audioCtx.createGain();
 
           osc.type = 'triangle';
-          osc.frequency.setValueAtTime(freq, ctx.currentTime + start);
+          osc.frequency.setValueAtTime(freq, audioCtx.currentTime + start);
 
-          gain.gain.setValueAtTime(gainVal, ctx.currentTime + start);
-          gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + start + duration);
+          gain.gain.setValueAtTime(gainVal, audioCtx.currentTime + start);
+          gain.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + start + duration);
 
           osc.connect(gain);
-          gain.connect(ctx.destination);
+          gain.connect(audioCtx.destination);
 
-          osc.start(ctx.currentTime + start);
-          osc.stop(ctx.currentTime + start + duration);
+          osc.start(audioCtx.currentTime + start);
+          osc.stop(audioCtx.currentTime + start + duration);
         };
 
-        // 大三和弦琶音升調 + 水晶泛音 (C5 -> E5 -> G5 -> C6)
+        // 大三和弦琶音升調 + 水晶泛音 (C5 -> E5 -> G5 -> C6 -> E6)
         playChime(523.25, 0.00, 0.35, 0.20);
         playChime(659.25, 0.12, 0.35, 0.22);
         playChime(783.99, 0.24, 0.45, 0.25);
@@ -57,9 +64,15 @@ export const PBCelebrationModal: React.FC<Props> = ({
     } catch {
       // 靜默容錯
     }
+
+    return () => {
+      if (audioCtx && audioCtx.state !== 'closed') {
+        audioCtx.close().catch(() => {});
+      }
+    };
   }, []);
 
-  // 2. 鍵盤快速關閉
+  // 2. 鍵盤快捷鍵關閉
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Enter' || e.key === ' ' || e.key === 'Escape') {
@@ -83,11 +96,16 @@ export const PBCelebrationModal: React.FC<Props> = ({
     }));
   }, []);
 
-  const displayFastestTime = pb.fastestTime >= 9999 ? '--' : `${pb.fastestTime}s`;
+  const displayFastestTime = pb.fastestTime >= 9999 || !pb.fastestTime ? '--' : `${pb.fastestTime}s`;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-xs p-4 font-mono select-none overflow-hidden">
-      {/* 粒子慶祝紙屑雨 (使用 index.css 的 animate-confetti-fall) */}
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={isEn ? 'Personal Record Breakthrough' : '個人最佳紀錄突破'}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-xs p-4 font-mono select-none overflow-hidden"
+    >
+      {/* 粒子慶祝紙屑雨 */}
       <div className="absolute inset-0 pointer-events-none overflow-hidden">
         {confettiParticles.map((p) => (
           <div
@@ -113,7 +131,7 @@ export const PBCelebrationModal: React.FC<Props> = ({
           {isEn ? 'All-Time Personal Best' : '突破歷史極限'}
         </div>
 
-        <div className="text-amber-300 font-black text-sm sm:text-base tracking-wider uppercase drop-shadow-sm">
+        <div className="text-amber-300 font-black text-sm sm:text-base tracking-wider uppercase drop-shadow-xs">
           {isEn ? 'New Personal Record!' : '刷新個人最高紀錄！'}
         </div>
 
@@ -136,17 +154,17 @@ export const PBCelebrationModal: React.FC<Props> = ({
               )}
             </div>
             <div className="text-[7px] text-slate-500">
-              Mensa Top {Number((100 - (pb.bestPercentile || 50)).toFixed(1))}%
+              {isEn ? 'Mensa Top' : '全域優於'} {Number((100 - (pb.bestPercentile || 50)).toFixed(1))}%
             </div>
           </div>
 
           <div className="pl-1">
             <div className="text-slate-500">{isEn ? 'Clear Streak' : '連勝紀錄'}</div>
             <div className="text-emerald-400 font-black text-base">
-              {pb.longestStreak || 0} <span className="text-[8px] font-normal text-slate-400">clears</span>
+              {pb.longestStreak || 0} <span className="text-[8px] font-normal text-slate-400">{isEn ? 'clears' : '次'}</span>
             </div>
             <div className="text-[7px] text-slate-500">
-              Acc: {Math.round((pb.highestAccuracy || 1) * 100)}%
+              {isEn ? 'Acc:' : '勝率:'} {Math.round((pb.highestAccuracy || 1) * 100)}%
             </div>
           </div>
         </div>
@@ -154,7 +172,8 @@ export const PBCelebrationModal: React.FC<Props> = ({
         {/* 關閉按鈕 */}
         <button
           onClick={onClose}
-          className="w-full py-2.5 bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-400 text-slate-950 font-black text-xs rounded-xl shadow-lg shadow-amber-900/40 transition active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer"
+          autoFocus
+          className="w-full py-2.5 bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-400 text-slate-950 font-black text-xs rounded-xl shadow-lg shadow-amber-900/40 transition active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer outline-none focus:ring-2 focus:ring-amber-300"
         >
           <span>{isEn ? 'Continue Journey' : '繼續前進'}</span>
           <span className="text-[9px] opacity-75 font-mono">(↵ Enter)</span>
