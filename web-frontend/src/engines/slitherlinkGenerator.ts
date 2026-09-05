@@ -1,9 +1,8 @@
-// web-frontend/src/engines/slitherlinkGenerator.ts
 import { PuzzleEntity, TierKey } from '../generated';
 
 export type ExtendedTierKey = TierKey | 'legendary' | 'ultimate';
 export type EdgeType = 'h' | 'v';
-export type EdgeState = 0 | 1 | 2; // 0: 未決, 1: 實線, 2: 標叉 (x)
+export type EdgeState = 0 | 1 | 2; // 0: 未決, 1: 實線 (連線), 2: 標叉 (x)
 
 export type SlitherDeductionType =
   | 'zero_cross'
@@ -56,6 +55,7 @@ export interface SlitherlinkSpec {
   rows: number;
   cols: number;
   clues: (number | null)[][];
+  grid?: (number | null)[][];
   solutionH: boolean[][];
   solutionV: boolean[][];
   solvingSteps: SlitherStep[];
@@ -535,9 +535,6 @@ export class WebSlitherlinkGenerator {
     return deductions;
   }
 
-  /**
-   * 提供給 SlitherlinkBoard.tsx 使用的單步演繹推理 Hint 介面
-   */
   public static getNextForcedDeduction(
     rows: number,
     cols: number,
@@ -710,6 +707,7 @@ export class WebSlitherlinkGenerator {
         rows,
         cols,
         clues: puzzleClues,
+        grid: puzzleClues,
         solutionH: hEdges,
         solutionV: vEdges,
         solvingSteps: simResult.steps,
@@ -756,6 +754,7 @@ export class WebSlitherlinkGenerator {
       rows,
       cols,
       clues: fallbackClues,
+      grid: fallbackClues,
       solutionH: fallback.hEdges,
       solutionV: fallback.vEdges,
       solvingSteps: [],
