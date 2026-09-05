@@ -4,38 +4,56 @@
   "short_name": "Lawgic",
   "description": "高精度邏輯推理、空間運算與競技解題平台",
   "lang": "zh-HK",
-  "id": "/Lawgic/",
+  "dir": "ltr",
+  "id": "./?source=pwa",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
-  "orientation": "portrait",
+  "display_override": ["window-controls-overlay", "standalone", "minimal-ui"],
+  "orientation": "any",
   "background_color": "#090d14",
   "theme_color": "#090d14",
   "categories": ["games", "puzzle", "education"],
   "icons": [
     {
-      "src": "./Lawgic192icon.png",
+      "src": "./icons/icon-192.png",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "./Lawgic192icon.png",
+      "src": "./icons/icon-192-maskable.png",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "maskable"
     },
     {
-      "src": "./Lawgic512icon.png",
+      "src": "./icons/icon-512.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "./Lawgic512icon.png",
+      "src": "./icons/icon-512-maskable.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "maskable"
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "./screenshots/desktop-preview.png",
+      "sizes": "1280x720",
+      "type": "image/png",
+      "form_factor": "wide",
+      "label": "Lawgic 競技級棋盤解題工作台"
+    },
+    {
+      "src": "./screenshots/mobile-preview.png",
+      "sizes": "720x1280",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "移動端零延遲觸控推理介面"
     }
   ],
   "shortcuts": [
@@ -44,14 +62,22 @@
       "short_name": "迷宮",
       "description": "空間導航與心智心圖訓練",
       "url": "./?game=maze",
-      "icons": [{ "src": "./Lawgic192icon.png", "sizes": "192x192" }]
+      "icons": [{ "src": "./icons/icon-192.png", "sizes": "192x192" }]
     },
     {
       "name": "數獨魔陣 (Sudoku)",
       "short_name": "數獨",
       "description": "約束傳播與邏輯演繹",
       "url": "./?game=sudoku",
-      "icons": [{ "src": "./Lawgic192icon.png", "sizes": "192x192" }]
+      "icons": [{ "src": "./icons/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "帳篷露營 (Tents)",
+      "short_name": "帳篷",
+      "description": "雙射配對與抽屜原理挑戰",
+      "url": "./?game=tents",
+      "icons": [{ "src": "./icons/icon-192.png", "sizes": "192x192" }]
     }
-  ]
+  ],
+  "prefer_related_applications": false
 }
