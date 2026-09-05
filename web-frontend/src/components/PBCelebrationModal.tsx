@@ -5,7 +5,7 @@ import { PersonalBest } from '../hooks/useLearnerProfile';
 interface Props {
   pb: PersonalBest;
   onClose: () => void;
-  isEn?: boolean; // 設為可選，避免呼叫端漏傳導致編譯中斷
+  isEn?: boolean;
   improvedDeltaSec?: number;
 }
 
@@ -83,9 +83,11 @@ export const PBCelebrationModal: React.FC<Props> = ({
     }));
   }, []);
 
+  const displayFastestTime = pb.fastestTime >= 9999 ? '--' : `${pb.fastestTime}s`;
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-xs p-4 font-mono select-none overflow-hidden">
-      {/* 粒子慶祝紙屑雨 */}
+      {/* 粒子慶祝紙屑雨 (使用 index.css 的 animate-confetti-fall) */}
       <div className="absolute inset-0 pointer-events-none overflow-hidden">
         {confettiParticles.map((p) => (
           <div
@@ -126,22 +128,26 @@ export const PBCelebrationModal: React.FC<Props> = ({
           <div className="border-r border-slate-800/80 pr-2">
             <div className="text-slate-500">{isEn ? 'Best Pace' : '最快速度'}</div>
             <div className="text-amber-300 font-black text-base flex items-baseline gap-1">
-              <span>{pb.fastestTime}s</span>
+              <span>{displayFastestTime}</span>
               {improvedDeltaSec && improvedDeltaSec > 0 && (
                 <span className="text-[7.5px] text-emerald-400 font-bold">
                   (-{improvedDeltaSec}s)
                 </span>
               )}
             </div>
-            <div className="text-[7px] text-slate-500">Mensa Top {Number((100 - pb.bestPercentile).toFixed(1))}%</div>
+            <div className="text-[7px] text-slate-500">
+              Mensa Top {Number((100 - (pb.bestPercentile || 50)).toFixed(1))}%
+            </div>
           </div>
 
           <div className="pl-1">
             <div className="text-slate-500">{isEn ? 'Clear Streak' : '連勝紀錄'}</div>
             <div className="text-emerald-400 font-black text-base">
-              {pb.longestStreak} <span className="text-[8px] font-normal text-slate-400">clears</span>
+              {pb.longestStreak || 0} <span className="text-[8px] font-normal text-slate-400">clears</span>
             </div>
-            <div className="text-[7px] text-slate-500">Acc: {Math.round(pb.highestAccuracy * 100)}%</div>
+            <div className="text-[7px] text-slate-500">
+              Acc: {Math.round((pb.highestAccuracy || 1) * 100)}%
+            </div>
           </div>
         </div>
 
@@ -154,24 +160,6 @@ export const PBCelebrationModal: React.FC<Props> = ({
           <span className="text-[9px] opacity-75 font-mono">(↵ Enter)</span>
         </button>
       </div>
-
-      <style>{`
-        @keyframes confettiFall {
-          0% {
-            transform: translateY(0) rotate(0deg);
-            opacity: 1;
-          }
-          100% {
-            transform: translateY(105vh) rotate(720deg);
-            opacity: 0;
-          }
-        }
-        .animate-confetti-fall {
-          animation-name: confettiFall;
-          animation-timing-function: linear;
-          animation-iteration-count: infinite;
-        }
-      `}</style>
     </div>
   );
 };
