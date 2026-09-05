@@ -70,7 +70,6 @@ export const SkyscraperBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamen
   const [violationAlert, setViolationAlert] = useState<string | null>(null);
   const [bookmarkToast, setBookmarkToast] = useState<string | null>(null);
 
-  // 提示狀態
   const [hintLevel, setHintLevel] = useState<number>(0);
   const [activeHintText, setActiveHintText] = useState<string | null>(null);
 
@@ -81,7 +80,6 @@ export const SkyscraperBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamen
   const moveSequenceRef = useRef<{ r: number; c: number; time: number }[]>([]);
   const hasRecordedRef = useRef<boolean>(false);
 
-  // 防作弊偵測
   useEffect(() => {
     if (!isAssessmentMode || isCompleted || isTimedOut || isResigned) return;
 
@@ -97,7 +95,6 @@ export const SkyscraperBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamen
     return () => document.removeEventListener('visibilitychange', handleVisibility);
   }, [isAssessmentMode, isCompleted, isTimedOut, isResigned, isEn]);
 
-  // 初始化與書籤恢復（修正為通用 boardState）
   useEffect(() => {
     const bookmark = profile.bookmarks[actualPuzzle?.id || ''];
     if (bookmark && bookmark.boardState) {
@@ -126,7 +123,6 @@ export const SkyscraperBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamen
     hasRecordedRef.current = false;
   }, [initialGrid, actualPuzzle?.id, profile.bookmarks, isEn]);
 
-  // 空間策略分類
   const detectedStrategy = useMemo<SpatialStrategy>(() => {
     const seq = moveSequenceRef.current;
     if (seq.length < 3) return 'GlobalPlanner';
@@ -144,7 +140,6 @@ export const SkyscraperBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamen
     return 'ProgressiveEliminator';
   }, [grid]);
 
-  // 視野能見度計算輔助
   const countVisible = (line: number[]): number => {
     let count = 0;
     let max = 0;
@@ -157,7 +152,6 @@ export const SkyscraperBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamen
     return count;
   };
 
-  // 即時檢查邊界線索滿足度（認知負荷卸載）
   const clueStatus = useMemo(() => {
     const topStatus = clues.top?.map((target: number, c: number) => {
       if (target === 0) return true;
@@ -190,7 +184,6 @@ export const SkyscraperBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamen
     return { topStatus, bottomStatus, leftStatus, rightStatus };
   }, [grid, clues]);
 
-  // 重複數值衝突即時定位
   const duplicateConflictSet = useMemo(() => {
     const dupes = new Set<string>();
     for (let r = 0; r < size; r++) {
@@ -227,7 +220,6 @@ export const SkyscraperBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamen
     return dupes;
   }, [grid, size]);
 
-  // 計時與超時判定
   useEffect(() => {
     if (isCompleted || isTimedOut || isResigned) return;
     const timer = setInterval(() => {
@@ -287,7 +279,6 @@ export const SkyscraperBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamen
     return () => clearInterval(timer);
   }, [isCompleted, isTimedOut, isResigned, isAssessmentMode, standardTimeLimit, actualPuzzle, currentTier, recordAttempt, size, grid, detectedStrategy]);
 
-  // 勝利校驗
   const checkVictory = useCallback(
     async (currentGrid: number[][]) => {
       const sol = actualPuzzle?.solution as number[][];
@@ -356,7 +347,6 @@ export const SkyscraperBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamen
     [actualPuzzle, size, currentTier, recordAttempt, removeBookmark, detectedStrategy, hintLevel, benchmarkData.isNewPB]
   );
 
-  // 暫存此局進度（更新為 boardState）
   const handleBookmarkPuzzle = useCallback(() => {
     if (isCompleted || isTimedOut || isResigned || !actualPuzzle) return;
     saveBookmark({
@@ -372,7 +362,6 @@ export const SkyscraperBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamen
     if (navigator.vibrate) navigator.vibrate([25, 40]);
   }, [isCompleted, isTimedOut, isResigned, actualPuzzle, currentTier, grid, elapsedSec, saveBookmark, isEn]);
 
-  // 優雅投降並覆盤
   const handleGracefulResign = useCallback(() => {
     if (isCompleted || isTimedOut || isResigned || !solutionGrid.length) return;
     if (navigator.vibrate) navigator.vibrate([40, 60, 40]);
@@ -403,7 +392,6 @@ export const SkyscraperBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamen
     });
   }, [isCompleted, isTimedOut, isResigned, solutionGrid, actualPuzzle, currentTier, conflictCountRef, detectedStrategy, recordAttempt, removeBookmark]);
 
-  // 漸進式三階提示觸發
   const triggerHintLadder = () => {
     if (hints.length === 0 || isCompleted || isTimedOut || isResigned) return;
 
@@ -452,7 +440,6 @@ export const SkyscraperBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamen
     nextGrid[r][c] = num;
     setGrid(nextGrid);
 
-    // 若第三階提示引導的格子手動填入正確值，自動重置提示條
     const currentHint = hints.find((h) => h.level === 3);
     if (hintLevel === 3 && currentHint && currentHint.row === r && currentHint.col === c && num === currentHint.targetNum) {
       setHintLevel(0);
@@ -486,26 +473,23 @@ export const SkyscraperBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamen
 
   return (
     <div className="flex flex-col items-center w-full select-none py-1 font-mono">
-      {/* 違規警告 */}
       {violationAlert && (
         <div className="fixed top-2 z-50 px-3 py-1.5 bg-rose-600 border border-rose-400 text-white font-bold text-xs rounded-full shadow-2xl animate-bounce">
           {violationAlert}
         </div>
       )}
 
-      {/* 暫存提示 */}
       {bookmarkToast && (
         <div className="fixed top-2 z-50 px-3 py-1.5 bg-indigo-600 border border-indigo-400 text-white font-bold text-xs rounded-full shadow-2xl animate-bounce">
           {bookmarkToast}
         </div>
       )}
 
-      {/* 頂部施測與空間指標列 */}
       <div className="w-[min(90vw,46vh)] flex items-center justify-between text-[8px] text-slate-500 mb-1 px-1">
         <div className="flex items-center gap-1.5">
           <button
             onClick={() => setInternalAssessment((prev) => !prev)}
-            className={`px-1.5 py-0.5 rounded border transition text-[7px] font-bold ${
+            className={`px-1.5 py-0.5 rounded border transition text-[7px] font-bold cursor-pointer ${
               isAssessmentMode
                 ? 'bg-rose-950/80 border-rose-600 text-rose-300'
                 : 'bg-slate-900 border-slate-700 text-slate-400 hover:text-slate-200'
@@ -525,7 +509,7 @@ export const SkyscraperBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamen
           {!isCompleted && !isTimedOut && !isResigned && (
             <button
               onClick={handleBookmarkPuzzle}
-              className="px-1.5 py-0.5 bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-400 text-[7px] rounded transition"
+              className="px-1.5 py-0.5 bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-400 text-[7px] rounded transition cursor-pointer"
               title={isEn ? 'Bookmark progress' : '暫存此局進度'}
             >
               📌 {isEn ? 'Save' : '暫存'}
@@ -535,7 +519,7 @@ export const SkyscraperBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamen
           {!isCompleted && !isTimedOut && !isResigned && (
             <button
               onClick={handleGracefulResign}
-              className="px-1.5 py-0.5 bg-slate-900 hover:bg-rose-950/60 border border-slate-700 hover:border-rose-700 text-slate-400 hover:text-rose-300 text-[7px] rounded transition"
+              className="px-1.5 py-0.5 bg-slate-900 hover:bg-rose-950/60 border border-slate-700 hover:border-rose-700 text-slate-400 hover:text-rose-300 text-[7px] rounded transition cursor-pointer"
               title={isEn ? 'Resign & Reveal Solution' : '優雅投降並覆盤官方解答'}
             >
               🕊️ {isEn ? 'Resign' : '投降'}
@@ -545,7 +529,7 @@ export const SkyscraperBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamen
           {!isCompleted && !isTimedOut && !isResigned && hints.length > 0 && (
             <button
               onClick={triggerHintLadder}
-              className="px-2 py-0.5 bg-amber-950 hover:bg-amber-900 border border-amber-500 text-amber-300 text-[7px] font-bold rounded flex items-center gap-1 transition shadow active:scale-95"
+              className="px-2 py-0.5 bg-amber-950 hover:bg-amber-900 border border-amber-500 text-amber-300 text-[7px] font-bold rounded flex items-center gap-1 transition shadow active:scale-95 cursor-pointer"
             >
               <span>💡</span>
               <span>{hintLevel === 0 ? (isEn ? 'Hint 1' : '提示一') : hintLevel === 1 ? (isEn ? 'Hint 2' : '提示二') : (isEn ? 'Hint 3' : '提示三')}</span>
@@ -554,7 +538,7 @@ export const SkyscraperBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamen
 
           {tabSwitchesRef.current > 0 && (
             <span className="text-rose-400 font-bold text-[7px]">
-              Switches: {tabSwitchesRef.current}
+              {isEn ? 'Switches' : '切換'}: {tabSwitchesRef.current}
             </span>
           )}
 
@@ -570,18 +554,17 @@ export const SkyscraperBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamen
         </div>
       </div>
 
-      {/* 提示訊息橫條 */}
       {activeHintText && (
         <div className="w-[min(90vw,46vh)] bg-amber-950/90 border border-amber-500 text-amber-200 text-[7.5px] px-2 py-1.5 rounded-lg mb-1 animate-fade-in flex items-start justify-between gap-1 shadow-lg">
           <div className="flex items-start gap-1">
             <span className="text-amber-400 font-bold">L{hintLevel}</span>
             <span className="leading-snug">{activeHintText}</span>
           </div>
-          <button onClick={() => setActiveHintText(null)} className="text-amber-400 shrink-0 font-bold ml-1">✕</button>
+          <button onClick={() => setActiveHintText(null)} className="text-amber-400 shrink-0 font-bold ml-1 cursor-pointer">✕</button>
         </div>
       )}
 
-      {/* 棋盤主體：比例嚴格自適應網格 */}
+      {/* 棋盤主體 */}
       <div
         className={`relative bg-slate-950 border rounded-xl shadow-2xl p-2.5 flex flex-col items-center justify-center transition-colors ${
           isResigned ? 'border-rose-900/60 bg-rose-950/20' : 'border-slate-800'
@@ -599,15 +582,18 @@ export const SkyscraperBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamen
         >
           {clues.top?.map((val: number, idx: number) => {
             const status = clueStatus.topStatus?.[idx];
+            const isColSelected = selected && selected[1] === idx;
             return (
               <div
                 key={idx}
-                className={`text-center text-[10px] sm:text-xs font-bold transition-colors ${
+                className={`text-center text-[10px] sm:text-xs font-bold transition-all ${
                   status === true
-                    ? 'text-emerald-400'
+                    ? 'text-emerald-400 drop-shadow-[0_0_5px_rgba(52,211,153,0.5)]'
                     : status === false
                     ? 'text-rose-400'
-                    : 'text-cyan-400'
+                    : isColSelected
+                    ? 'text-cyan-300 scale-110 font-black'
+                    : 'text-cyan-400/80'
                 }`}
               >
                 {val > 0 ? `↓${val}` : ''}
@@ -622,12 +608,14 @@ export const SkyscraperBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamen
             <div key={rIdx} className="flex items-center w-full gap-1 flex-1">
               {/* 左側線索 */}
               <div
-                className={`w-6 text-right pr-1 text-[10px] sm:text-xs font-bold transition-colors ${
+                className={`w-6 text-right pr-1 text-[10px] sm:text-xs font-bold transition-all ${
                   clueStatus.leftStatus?.[rIdx] === true
-                    ? 'text-emerald-400'
+                    ? 'text-emerald-400 drop-shadow-[0_0_5px_rgba(52,211,153,0.5)]'
                     : clueStatus.leftStatus?.[rIdx] === false
                     ? 'text-rose-400'
-                    : 'text-cyan-400'
+                    : selected && selected[0] === rIdx
+                    ? 'text-cyan-300 scale-110 font-black'
+                    : 'text-cyan-400/80'
                 }`}
               >
                 {clues.left?.[rIdx] > 0 ? `→${clues.left[rIdx]}` : ''}
@@ -648,7 +636,7 @@ export const SkyscraperBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamen
                     <button
                       key={cIdx}
                       onClick={() => handleCellClick(rIdx, cIdx)}
-                      className={`w-full h-full flex items-center justify-center font-bold text-xs sm:text-base rounded-lg border transition-all ${
+                      className={`w-full h-full flex items-center justify-center font-bold text-xs sm:text-base rounded-lg border transition-all cursor-pointer ${
                         isResigned
                           ? 'bg-rose-950 border-rose-600 text-rose-200'
                           : isHintTarget
@@ -672,12 +660,14 @@ export const SkyscraperBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamen
 
               {/* 右側線索 */}
               <div
-                className={`w-6 text-left pl-1 text-[10px] sm:text-xs font-bold transition-colors ${
+                className={`w-6 text-left pl-1 text-[10px] sm:text-xs font-bold transition-all ${
                   clueStatus.rightStatus?.[rIdx] === true
-                    ? 'text-emerald-400'
+                    ? 'text-emerald-400 drop-shadow-[0_0_5px_rgba(52,211,153,0.5)]'
                     : clueStatus.rightStatus?.[rIdx] === false
                     ? 'text-rose-400'
-                    : 'text-cyan-400'
+                    : selected && selected[0] === rIdx
+                    ? 'text-cyan-300 scale-110 font-black'
+                    : 'text-cyan-400/80'
                 }`}
               >
                 {clues.right?.[rIdx] > 0 ? `${clues.right[rIdx]}←` : ''}
@@ -697,15 +687,18 @@ export const SkyscraperBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamen
         >
           {clues.bottom?.map((val: number, idx: number) => {
             const status = clueStatus.bottomStatus?.[idx];
+            const isColSelected = selected && selected[1] === idx;
             return (
               <div
                 key={idx}
-                className={`text-center text-[10px] sm:text-xs font-bold transition-colors ${
+                className={`text-center text-[10px] sm:text-xs font-bold transition-all ${
                   status === true
-                    ? 'text-emerald-400'
+                    ? 'text-emerald-400 drop-shadow-[0_0_5px_rgba(52,211,153,0.5)]'
                     : status === false
                     ? 'text-rose-400'
-                    : 'text-cyan-400'
+                    : isColSelected
+                    ? 'text-cyan-300 scale-110 font-black'
+                    : 'text-cyan-400/80'
                 }`}
               >
                 {val > 0 ? `↑${val}` : ''}
@@ -723,7 +716,7 @@ export const SkyscraperBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamen
               key={num}
               onClick={() => handleNumberInput(num)}
               disabled={!selected}
-              className="flex-1 py-2 bg-slate-900 hover:bg-slate-800 disabled:opacity-30 border border-slate-700 text-slate-200 rounded-lg font-bold text-xs transition shadow active:scale-95"
+              className="flex-1 py-2 bg-slate-900 hover:bg-slate-800 disabled:opacity-30 border border-slate-700 text-slate-200 rounded-lg font-bold text-xs transition shadow active:scale-95 cursor-pointer"
             >
               {num}
             </button>
@@ -731,7 +724,8 @@ export const SkyscraperBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamen
           <button
             onClick={() => handleNumberInput(0)}
             disabled={!selected}
-            className="px-3 py-2 bg-rose-950/70 hover:bg-rose-900 border border-rose-800 text-rose-300 rounded-lg font-bold text-xs transition shadow active:scale-95"
+            className="px-3 py-2 bg-rose-950/70 hover:bg-rose-900 border border-rose-800 text-rose-300 rounded-lg font-bold text-xs transition shadow active:scale-95 cursor-pointer"
+            title={isEn ? 'Clear' : '清除'}
           >
             ⌫
           </button>
@@ -759,7 +753,7 @@ export const SkyscraperBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamen
         </div>
       )}
 
-      {/* 臨床測量級空間認知通關反思面板 */}
+      {/* 通關反思面板 */}
       {(isCompleted || isResigned) && (
         <div className="mt-3 p-3 bg-slate-950/95 border border-indigo-500/60 rounded-xl text-center w-[min(90vw,46vh)] shadow-2xl animate-fade-in font-mono">
           <div className="flex items-center justify-between border-b border-slate-800 pb-1.5 mb-2">
@@ -772,10 +766,10 @@ export const SkyscraperBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamen
               </div>
               <div className="text-xs text-indigo-300 font-bold">
                 {isResigned
-                  ? '🕊️ Resigned (Official Solution Revealed)'
+                  ? (isEn ? '🕊️ Resigned (Official Solution Revealed)' : '🕊️ 官方解答覆盤模式')
                   : detectedStrategy === 'MentalRotator'
-                  ? '🌀 Mental Rotation Active'
-                  : '📐 Systematic Projection'}
+                  ? (isEn ? '🌀 Mental Rotation Active' : '🌀 空間心像旋轉活躍')
+                  : (isEn ? '📐 Systematic Projection' : '📐 系統幾何投影')}
               </div>
             </div>
 
@@ -784,30 +778,30 @@ export const SkyscraperBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamen
                 IQ {cci.standardIQ} (95% CI: [{cci.ci95IQ[0]}-{cci.ci95IQ[1]}])
               </div>
               <span className="text-[6.5px] text-slate-400 mt-0.5">
-                年齡層 ({cci.ageNorm.cohort}): {cci.ageNorm.ageAdjustedZ >= 0 ? `+${cci.ageNorm.ageAdjustedZ}` : cci.ageNorm.ageAdjustedZ} SD (Top {Number((100 - cci.ageNorm.agePercentile).toFixed(1))}%)
+                {isEn ? `Age Norm (${cci.ageNorm.cohort}):` : `年齡常模 (${cci.ageNorm.cohort}):`}{' '}
+                {cci.ageNorm.ageAdjustedZ >= 0 ? `+${cci.ageNorm.ageAdjustedZ}` : cci.ageNorm.ageAdjustedZ} SD ({isEn ? 'Top' : '前'} {Number((100 - cci.ageNorm.agePercentile).toFixed(1))}%)
               </span>
             </div>
           </div>
 
           <div className="grid grid-cols-3 gap-1 text-[8px] text-slate-400 mb-2">
             <div className="bg-slate-900/80 p-1.5 rounded">
-              <div>實際耗時</div>
+              <div>{isEn ? 'Actual Time' : '實際耗時'}</div>
               <div className="text-slate-200 font-bold text-xs">{elapsedSec}s</div>
               <div className="text-[7px] text-slate-500">Benchmark: {benchmarkData.benchmarkTime}s</div>
             </div>
             <div className="bg-slate-900/80 p-1.5 rounded">
-              <div>推導深度</div>
-              <div className="text-cyan-300 font-bold text-xs">{metrics.perspective_depth ?? 3} 層</div>
+              <div>{isEn ? 'Depth' : '推導深度'}</div>
+              <div className="text-cyan-300 font-bold text-xs">{metrics.perspective_depth ?? 3} {isEn ? 'Lv' : '層'}</div>
               <div className="text-[7px] text-slate-500">MRT Anchor: {metrics.mrt_correlation_anchor ?? 0.6}</div>
             </div>
             <div className="bg-slate-900/80 p-1.5 rounded">
-              <div>假設回退</div>
-              <div className="text-amber-300 font-bold text-xs">{hypothesisAttemptsRef.current} 次</div>
+              <div>{isEn ? 'Hypotheses' : '假設回退'}</div>
+              <div className="text-amber-300 font-bold text-xs">{hypothesisAttemptsRef.current} {isEn ? 'steps' : '次'}</div>
               <div className="text-[7px] text-slate-500">Conflicts: {conflictCountRef.current}</div>
             </div>
           </div>
 
-          {/* 心理計量學信賴區間誤差棒 */}
           <div className="mb-2">
             <MetricErrorBar
               actualVal={elapsedSec}
@@ -819,7 +813,6 @@ export const SkyscraperBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamen
             />
           </div>
 
-          {/* 五維雙軌能力雷達 */}
           <div className="bg-slate-900/40 p-2 rounded-lg border border-slate-800 flex flex-col items-center mb-2">
             <CognitiveRadarChart
               dimensions={profile.cognitiveDimensions}
@@ -828,24 +821,22 @@ export const SkyscraperBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamen
             />
           </div>
 
-          {/* 弱點導引跳轉 */}
           <div className="bg-indigo-950/40 p-2 rounded-lg border border-indigo-800/60 text-left mb-2 flex items-center justify-between gap-2">
             <div className="flex-1 text-[8px] text-slate-300">
               {isEn ? benchmarkData.recommendedFocus.reasonEn : benchmarkData.recommendedFocus.reasonZh}
             </div>
             <button
               onClick={() => handleNavigateTargetGame(benchmarkData.recommendedFocus.targetGame)}
-              className="shrink-0 px-2 py-1 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[8px] rounded transition active:scale-95"
+              className="shrink-0 px-2 py-1 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[8px] rounded transition active:scale-95 cursor-pointer"
             >
               ➜ {isEn ? 'Train' : '立即訓練'}
             </button>
           </div>
 
-          {/* 操作按鈕群：縱向數據匯出 + 賽事提交入口 */}
           <div className="flex gap-1.5 mb-2">
             <button
               onClick={exportLongitudinalDataset}
-              className="flex-1 py-1.5 bg-slate-900 hover:bg-slate-800 border border-cyan-600/50 hover:border-cyan-400 text-cyan-300 text-[8px] font-bold rounded-lg transition shadow flex items-center justify-center gap-1 active:scale-95"
+              className="flex-1 py-1.5 bg-slate-900 hover:bg-slate-800 border border-cyan-600/50 hover:border-cyan-400 text-cyan-300 text-[8px] font-bold rounded-lg transition shadow flex items-center justify-center gap-1 active:scale-95 cursor-pointer"
             >
               <span>📊</span>
               <span>{isEn ? 'Export Dataset' : '匯出縱向數據'}</span>
@@ -853,14 +844,13 @@ export const SkyscraperBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamen
 
             <button
               onClick={() => setShowSubmitModal(true)}
-              className="flex-1 py-1.5 bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 text-slate-950 text-[8px] font-black rounded-lg shadow transition active:scale-95 flex items-center justify-center gap-1"
+              className="flex-1 py-1.5 bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 text-slate-950 text-[8px] font-black rounded-lg shadow transition active:scale-95 flex items-center justify-center gap-1 cursor-pointer"
             >
               <span>📤</span>
               <span>{isEn ? 'Submit Result' : '官方賽事提交'}</span>
             </button>
           </div>
 
-          {/* 本地 Web Crypto SHA-256 存證指紋 */}
           {proofSignature && (
             <div className="p-1.5 bg-slate-900 border border-slate-800 rounded text-left">
               <div className="text-[7px] text-slate-500 font-bold uppercase tracking-wider flex items-center justify-between">
