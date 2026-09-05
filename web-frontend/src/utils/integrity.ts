@@ -55,6 +55,19 @@ export async function computePuzzleDigest(payload: Record<string, any>): Promise
 }
 
 /**
+ * 判斷是否為生產環境（相容 Vite 與 Node 環境，絕不觸發未定義全域變數例外）
+ */
+function isProductionEnv(): boolean {
+  if (typeof import.meta !== 'undefined' && (import.meta as any).env) {
+    return (import.meta as any).env.PROD === true || (import.meta as any).env.MODE === 'production';
+  }
+  if (typeof globalThis !== 'undefined' && (globalThis as any).process?.env) {
+    return (globalThis as any).process.env.NODE_ENV === 'production';
+  }
+  return true;
+}
+
+/**
  * 賽事題目防篡改完整性校驗
  * @param item 包含 checksum 的題目物件
  * @param allowDevMock 是否允許開發環境模擬特徵（生產環境強制關閉）
@@ -68,7 +81,7 @@ export async function verifyPuzzleChecksum(
   const targetChecksum = item.checksum.toLowerCase().trim();
 
   // 僅在明確傳入 allowDevMock 且非生產環境時放行
-  if (allowDevMock && process.env.NODE_ENV !== 'production') {
+  if (allowDevMock && !isProductionEnv()) {
     if (targetChecksum === 'mock_checksum' || targetChecksum.startsWith('dev_')) {
       return true;
     }
