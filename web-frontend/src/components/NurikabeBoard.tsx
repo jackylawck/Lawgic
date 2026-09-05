@@ -83,7 +83,7 @@ export const NurikabeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
   const [elapsedMs, setElapsedMs] = useState<number>(0);
   const conflictCountRef = useRef<number>(0);
   const [conflictDisplay, setConflictDisplay] = useState<number>(0);
-  const movesCountRef.current = 0;
+  const movesCountRef = useRef<number>(0); // ✅ 已修復語法錯誤
   const hasRecordedRef = useRef<boolean>(false);
 
   useEffect(() => {
@@ -102,6 +102,7 @@ export const NurikabeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
     setElapsedMs(0);
     conflictCountRef.current = 0;
     setConflictDisplay(0);
+    movesCountRef.current = 0; // ✅ 已正確在此重置
     hasRecordedRef.current = false;
   }, [actualPuzzle?.id, rows, cols]);
 
@@ -543,7 +544,7 @@ export const NurikabeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
         </div>
       )}
 
-      {/* 覆盤播放器控制條（帶有專屬圖標與定式大字體抬頭） */}
+      {/* 覆盤播放器控制條 */}
       {isReplaying && (
         <div className="w-[min(88vw,42vh)] mb-1.5 p-1.5 bg-indigo-950/90 border border-cyan-500 rounded-lg text-cyan-200 text-[8px] animate-pulse font-mono">
           <div className="flex justify-between items-center text-[7px] text-cyan-400 mb-1 border-b border-cyan-900/60 pb-0.5">
@@ -611,7 +612,7 @@ export const NurikabeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
         </div>
       )}
 
-      {/* 主棋盤 (支援高對比與 180° 對稱標籤) */}
+      {/* 主棋盤 */}
       <div
         className={`relative overflow-hidden p-2 rounded-xl border-2 shadow-2xl transition-colors ${
           highContrast ? 'bg-black border-slate-400' : 'bg-slate-950 border-slate-800'
@@ -773,7 +774,6 @@ export const NurikabeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
             />
           </div>
 
-          {/* 覆盤、戰績卡與對決行動群 */}
           <div className="grid grid-cols-2 gap-1 mb-1">
             <button
               onClick={handleStartReplay}
