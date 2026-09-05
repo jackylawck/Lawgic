@@ -12,7 +12,7 @@ crate-type = ["cdylib", "rlib"]
 # 鎖定具體修訂版本，避免 CI/CD 環境建置漂移
 wasm-bindgen = "0.2.92"
 
-# 供需要輕量堆配置時使用（若全域零堆配置可省略）
+# 輕量堆配置
 wee_alloc = { version = "0.4.5", optional = true }
 
 [features]
@@ -31,5 +31,5 @@ panic = "abort"
 strip = "symbols"
 
 [package.metadata.wasm-pack.profile.release]
-# 🌟 開啟 Binaryen 極限後處理優化（配合 SIMD 與死碼消除）
-wasm-opt = ["-O4", "--converge", "--strip-debug"]
+# 🌟 修正重點：加上 --enable-bulk-memory 解決 wasm-validator error
+wasm-opt = ["-O4", "--converge", "--strip-debug", "--enable-bulk-memory"]
