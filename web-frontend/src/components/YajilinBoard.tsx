@@ -48,11 +48,50 @@ export const YajilinBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
   const { lang } = useLanguage();
   const isEn = lang === 'en';
 
+  const t = useMemo(() => ({
+    speed: isEn ? 'Speed' : '競速',
+    moves: isEn ? 'Moves' : '步數',
+    conflicts: isEn ? 'Conflicts' : '衝突累加',
+    format: isEn ? 'Format' : '格式',
+    symbol: isEn ? 'Symbol' : '純符號',
+    number: isEn ? 'Number' : '數字符號',
+    noGuess: isEn ? 'No-Guess' : '無猜測',
+    locked: isEn ? 'Locked' : '鎖定',
+    strict: isEn ? 'Strict' : '嚴謹',
+    off: 'OFF',
+    hint: isEn ? 'Hint' : '提示',
+    exam: isEn ? 'Exam' : '測驗',
+    getHint: isEn ? 'Get' : '因果',
+    undo: isEn ? 'Undo' : '撤銷',
+    redo: isEn ? 'Redo' : '重做',
+    seed: isEn ? 'Seed' : '種子碼',
+    instruction: isEn ? 'Click: Empty ➔ Black ➔ Dot | Click neighbor: Line' : '點擊格子循環 / 點擊相鄰格連線',
+    seedToast: isEn ? '📋 Seed copied! Share with your rival on Discord!' : '📋 種子短碼已複製！可發送給好友直接發起同題對決！',
+    resolvedTitle: isEn ? 'YAJILIN RESOLVED' : '矢印迴路・標準化測驗認證',
+    resolvedSubtitle: isEn ? 'Continuous Loop Closed' : '單一迴路封閉・幾何約束完全收斂',
+    constructTitle: isEn ? 'Construct Decomposition' : '心理計量構念分離分析',
+    timeElapsed: isEn ? 'Time' : '耗時',
+    opsCount: isEn ? 'Operations' : '操作步數',
+    conflictPenalty: isEn ? 'Penalty' : '衝突懲罰',
+    timesUnit: isEn ? 'times' : '次',
+    aiReplay: isEn ? 'AI Replay' : '解法覆盤',
+    copySeed: isEn ? 'Copy Seed' : '複製種子',
+    submit: isEn ? 'Submit' : '賽事提交',
+    level: isEn ? 'LEVEL' : '等級',
+    mustBlack: isEn ? 'Must be BLACK' : '必然塗黑',
+    mustLoop: isEn ? 'Must be LOOP' : '必然為迴路格',
+    focusCell: (r: number, c: number, type: string) =>
+      isEn
+        ? `Focus on Cell [${r}, ${c}]. [Construct: ${type}]`
+        : `請關注單元格 [${r}, ${c}]。【構念：${type === 'Gf' ? '流體推理' : '空間視覺'}】`,
+    noGuessBlocked: (reason: string) =>
+      isEn ? `[No-Guess Blocked] Strictly deduce: ${reason}` : `【無猜測攔截】依據定式應優先推導：${reason}`,
+  }), [isEn]);
+
   const spec: YajilinSpec = (actualPuzzle as any)?.puzzle;
   const rows = spec?.rows || 7;
   const cols = spec?.cols || 7;
   const clues: ArrowClue[] = useMemo(() => spec?.clues || [], [spec]);
-
   const currentTier = (actualPuzzle?.tier as TierKey) || 'kids';
 
   const clueMap = useMemo(() => {
@@ -61,10 +100,7 @@ export const YajilinBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
     return map;
   }, [clues]);
 
-  // 1. 非語言符號模式
   const [isNonVerbal, setIsNonVerbal] = useState<boolean>(tournamentMode);
-
-  // 2. 盤面狀態
   const [cellStates, setCellStates] = useState<YajilinCellState[][]>(() =>
     Array.from({ length: rows }, () => Array(cols).fill(0))
   );
@@ -79,14 +115,12 @@ export const YajilinBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
   const [history, setHistory] = useState<YajilinDelta[]>([]);
   const [redoStack, setRedoStack] = useState<YajilinDelta[]>([]);
 
-  // 3. 提示與覆盤回放 (Replay Engine)
   const [noGuessMode, setNoGuessMode] = useState<boolean>(false);
   const [noGuessWarning, setNoGuessWarning] = useState<string | null>(null);
   const [activeHint, setActiveHint] = useState<YajilinHintStep | null>(null);
   const [hintLadderLevel, setHintLadderLevel] = useState<1 | 2 | 3>(1);
   const [animatedEvidenceSet, setAnimatedEvidenceSet] = useState<Set<string>>(new Set());
 
-  // 覆盤播放器狀態
   const [isReplaying, setIsReplaying] = useState<boolean>(false);
   const [replayStepIndex, setReplayStepIndex] = useState<number>(0);
   const [replayDeductionList, setReplayDeductionList] = useState<YajilinHintStep[]>([]);
@@ -143,7 +177,6 @@ export const YajilinBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
     return () => cancelAnimationFrame(frameId);
   }, [isCompleted, isReplaying]);
 
-  // 動態提示依據格動畫
   useEffect(() => {
     if (!activeHint || activeHint.evidenceCells.length === 0) {
       setAnimatedEvidenceSet(new Set());
@@ -152,16 +185,15 @@ export const YajilinBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
     setAnimatedEvidenceSet(new Set());
     const timers: ReturnType<typeof setTimeout>[] = [];
     activeHint.evidenceCells.forEach(([er, ec], idx) => {
-      const t = setTimeout(() => {
+      const timer = setTimeout(() => {
         setAnimatedEvidenceSet((prev) => new Set(prev).add(`${er},${ec}`));
         if (navigator.vibrate) navigator.vibrate(4);
       }, idx * 120);
-      timers.push(t);
+      timers.push(timer);
     });
     return () => timers.forEach(clearTimeout);
   }, [activeHint]);
 
-  // 4. 即時衝突與違規檢測
   const analysis = useMemo(() => {
     const adjacentBlacks = new Set<string>();
     const arrowOverflows = new Set<string>();
@@ -233,9 +265,7 @@ export const YajilinBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
           if (!isTarget || !isStateMatch) {
             if (navigator.vibrate) navigator.vibrate([25, 35, 25]);
             const reason = isEn ? step.humanReadable.en : step.humanReadable.zh;
-            setNoGuessWarning(
-              isEn ? `[No-Guess Blocked] Strictly deduce: ${reason}` : `【無猜測攔截】依據定式應優先推導：${reason}`
-            );
+            setNoGuessWarning(t.noGuessBlocked(reason));
             setTimeout(() => setNoGuessWarning(null), 3000);
             return;
           }
@@ -250,7 +280,8 @@ export const YajilinBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
       setRedoStack([]);
 
       setCellStates((prev) => {
-        const next = prev.map((row) => [...row]);
+        const next = [...prev];
+        next[r] = [...next[r]];
         next[r][c] = targetState;
         return next;
       });
@@ -259,7 +290,7 @@ export const YajilinBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
         setActiveHint(null);
       }
     },
-    [isCompleted, isReplaying, clueMap, cellStates, noGuessMode, rows, cols, clues, edges, activeHint, isEn]
+    [isCompleted, isReplaying, clueMap, cellStates, noGuessMode, rows, cols, clues, edges, activeHint, isEn, t]
   );
 
   const toggleEdge = useCallback(
@@ -291,9 +322,15 @@ export const YajilinBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
       setRedoStack([]);
 
       setEdges((prev) => {
-        const next = prev.map((row) => row.map((arr) => [...arr] as YajilinCellEdges));
+        const next = [...prev];
+        next[r1] = [...next[r1]];
+        next[r1][c1] = [...next[r1][c1]] as YajilinCellEdges;
         next[r1][c1][d1] = targetEdge;
+
+        next[r2] = [...next[r2]];
+        next[r2][c2] = [...next[r2][c2]] as YajilinCellEdges;
         next[r2][c2][d2] = targetEdge;
+
         return next;
       });
     },
@@ -323,7 +360,8 @@ export const YajilinBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
     const last = history[history.length - 1];
     if (last.type === 'cell') {
       setCellStates((prev) => {
-        const next = prev.map((row) => [...row]);
+        const next = [...prev];
+        next[last.r] = [...next[last.r]];
         next[last.r][last.c] = last.from;
         return next;
       });
@@ -333,9 +371,13 @@ export const YajilinBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
       const nr = last.r + dirs[last.dirIndex][0];
       const nc = last.c + dirs[last.dirIndex][1];
       setEdges((prev) => {
-        const next = prev.map((row) => row.map((arr) => [...arr] as YajilinCellEdges));
+        const next = [...prev];
+        next[last.r] = [...next[last.r]];
+        next[last.r][last.c] = [...next[last.r][last.c]] as YajilinCellEdges;
         next[last.r][last.c][last.dirIndex!] = last.from;
         if (nr >= 0 && nr < rows && nc >= 0 && nc < cols) {
+          next[nr] = [...next[nr]];
+          next[nr][nc] = [...next[nr][nc]] as YajilinCellEdges;
           next[nr][nc][oppDir[last.dirIndex!]] = last.from;
         }
         return next;
@@ -353,7 +395,8 @@ export const YajilinBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
     const nextDelta = redoStack[redoStack.length - 1];
     if (nextDelta.type === 'cell') {
       setCellStates((prev) => {
-        const next = prev.map((row) => [...row]);
+        const next = [...prev];
+        next[nextDelta.r] = [...next[nextDelta.r]];
         next[nextDelta.r][nextDelta.c] = nextDelta.to;
         return next;
       });
@@ -363,9 +406,13 @@ export const YajilinBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
       const nr = nextDelta.r + dirs[nextDelta.dirIndex][0];
       const nc = nextDelta.c + dirs[nextDelta.dirIndex][1];
       setEdges((prev) => {
-        const next = prev.map((row) => row.map((arr) => [...arr] as YajilinCellEdges));
+        const next = [...prev];
+        next[nextDelta.r] = [...next[nextDelta.r]];
+        next[nextDelta.r][nextDelta.c] = [...next[nextDelta.r][nextDelta.c]] as YajilinCellEdges;
         next[nextDelta.r][nextDelta.c][nextDelta.dirIndex!] = nextDelta.to;
         if (nr >= 0 && nr < rows && nc >= 0 && nc < cols) {
+          next[nr] = [...next[nr]];
+          next[nr][nc] = [...next[nr][nc]] as YajilinCellEdges;
           next[nr][nc][oppDir[nextDelta.dirIndex!]] = nextDelta.to;
         }
         return next;
@@ -376,10 +423,10 @@ export const YajilinBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
     setRedoStack((prev) => prev.slice(0, -1));
   }, [redoStack, isCompleted, isReplaying, rows, cols]);
 
-  // 鍵盤操控
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (isCompleted || isReplaying) return;
+
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') {
         e.preventDefault();
         if (e.shiftKey) handleRedo();
@@ -389,13 +436,30 @@ export const YajilinBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
         handleRedo();
       } else if (e.code === 'Escape') {
         setSelectedCell(null);
+      } else if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'KeyW', 'KeyS', 'KeyA', 'KeyD'].includes(e.code)) {
+        e.preventDefault();
+        setSelectedCell((prev) => {
+          if (prev === null) return [0, 0];
+          const [r, c] = prev;
+          if (e.code === 'ArrowUp' || e.code === 'KeyW') return [Math.max(0, r - 1), c];
+          if (e.code === 'ArrowDown' || e.code === 'KeyS') return [Math.min(rows - 1, r + 1), c];
+          if (e.code === 'ArrowLeft' || e.code === 'KeyA') return [r, Math.max(0, c - 1)];
+          if (e.code === 'ArrowRight' || e.code === 'KeyD') return [r, Math.min(cols - 1, c + 1)];
+          return prev;
+        });
+      } else if (selectedCell && (e.code === 'Space' || e.code === 'Enter')) {
+        e.preventDefault();
+        const [r, c] = selectedCell;
+        if (!clueMap.has(`${r},${c}`)) {
+          const curr = cellStates[r][c];
+          mutateCell(r, c, curr === 0 ? 1 : curr === 1 ? 2 : 0);
+        }
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isCompleted, isReplaying, handleUndo, handleRedo]);
+  }, [isCompleted, isReplaying, handleUndo, handleRedo, selectedCell, rows, cols, clueMap, cellStates, mutateCell]);
 
-  // 5. 勝利驗證與 SHA-256
   useEffect(() => {
     if (isCompleted || isReplaying || analysis.totalConflicts > 0) return;
 
@@ -458,7 +522,6 @@ export const YajilinBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
     }
   }, [edges, cellStates, analysis.totalConflicts, isCompleted, isReplaying, actualPuzzle, rows, cols, clueMap, currentTier, recordAttempt, profile.personalBest.fastestTime, activeHint, tournamentMode]);
 
-  // 因果提示請求
   const handleRequestHint = () => {
     if (isCompleted || tournamentMode || isReplaying) return;
     if (navigator.vibrate) navigator.vibrate(12);
@@ -475,9 +538,7 @@ export const YajilinBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
     }
   };
 
-  // 6. 硬核玩家必備：解法路徑慢動作覆盤 (Solution Path Replay Engine)
   const handleStartReplay = () => {
-    // 預先推導出完整解題序列
     const simCellStates: YajilinCellState[][] = Array.from({ length: rows }, () => Array(cols).fill(0));
     const simEdges: YajilinCellEdges[][] = Array.from({ length: rows }, () =>
       Array.from({ length: cols }, () => [false, false, false, false])
@@ -498,31 +559,31 @@ export const YajilinBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
     setReplayDeductionList(steps);
     setReplayStepIndex(0);
     setIsReplaying(true);
-    // 重置盤面至初始狀態以供回放
     setCellStates(Array.from({ length: rows }, () => Array(cols).fill(0)));
     setEdges(Array.from({ length: rows }, () => Array.from({ length: cols }, () => [false, false, false, false])));
   };
 
-  // 覆盤時間軸計時器 (450ms/步)
   useEffect(() => {
     if (!isReplaying || replayDeductionList.length === 0) return;
 
     if (replayStepIndex >= replayDeductionList.length) {
-      setTimeout(() => setIsReplaying(false), 1200);
-      return;
+      const timer = setTimeout(() => setIsReplaying(false), 1200);
+      return () => clearTimeout(timer);
     }
 
     const timer = setTimeout(() => {
       const curStep = replayDeductionList[replayStepIndex];
       setCellStates((prev) => {
-        const next = prev.map((row) => [...row]);
+        const next = [...prev];
+        next[curStep.r] = [...next[curStep.r]];
         next[curStep.r][curStep.c] = curStep.forcedState;
         return next;
       });
 
       if (curStep.forcedEdges) {
         setEdges((prev) => {
-          const next = prev.map((row) => row.map((arr) => [...arr] as YajilinCellEdges));
+          const next = [...prev];
+          next[curStep.r] = [...next[curStep.r]];
           next[curStep.r][curStep.c] = [...curStep.forcedEdges!];
           return next;
         });
@@ -535,7 +596,6 @@ export const YajilinBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
     return () => clearTimeout(timer);
   }, [isReplaying, replayStepIndex, replayDeductionList]);
 
-  // 7. 一鍵複製題目種子碼 (Discord Duel Seed Sharing)
   const handleCopySeedShareCode = () => {
     const seed = (actualPuzzle as any)?.puzzle?.seed || (actualPuzzle?.metrics as any)?.seed || 0;
     const shareCode = `YAJILIN-S${seed}-T${currentTier}`;
@@ -583,44 +643,41 @@ export const YajilinBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
 
   const gfPurity = (actualPuzzle?.metrics as any)?.gfPurityIndex ?? 0.5;
   const dominant = (actualPuzzle?.metrics as any)?.dominantConstruct ?? 'Balanced';
-  const currentSeed = (actualPuzzle as any)?.puzzle?.seed || (actualPuzzle?.metrics as any)?.seed || 0;
 
   return (
     <div className="flex flex-col items-center justify-center p-1 select-none font-mono">
       {/* 頂部賽事數據列 */}
       <div className="w-full grid grid-cols-6 gap-1 px-0.5 mb-1.5 text-[8px] sm:text-[9px]">
         <div className="bg-slate-950 border border-slate-800 p-1 rounded text-center">
-          <div className="text-slate-500 text-[6.5px]">{isEn ? '⏱️ Speed' : '⏱️ 競速'}</div>
+          <div className="text-slate-500 text-[6.5px]">⏱️ {t.speed}</div>
           <div className="text-slate-200 font-bold">{(elapsedMs / 1000).toFixed(1)}s</div>
         </div>
 
         <div className="bg-slate-950 border border-slate-800 p-1 rounded text-center">
-          <div className="text-slate-500 text-[6.5px]">{isEn ? '♟️ Moves' : '♟️ 步數'}</div>
+          <div className="text-slate-500 text-[6.5px]">♟️ {t.moves}</div>
           <div className="text-cyan-300 font-bold">{movesCountRef.current}</div>
         </div>
 
         <div className="bg-slate-950 border border-slate-800 p-1 rounded text-center">
-          <div className="text-slate-500 text-[6.5px]">{isEn ? '⚠️ Conflicts' : '⚠️ 衝突累加'}</div>
+          <div className="text-slate-500 text-[6.5px]">⚠️ {t.conflicts}</div>
           <div className={`font-bold ${conflictDisplay > 0 ? 'text-rose-400' : 'text-slate-300'}`}>
             {conflictDisplay}
           </div>
         </div>
 
-        {/* 非語言模式 */}
         <button
           onClick={() => !tournamentMode && setIsNonVerbal((prev) => !prev)}
           className={`p-1 rounded border text-center transition ${
             isNonVerbal
               ? 'bg-amber-950/80 border-amber-500 text-amber-300 font-bold shadow-xs'
               : 'bg-slate-950 border-slate-800 text-slate-500 hover:text-slate-300'
-          } ${tournamentMode ? 'cursor-not-allowed opacity-90' : ''}`}
+          } ${tournamentMode ? 'cursor-not-allowed opacity-90' : 'cursor-pointer'}`}
           title={isEn ? 'Culture-Fair Non-Verbal Mode' : '非語言文化公平模式'}
         >
-          <div className="text-[6.5px]">👁️ {isEn ? 'Format' : '格式'}</div>
-          <div className="text-[7.5px]">{isNonVerbal ? (isEn ? 'Symbol' : '純符號') : (isEn ? 'Number' : '數字符號')}</div>
+          <div className="text-[6.5px]">👁️ {t.format}</div>
+          <div className="text-[7.5px]">{isNonVerbal ? t.symbol : t.number}</div>
         </button>
 
-        {/* 無猜測模式 */}
         <button
           onClick={() => setNoGuessMode((prev) => !prev)}
           disabled={tournamentMode}
@@ -632,11 +689,10 @@ export const YajilinBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
               : 'bg-slate-950 border-slate-800 text-slate-500 hover:text-slate-300'
           }`}
         >
-          <div className="text-[6.5px]">🛡️ {isEn ? 'No-Guess' : '無猜測'}</div>
-          <div className="text-[7.5px]">{tournamentMode ? (isEn ? 'Locked' : '鎖定') : noGuessMode ? (isEn ? 'Strict' : '嚴謹') : 'OFF'}</div>
+          <div className="text-[6.5px]">🛡️ {t.noGuess}</div>
+          <div className="text-[7.5px]">{tournamentMode ? t.locked : noGuessMode ? t.strict : t.off}</div>
         </button>
 
-        {/* 提示階梯 */}
         <button
           onClick={handleRequestHint}
           disabled={isCompleted || tournamentMode || isReplaying}
@@ -648,21 +704,19 @@ export const YajilinBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
               : 'bg-indigo-950/80 border-indigo-500/60 text-indigo-300 hover:bg-indigo-900'
           }`}
         >
-          <div className="text-[6.5px]">💡 {isEn ? 'Hint' : '提示'}</div>
+          <div className="text-[6.5px]">💡 {t.hint}</div>
           <div className="text-[7.5px] truncate">
-            {tournamentMode ? (isEn ? 'Exam' : '測驗') : activeHint ? `Lv.${hintLadderLevel}` : (isEn ? 'Get' : '因果')}
+            {tournamentMode ? t.exam : activeHint ? `Lv.${hintLadderLevel}` : t.getHint}
           </div>
         </button>
       </div>
 
-      {/* 複製成功提示 Toast */}
       {copyToast && (
         <div className="w-[min(88vw,42vh)] mb-1 p-1 bg-emerald-950 border border-emerald-500 text-emerald-300 text-[7.5px] rounded animate-fade-in text-center font-bold">
-          {isEn ? '📋 Seed copied! Share with your rival on Discord!' : '📋 種子短碼已複製！可發送給好友直接發起同題對決！'}
+          {t.seedToast}
         </div>
       )}
 
-      {/* 覆盤播放器進度條指示 */}
       {isReplaying && (
         <div className="w-[min(88vw,42vh)] mb-1.5 p-1.5 bg-indigo-950/90 border border-cyan-500 rounded-lg text-cyan-200 text-[8px] animate-pulse text-left font-mono">
           <div className="flex justify-between items-center text-[7px] text-cyan-400 mb-0.5">
@@ -675,25 +729,21 @@ export const YajilinBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
         </div>
       )}
 
-      {/* 無猜測警示橫條 */}
       {noGuessWarning && (
         <div className="w-[min(88vw,42vh)] mb-1.5 p-1 bg-rose-950 border border-rose-500 text-rose-300 text-[8px] rounded-lg animate-pulse text-center shadow-lg font-bold">
           {noGuessWarning}
         </div>
       )}
 
-      {/* 提示階梯說明卡片 */}
       {activeHint && !isReplaying && (
         <div className="w-[min(88vw,42vh)] mb-1.5 p-1.5 bg-amber-950/80 border border-amber-500/70 rounded-lg text-amber-200 text-[8px] animate-fade-in text-left shadow-lg">
           <div className="font-bold flex items-center justify-between text-[7px] text-amber-400 border-b border-amber-900/60 pb-0.5 mb-1">
-            <span>[LEVEL {hintLadderLevel}/3]</span>
+            <span>[{t.level} {hintLadderLevel}/3]</span>
             <span className="uppercase">{activeHint.technique.replace(/_/g, ' ')} ({activeHint.constructType})</span>
           </div>
           {hintLadderLevel === 1 && (
             <div>
-              {isEn
-                ? `Focus on Cell [${activeHint.r + 1},${activeHint.c + 1}]. [Construct: ${activeHint.constructType}]`
-                : `請關注單元格 [${activeHint.r + 1},${activeHint.c + 1}]。【構念：${activeHint.constructType === 'Gf' ? '流體推理' : '空間視覺'}】`}
+              {t.focusCell(activeHint.r + 1, activeHint.c + 1, activeHint.constructType)}
             </div>
           )}
           {hintLadderLevel === 2 && (
@@ -703,24 +753,23 @@ export const YajilinBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
             <div className="font-bold text-amber-300">
               {activeHint.rationale}
               <span className="ml-1 text-cyan-300 underline">
-                {activeHint.forcedState === 1 ? (isEn ? 'Must be BLACK' : '必然塗黑') : (isEn ? 'Must be LOOP' : '必然為迴路格')}
+                {activeHint.forcedState === 1 ? t.mustBlack : t.mustLoop}
               </span>
             </div>
           )}
         </div>
       )}
 
-      {/* 主棋盤 (含 180° 對稱勳章與 SVG 閉環) */}
+      {/* 主棋盤 */}
       <div
         className="relative overflow-hidden p-2 rounded-xl bg-slate-950 border-2 border-slate-800 shadow-2xl"
         style={{ width: 'min(88vw, 42vh)', height: 'min(88vw, 42vh)', touchAction: 'none' }}
       >
-        {/* Nikoli 180° 對稱勳章 */}
         <div className="absolute top-1 right-1 px-1 py-0.2 bg-indigo-950/70 border border-indigo-500/50 rounded text-[6px] text-indigo-300 font-mono pointer-events-none z-20">
           ☯ 180° SYM
         </div>
 
-        {/* SVG 幾何路徑渲染 */}
+        {/* SVG 連線軌道 */}
         <svg className="absolute inset-2 w-[calc(100%-16px)] h-[calc(100%-16px)] pointer-events-none z-15">
           {Array.from({ length: rows }).map((_, r) =>
             Array.from({ length: cols }).map((__, c) => {
@@ -780,7 +829,7 @@ export const YajilinBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
           )}
         </svg>
 
-        {/* 網格節點與線索層 */}
+        {/* 格子陣列 */}
         <div
           className="relative w-full h-full"
           style={{
@@ -829,7 +878,7 @@ export const YajilinBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
                       {renderClueRepresentation(clue.count)}
                     </div>
                   ) : state === 1 ? (
-                    <div className="w-[80%] h-[80%] bg-slate-950 rounded-xs border border-slate-700 shadow-md flex items-center justify-center">
+                    <div className="w-[80%] h-[80%] bg-slate-950 rounded-sm border border-slate-700 shadow-md flex items-center justify-center">
                       <div className="w-1.5 h-1.5 bg-slate-500/40 rounded-full" />
                     </div>
                   ) : state === 2 ? (
@@ -848,29 +897,29 @@ export const YajilinBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
           <button
             onClick={handleUndo}
             disabled={history.length === 0 || isCompleted || isReplaying}
-            className="px-2 py-0.5 bg-slate-900 border border-slate-800 rounded hover:bg-slate-800 disabled:opacity-40"
+            className="px-2 py-0.5 bg-slate-900 border border-slate-800 rounded hover:bg-slate-800 disabled:opacity-40 cursor-pointer"
           >
-            ↩ {isEn ? 'Undo' : '撤銷'}
+            ↩ {t.undo}
           </button>
           <button
             onClick={handleRedo}
             disabled={redoStack.length === 0 || isCompleted || isReplaying}
-            className="px-2 py-0.5 bg-slate-900 border border-slate-800 rounded hover:bg-slate-800 disabled:opacity-40"
+            className="px-2 py-0.5 bg-slate-900 border border-slate-800 rounded hover:bg-slate-800 disabled:opacity-40 cursor-pointer"
           >
-            ↪ {isEn ? 'Redo' : '重做'}
+            ↪ {t.redo}
           </button>
           {!tournamentMode && (
             <button
               onClick={handleCopySeedShareCode}
-              className="px-2 py-0.5 bg-slate-900 border border-slate-800 rounded hover:bg-slate-800 text-amber-300"
+              className="px-2 py-0.5 bg-slate-900 border border-slate-800 rounded hover:bg-slate-800 text-amber-300 cursor-pointer"
               title="Copy Duel Seed Code"
             >
-              📋 {isEn ? 'Seed' : '種子碼'}
+              📋 {t.seed}
             </button>
           )}
         </div>
         <div className="text-slate-500">
-          <span>點擊格子循環 / 點擊相鄰格連線</span>
+          <span>{t.instruction}</span>
         </div>
       </div>
 
@@ -879,18 +928,18 @@ export const YajilinBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
         <div className="mt-2 p-2.5 bg-slate-950/95 border border-indigo-500/60 rounded-xl text-center w-[min(88vw,42vh)] shadow-2xl animate-fade-in font-mono">
           <div className="flex items-center justify-between border-b border-slate-800 pb-1 mb-1.5">
             <div className="text-left">
-              <div className="text-[7.5px] text-slate-500 tracking-wider">YAJILIN RESOLVED</div>
-              <div className="text-xs text-indigo-300 font-bold">🌀 矢印迴路・標準化測驗認證</div>
+              <div className="text-[7.5px] text-slate-500 tracking-wider uppercase">{t.resolvedTitle}</div>
+              <div className="text-xs text-indigo-300 font-bold">🌀 {t.resolvedSubtitle}</div>
             </div>
             <div className="px-2 py-0.5 border border-cyan-500 bg-cyan-950/80 rounded text-[9px] font-bold text-cyan-300">
-              Gf: IQ {cci.standardIQ} (Top {Number((100 - cci.percentileRank).toFixed(1))}%)
+              Gf: IQ {cci.standardIQ} ({isEn ? 'Top' : '前'} {Number((100 - cci.percentileRank).toFixed(1))}%)
             </div>
           </div>
 
           {/* 構念效度分離指標卡片 */}
           <div className="bg-slate-900/90 border border-indigo-950 p-1.5 rounded mb-1.5 text-left">
             <div className="flex justify-between items-center text-[7px] mb-1">
-              <span className="text-slate-400 uppercase font-bold">Construct Decomposition</span>
+              <span className="text-slate-400 uppercase font-bold">{t.constructTitle}</span>
               <span className="text-amber-400 font-mono font-black">{dominant}</span>
             </div>
             <div className="w-full bg-slate-950 h-1.5 rounded-full overflow-hidden flex">
@@ -913,16 +962,18 @@ export const YajilinBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
 
           <div className="grid grid-cols-3 gap-1 text-[7.5px] text-slate-400 mb-1.5">
             <div className="bg-slate-900/80 p-1 rounded">
-              <div>耗時</div>
+              <div>{t.timeElapsed}</div>
               <div className="text-slate-200 font-bold text-[10px]">{(elapsedMs / 1000).toFixed(1)}s</div>
             </div>
             <div className="bg-slate-900/80 p-1 rounded">
-              <div>操作步數</div>
+              <div>{t.opsCount}</div>
               <div className="text-cyan-300 font-bold text-[10px]">{movesCountRef.current}</div>
             </div>
             <div className="bg-slate-900/80 p-1 rounded">
-              <div>衝突懲罰</div>
-              <div className="text-amber-300 font-bold text-[10px]">{conflictCountRef.current} 次</div>
+              <div>{t.conflictPenalty}</div>
+              <div className="text-amber-300 font-bold text-[10px]">
+                {conflictCountRef.current} {t.timesUnit}
+              </div>
             </div>
           </div>
 
@@ -945,31 +996,30 @@ export const YajilinBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
             />
           </div>
 
-          {/* 覆盤與分享戰鬥群 */}
           <div className="flex gap-1 mb-1.5">
             <button
               onClick={handleStartReplay}
               disabled={isReplaying}
-              className="flex-1 py-1 bg-indigo-950 hover:bg-indigo-900 border border-indigo-500/60 text-indigo-300 text-[7.5px] font-bold rounded transition shadow flex items-center justify-center gap-0.5 active:scale-95"
+              className="flex-1 py-1 bg-indigo-950 hover:bg-indigo-900 border border-indigo-500/60 text-indigo-300 text-[7.5px] font-bold rounded transition shadow flex items-center justify-center gap-0.5 active:scale-95 cursor-pointer"
             >
               <span>🔁</span>
-              <span>{isEn ? 'AI Replay' : '解法覆盤'}</span>
+              <span>{t.aiReplay}</span>
             </button>
 
             <button
               onClick={handleCopySeedShareCode}
-              className="flex-1 py-1 bg-slate-900 hover:bg-slate-800 border border-amber-500/60 text-amber-300 text-[7.5px] font-bold rounded transition shadow flex items-center justify-center gap-0.5 active:scale-95"
+              className="flex-1 py-1 bg-slate-900 hover:bg-slate-800 border border-amber-500/60 text-amber-300 text-[7.5px] font-bold rounded transition shadow flex items-center justify-center gap-0.5 active:scale-95 cursor-pointer"
             >
               <span>📋</span>
-              <span>{isEn ? 'Copy Seed' : '複製種子'}</span>
+              <span>{t.copySeed}</span>
             </button>
 
             <button
               onClick={() => setShowSubmitModal(true)}
-              className="flex-1 py-1 bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 text-slate-950 text-[7.5px] font-black rounded shadow transition active:scale-95 flex items-center justify-center gap-0.5"
+              className="flex-1 py-1 bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 text-slate-950 text-[7.5px] font-black rounded shadow transition active:scale-95 flex items-center justify-center gap-0.5 cursor-pointer"
             >
               <span>📤</span>
-              <span>{isEn ? 'Submit' : '賽事提交'}</span>
+              <span>{t.submit}</span>
             </button>
           </div>
 
