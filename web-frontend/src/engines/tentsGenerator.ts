@@ -49,6 +49,21 @@ export interface ProgressiveHint {
   };
 }
 
+// 🌟 向下相容 UI 所需的 TentStep 介面與型別別名
+export interface TentStep {
+  step: number;
+  type: string;
+  r: number;
+  c: number;
+  state: number;
+  rationale: string;
+  humanReadable?: {
+    zh: string;
+    en: string;
+  };
+}
+export type TentHintStep = TentStep;
+
 export interface CognitiveQMatrix {
   A1_perceptual_scanning: boolean;    // 知覺排查
   A2_working_memory_update: boolean;  // 行列雙向記憶
@@ -64,7 +79,7 @@ export interface PsychometricItemParameters {
   canonical_hash: string;
   aha_index: number;
   crux_coordinates: TentCoord[];
-  persona_convergence_variance: number; // 三種解題風格的方差
+  persona_convergence_variance: number;
 }
 
 export interface TentsSpec {
@@ -73,9 +88,14 @@ export interface TentsSpec {
   trees: TentCoord[];
   rowCounts: number[];
   colCounts: number[];
+  // 🌟 向下相容 TentsBoard.tsx 所需屬性
+  rowClues: number[];
+  colClues: number[];
   solutionTents: TentCoord[];
   treeTentPairs: [TentCoord, TentCoord][];
   hintCascades: ProgressiveHint[];
+  // 🌟 向下相容 TentsBoard.tsx 所需屬性
+  solvingSteps: TentStep[];
   qMatrix: CognitiveQMatrix;
   psychometrics: PsychometricItemParameters;
   wpfAnswerKey: string;
@@ -285,10 +305,6 @@ export class WebTentsGenerator {
     return solutions;
   }
 
-  /**
-   * 🌟 頂級定式一：雙向複合抽屜原理閉鎖器 (2-Way Pigeonhole Engine)
-   * 同時支援行帶（Row-Band）與列帶（Col-Band）之「草地排除」與「雙行缺額強制帳」
-   */
   private static findBidirectionalPigeonholeDeduction(
     rows: number,
     cols: number,
@@ -297,7 +313,7 @@ export class WebTentsGenerator {
     colCounts: number[],
     board: number[][]
   ): ProgressiveHint | null {
-    // 1. 橫向行帶 (Row-Band) 掃描
+    // 橫向行帶 (Row-Band) 掃描
     for (let r = 0; r < rows - 1; r++) {
       const r1 = r;
       const r2 = r + 1;
@@ -311,14 +327,14 @@ export class WebTentsGenerator {
       const deficit = neededTotal - placedTotal;
       if (deficit <= 0) continue;
 
-      const relevantTrees = trees.filter(t => Math.abs(t.r - r1) <= 1 || Math.abs(t.r - r2) <= 1);
+      // 嚴格過濾：僅納入所有潛在帳篷位嚴格落在這兩行內的樹木
+      const relevantTrees = trees.filter(t => t.r === r1 || t.r === r2);
       const openCandidates: TentCoord[] = [];
       for (let c = 0; c < cols; c++) {
         if (board[r1][c] === 0 && WebTentsGenerator.canPlaceTentNoTouch(r1, c, board, rows, cols)) openCandidates.push({ r: r1, c });
         if (board[r2][c] === 0 && WebTentsGenerator.canPlaceTentNoTouch(r2, c, board, rows, cols)) openCandidates.push({ r: r2, c });
       }
 
-      // 情況 A：複合帶剩餘空格 == 複合缺額 (強制全部為帳)
       if (openCandidates.length === deficit && openCandidates.length > 0) {
         const target = openCandidates[0];
         return {
@@ -341,9 +357,9 @@ export class WebTentsGenerator {
               },
               {
                 stepIndex: 2,
-                hypothesis: `若 [${target.r + 1}, ${target.c + 1}] 不放帳篷（標記草地）。`,
+                hypothesis: `若 [${target.r + 1}, ${target.c + 1}] 標記草地。`,
                 collisionTarget: target,
-                reason: `剩餘空間將嚴格小於 ${deficit}，觸發雙行容量崩潰。`,
+                reason: `剩餘空間將小於 ${deficit}，觸發雙行容量崩潰。`,
               },
             ],
             messageZh: `雙行複合缺額閉鎖：第 ${r1 + 1} 與 ${r2 + 1} 行剩餘候選格剛好等於聯合缺額，強制搭設帳篷！`,
@@ -358,11 +374,10 @@ export class WebTentsGenerator {
         };
       }
 
-      // 情況 B：排除非樹木正交位之冗餘格
       for (let c = 0; c < cols; c++) {
         for (const tr of [r1, r2]) {
           if (board[tr][c] === 0) {
-            const canServeTree = relevantTrees.some(t => Math.abs(t.r - tr) + Math.abs(t.c - c) === 1);
+            const canServeTree = trees.some(t => Math.abs(t.r - tr) + Math.abs(t.c - c) === 1);
             if (!canServeTree) {
               return {
                 level1_focus: {
@@ -399,7 +414,7 @@ export class WebTentsGenerator {
       }
     }
 
-    // 2. 縱向列帶 (Col-Band) 掃描
+    // 縱向列帶 (Col-Band) 掃描
     for (let c = 0; c < cols - 1; c++) {
       const c1 = c;
       const c2 = c + 1;
@@ -413,7 +428,7 @@ export class WebTentsGenerator {
       const deficit = neededTotal - placedTotal;
       if (deficit <= 0) continue;
 
-      const relevantTrees = trees.filter(t => Math.abs(t.c - c1) <= 1 || Math.abs(t.c - c2) <= 1);
+      const relevantTrees = trees.filter(t => t.c === c1 || t.c === c2);
       const openCandidates: TentCoord[] = [];
       for (let r = 0; r < rows; r++) {
         if (board[r][c1] === 0 && WebTentsGenerator.canPlaceTentNoTouch(r, c1, board, rows, cols)) openCandidates.push({ r, c: c1 });
@@ -457,9 +472,6 @@ export class WebTentsGenerator {
     return null;
   }
 
-  /**
-   * 🌟 頂級定式二：雙子樹互斥角點破局器 (Corner Pair Dilemma)
-   */
   private static findCornerPairDeduction(
     rows: number,
     cols: number,
@@ -474,14 +486,12 @@ export class WebTentsGenerator {
       if (board[cr][cc] !== 9) continue;
       const cornerTree: TentCoord = { r: cr, c: cc };
 
-      // 尋找其正交 1 格處是否有另一棵鄰居樹
       for (const [dr, dc] of WebTentsGenerator.DIRS) {
         const nr = cr + dr;
         const nc = cc + dc;
         if (WebTentsGenerator.inBounds(nr, nc, rows, cols) && board[nr][nc] === 9) {
           const adjTree: TentCoord = { r: nr, c: nc };
 
-          // 收集角隅樹的合法位
           const cornerOpen: TentCoord[] = [];
           for (const [d1r, d1c] of WebTentsGenerator.DIRS) {
             const tr = cr + d1r;
@@ -491,7 +501,6 @@ export class WebTentsGenerator {
             }
           }
 
-          // 模擬角隅樹的某個分支是否會直接「全滅」鄰居樹
           for (const testPos of cornerOpen) {
             board[testPos.r][testPos.c] = 1;
 
@@ -505,7 +514,7 @@ export class WebTentsGenerator {
               }
             }
 
-            board[testPos.r][testPos.c] = 0; // 回滾
+            board[testPos.r][testPos.c] = 0;
 
             if (!adjTreeHasAnySlot) {
               return {
@@ -524,7 +533,7 @@ export class WebTentsGenerator {
                       stepIndex: 1,
                       hypothesis: `假定角隅樹將帳篷搭在 [${testPos.r + 1}, ${testPos.c + 1}]。`,
                       collisionTarget: testPos,
-                      reason: `由於對角或正交互斥，相鄰樹 [${nr + 1}, ${nc + 1}] 的所有合法鄰格被全數封鎖。`,
+                      reason: `相鄰樹 [${nr + 1}, ${nc + 1}] 的所有合法鄰格被全數封鎖。`,
                     },
                     {
                       stepIndex: 2,
@@ -552,9 +561,6 @@ export class WebTentsGenerator {
     return null;
   }
 
-  /**
-   * 階梯式提示建構器 (含動態因果反證鏈)
-   */
   public static buildHintCascade(
     rows: number,
     cols: number,
@@ -563,15 +569,12 @@ export class WebTentsGenerator {
     colCounts: number[],
     board: number[][]
   ): ProgressiveHint | null {
-    // 1. 雙子樹角隅互斥定式
     const cornerPair = this.findCornerPairDeduction(rows, cols, trees, board);
     if (cornerPair) return cornerPair;
 
-    // 2. 雙向複合抽屜原理定式
     const pigeonhole = this.findBidirectionalPigeonholeDeduction(rows, cols, trees, rowCounts, colCounts, board);
     if (pigeonhole) return pigeonhole;
 
-    // 3. 0 配額線
     for (let r = 0; r < rows; r++) {
       if (rowCounts[r] === 0) {
         for (let c = 0; c < cols; c++) {
@@ -610,7 +613,44 @@ export class WebTentsGenerator {
       }
     }
 
-    // 4. 帳篷八向隔離防碰
+    for (let c = 0; c < cols; c++) {
+      if (colCounts[c] === 0) {
+        for (let r = 0; r < rows; r++) {
+          if (board[r][c] === 0) {
+            return {
+              level1_focus: {
+                highlightRows: [],
+                highlightCols: [c],
+                highlightTrees: [],
+                messageZh: `留意第 ${c + 1} 列的邊界線索數字。`,
+                messageEn: `Observe the boundary clue for Col ${c + 1}.`,
+              },
+              level2_logic: {
+                technique: 'zero_line_grass',
+                evidenceCoords: [{ r, c }],
+                contradictionChain: [
+                  {
+                    stepIndex: 1,
+                    hypothesis: `假定在 [${r + 1}, ${c + 1}] 放置帳篷。`,
+                    collisionTarget: { r, c },
+                    reason: `第 ${c + 1} 列配額為 0，放帳直接違背邊界線索。`,
+                  },
+                ],
+                messageZh: `第 ${c + 1} 列配額為 0，表示該列完全不能容納任何帳篷。`,
+                messageEn: `Col ${c + 1} quota is 0, meaning no tents can be placed here.`,
+              },
+              level3_action: {
+                target: { r, c },
+                forcedState: 2,
+                messageZh: `👉 請落子：點選 [${r + 1}, ${c + 1}] 標記為草地 (•)。`,
+                messageEn: `👉 Action: Mark [${r + 1}, ${c + 1}] as grass (•).`,
+              },
+            };
+          }
+        }
+      }
+    }
+
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         if (board[r][c] === 1) {
@@ -656,7 +696,6 @@ export class WebTentsGenerator {
       }
     }
 
-    // 5. 孤立樹唯一可搭點
     for (const tree of trees) {
       const openAdj: [number, number][] = [];
       let hasTent = false;
@@ -706,7 +745,6 @@ export class WebTentsGenerator {
       }
     }
 
-    // 6. 行列容量缺額強制放帳
     for (let r = 0; r < rows; r++) {
       let tentCount = 0;
       const openCells: number[] = [];
@@ -752,9 +790,6 @@ export class WebTentsGenerator {
     return null;
   }
 
-  /**
-   * 🌟 頂級模擬：多解題者畫像蒙地卡羅自由度評估 (Multi-Persona Aha! Metric)
-   */
   private static simulateMultiPersonaAha(
     rows: number,
     cols: number,
@@ -869,17 +904,14 @@ export class WebTentsGenerator {
         colCounts[t.c]++;
       }
 
-      // 禁用 0 線以確保硬核題型的探索深度
       if (disallowZeros) {
         const hasZero = rowCounts.some((v) => v === 0) || colCounts.some((v) => v === 0);
         if (hasZero && attempts < 50) continue;
       }
 
-      // 雙射與唯一解驗證
       if (!this.hasUniqueBijectiveMatching(trees, solutionTents, rows, cols)) continue;
       if (this.countSolutions(rows, cols, trees, rowCounts, colCounts, 2) !== 1) continue;
 
-      // 執行多風格蒙地卡羅自由度評估
       const { ahaIndex, cruxCoords, personaVariance } = this.simulateMultiPersonaAha(
         rows,
         cols,
@@ -888,7 +920,6 @@ export class WebTentsGenerator {
         colCounts
       );
 
-      // 追蹤主線提示階梯
       const testBoard = Array.from({ length: rows }, () => Array(cols).fill(0));
       for (const t of trees) testBoard[t.r][t.c] = 9;
       const cascades: ProgressiveHint[] = [];
@@ -922,15 +953,32 @@ export class WebTentsGenerator {
         wpfAnswerKey += tentInRow ? String((tentInRow.c + 1) % 10) : '0';
       }
 
+      // 🌟 同步生成舊版相容的扁平 TentStep 陣列
+      const solvingSteps: TentStep[] = cascades.map((c, idx) => ({
+        step: idx + 1,
+        type: c.level2_logic.technique,
+        r: c.level3_action.target.r,
+        c: c.level3_action.target.c,
+        state: c.level3_action.forcedState,
+        rationale: c.level2_logic.messageZh,
+        humanReadable: {
+          zh: c.level2_logic.messageZh,
+          en: c.level2_logic.messageEn,
+        },
+      }));
+
       const spec: TentsSpec = {
         rows,
         cols,
         trees,
         rowCounts,
         colCounts,
+        rowClues: rowCounts, // 🌟 相容欄位
+        colClues: colCounts, // 🌟 相容欄位
         solutionTents,
         treeTentPairs,
         hintCascades: cascades,
+        solvingSteps,        // 🌟 相容欄位
         qMatrix,
         psychometrics: {
           difficulty_b: empiricalB,
@@ -1015,9 +1063,12 @@ export class WebTentsGenerator {
       trees,
       rowCounts,
       colCounts,
+      rowClues: rowCounts,
+      colClues: colCounts,
       solutionTents,
       treeTentPairs,
       hintCascades: [],
+      solvingSteps: [],
       qMatrix: {
         A1_perceptual_scanning: true,
         A2_working_memory_update: true,
