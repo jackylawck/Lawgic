@@ -44,6 +44,16 @@ export function mulberry32(a: number) {
   };
 }
 
+export async function generateMasyuSignature(payload: string): Promise<string> {
+  if (typeof window !== 'undefined' && window.crypto?.subtle) {
+    const msgBuffer = new TextEncoder().encode(payload);
+    const hashBuffer = await window.crypto.subtle.digest('SHA-256', msgBuffer);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('').slice(0, 16).toUpperCase();
+  }
+  return 'MASYU-' + Math.random().toString(36).substring(2, 10).toUpperCase();
+}
+
 interface TierConfig {
   size: number;
   minWhite: number;
@@ -71,9 +81,6 @@ export class WebMasyuGenerator {
     return r >= 0 && r < size && c >= 0 && c < size;
   }
 
-  /**
-   * 嚴格校驗合法解（單一簡單封閉環，且滿足所有珍珠約束）
-   */
   public static validateSolution(
     grid: PearlType[][],
     edges: Set<string>,
@@ -90,12 +97,10 @@ export class WebMasyuGenerator {
       adj.get(v)!.push(u);
     }
 
-    // 每個活節點度數必須剛好為 2
     for (const neighbors of adj.values()) {
       if (neighbors.length !== 2) return false;
     }
 
-    // 檢查全域單一迴圈連通性
     const allActiveNodes = Array.from(adj.keys());
     const visited = new Set<string>();
     const startNode = allActiveNodes[0];
@@ -119,7 +124,6 @@ export class WebMasyuGenerator {
       return edges.has(this.makeEdgeKey(r1, c1, r2, c2));
     };
 
-    // 珍珠規則檢驗
     for (let r = 0; r < size; r++) {
       for (let c = 0; c < size; c++) {
         const pearl = grid[r][c];
@@ -137,10 +141,8 @@ export class WebMasyuGenerator {
         const isStraight = isHorizontal || isVertical;
 
         if (pearl === 'white') {
-          // 白珍珠必須直通
           if (!isStraight) return false;
 
-          // 至少一側相鄰格必須拐彎
           let turns = false;
           if (isHorizontal) {
             const leftC = Math.min(nc1, nc2);
@@ -155,10 +157,8 @@ export class WebMasyuGenerator {
           }
           if (!turns) return false;
         } else if (pearl === 'black') {
-          // 黑珍珠必須轉彎
           if (isStraight) return false;
 
-          // 兩臂向外延伸必須直通至少一格
           const dr1 = nr1 - r;
           const dc1 = nc1 - c;
           if (!hasEdge(nr1, nc1, nr1 + dr1, nc1 + dc1)) return false;
@@ -173,11 +173,7 @@ export class WebMasyuGenerator {
     return true;
   }
 
-  /**
-   * 帶引力的局部變形長迴圈生成器（100% 保證閉合且無自交）
-   */
   public static generateWindingLoop(size: number, rnd: () => number): [number, number][] | null {
-    // 初始構建 2x2 矩形種子環
     const startR = 1 + Math.floor(rnd() * (size - 3));
     const startC = 1 + Math.floor(rnd() * (size - 3));
     let loop: [number, number][] = [
@@ -193,14 +189,12 @@ export class WebMasyuGenerator {
     const targetLength = Math.max(10, Math.floor(size * size * 0.48));
     let attempts = 0;
 
-    // 局部外凸展開法 (Loop Extension)
     while (loop.length < targetLength && attempts++ < 150) {
       const idx = Math.floor(rnd() * loop.length);
       const nextIdx = (idx + 1) % loop.length;
       const [r1, c1] = loop[idx];
       const [r2, c2] = loop[nextIdx];
 
-      // 尋找此相鄰邊的外推方向
       const dr = r2 - r1;
       const dc = c2 - c1;
       const perpDirs: [number, number][] = [[-dc, dr], [dc, -dr]];
@@ -219,7 +213,6 @@ export class WebMasyuGenerator {
       ) {
         visited[nr1][nc1] = true;
         visited[nr2][nc2] = true;
-        // 將邊 (1, 2) 展開為 (1 -> n1 -> n2 -> 2)
         loop.splice(idx + 1, 0, [nr1, nc1], [nr2, nc2]);
       }
     }
@@ -227,9 +220,6 @@ export class WebMasyuGenerator {
     return loop.length >= 8 ? loop : null;
   }
 
-  /**
-   * 輕量級度數與連通度前向傳播剪枝解題器
-   */
   public static countSolutions(grid: PearlType[][], size: number, limit: number = 2): number {
     const pearlCoords: [number, number, PearlType][] = [];
     for (let r = 0; r < size; r++) {
@@ -249,7 +239,6 @@ export class WebMasyuGenerator {
       for (let c = 0; c < size; c++) degrees.set(`${r},${c}`, 0);
     }
 
-    // 收集所有珍珠周邊的高價值候選邊，避免盲目枚舉全盤邊
     const edgeCandidates: [number, number, number, number][] = [];
     const seenEdges = new Set<string>();
 
@@ -286,7 +275,6 @@ export class WebMasyuGenerator {
       const d1 = degrees.get(k1)!;
       const d2 = degrees.get(k2)!;
 
-      // 分支 1: 選取此邊 (剪枝：端點度數不可超過 2)
       if (d1 < 2 && d2 < 2) {
         const eKey = this.makeEdgeKey(r1, c1, r2, c2);
         currentEdges.add(eKey);
@@ -300,7 +288,6 @@ export class WebMasyuGenerator {
         degrees.set(k2, d2);
       }
 
-      // 分支 2: 不選此邊
       backtrack(idx + 1);
     };
 
@@ -313,7 +300,6 @@ export class WebMasyuGenerator {
     currentEdges: Set<string>,
     size: number
   ): MasyuHintStep | null {
-    // 定式 1: 相鄰黑珍珠互斥外展
     for (let r = 0; r < size; r++) {
       for (let c = 0; c < size; c++) {
         if (grid[r][c] === 'black') {
@@ -337,7 +323,6 @@ export class WebMasyuGenerator {
       }
     }
 
-    // 定式 2: 邊界黑珍珠強制定向
     for (let r = 0; r < size; r++) {
       for (let c = 0; c < size; c++) {
         if (grid[r][c] === 'black') {
@@ -362,7 +347,6 @@ export class WebMasyuGenerator {
       }
     }
 
-    // 定式 3: 白珍珠貫穿定式
     for (let r = 0; r < size; r++) {
       for (let c = 0; c < size; c++) {
         if (grid[r][c] === 'white') {
@@ -421,7 +405,6 @@ export class WebMasyuGenerator {
         const isTurn = prevNode[0] !== nextNode[0] && prevNode[1] !== nextNode[1];
         if (isTurn) turnsCount++;
 
-        // 黑珍珠生成條件：拐角處且兩端各筆直延伸至少一格
         if (isTurn && blackCount < minBlack && rnd() < 0.7) {
           const prevPrev = path[(i - 2 + path.length) % path.length];
           const nextNext = path[(i + 2) % path.length];
@@ -436,7 +419,6 @@ export class WebMasyuGenerator {
             blackCount++;
           }
         } else if (!isTurn && whiteCount < minWhite && rnd() < 0.7) {
-          // 白珍珠生成條件：直線貫穿且至少一側轉彎
           const prevPrev = path[(i - 2 + path.length) % path.length];
           const nextNext = path[(i + 2) % path.length];
           const prevTurns = prevPrev[0] !== currNode[0] && prevPrev[1] !== currNode[1];
