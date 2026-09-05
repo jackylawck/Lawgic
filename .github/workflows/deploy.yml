@@ -41,6 +41,7 @@ jobs:
       - name: Install & Build Web Frontend
         run: |
           cd web-frontend
+          rm -rf node_modules package-lock.json   # ← 加呢行
           npm install
           npm run build
 
