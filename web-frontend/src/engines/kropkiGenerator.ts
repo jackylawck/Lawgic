@@ -22,6 +22,10 @@ export interface SolvingStep {
   col: number;
   value: number;
   rationale: string;
+  humanReadable?: {
+    zh: string;
+    en: string;
+  };
 }
 
 export interface KropkiSpec {
@@ -34,6 +38,7 @@ export interface KropkiSpec {
   maxForcedChain: number;
   isSymmetric180: boolean;
   pureDeductionRate: number;
+  seed: number;
 }
 
 interface TierConfig {
@@ -51,8 +56,17 @@ const TIER_SPECS: Record<TierKey, TierConfig> = {
   master: { size: 7, targetPrefill: 0, minCoverageRatio: 0.55, minForcedChain: 12, baseIrt: 2.2 },
 };
 
+function mulberry32(a: number) {
+  return function () {
+    let t = (a += 0x6d2b79f5);
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
 export class WebKropkiGenerator {
-  private static generateLatinSquare(n: number): number[][] {
+  private static generateLatinSquare(n: number, rnd: () => number): number[][] {
     const grid: number[][] = Array.from({ length: n }, () => Array(n).fill(0));
     const isValid = (r: number, c: number, v: number): boolean => {
       for (let i = 0; i < n; i++) {
@@ -65,7 +79,12 @@ export class WebKropkiGenerator {
       if (r === n) return true;
       const nr = c === n - 1 ? r + 1 : r;
       const nc = c === n - 1 ? 0 : c + 1;
-      const nums = Array.from({ length: n }, (_, i) => i + 1).sort(() => Math.random() - 0.5);
+
+      const nums = Array.from({ length: n }, (_, i) => i + 1);
+      for (let i = nums.length - 1; i > 0; i--) {
+        const j = Math.floor(rnd() * (i + 1));
+        [nums[i], nums[j]] = [nums[j], nums[i]];
+      }
 
       for (const num of nums) {
         if (isValid(r, c, num)) {
@@ -81,14 +100,25 @@ export class WebKropkiGenerator {
     return grid;
   }
 
-  private static extractDotsStrict(solution: number[][], n: number): KropkiDot[] {
+  /**
+   * 修正 1 與 2 的黑白二重性隨機抽樣，杜絕黑點 1-2 缺失
+   */
+  private static extractDotsStrict(solution: number[][], n: number, rnd: () => number): KropkiDot[] {
     const dots: KropkiDot[] = [];
+
     const evaluatePair = (r1: number, c1: number, r2: number, c2: number) => {
       const v1 = solution[r1][c1];
       const v2 = solution[r2][c2];
-      if (Math.abs(v1 - v2) === 1) {
+
+      const isConsecutive = Math.abs(v1 - v2) === 1;
+      const isRatio2 = v1 === v2 * 2 || v2 === v1 * 2;
+
+      if (isConsecutive && isRatio2) {
+        // 1 與 2 特殊情況：按種子 50% 機率分配黑點或白點
+        dots.push({ r1, c1, r2, c2, type: rnd() < 0.5 ? 'white' : 'black' });
+      } else if (isConsecutive) {
         dots.push({ r1, c1, r2, c2, type: 'white' });
-      } else if (v1 === v2 * 2 || v2 === v1 * 2) {
+      } else if (isRatio2) {
         dots.push({ r1, c1, r2, c2, type: 'black' });
       }
     };
@@ -250,8 +280,8 @@ export class WebKropkiGenerator {
     currentGrid: number[][],
     dots: KropkiDot[],
     n: number
-  ): Map<string, { value: number; type: DeductionType; rationale: string }> {
-    const deductions = new Map<string, { value: number; type: DeductionType; rationale: string }>();
+  ): Map<string, { value: number; type: DeductionType; rationale: string; humanZh: string; humanEn: string }> {
+    const deductions = new Map<string, { value: number; type: DeductionType; rationale: string; humanZh: string; humanEn: string }>();
 
     for (const d of dots) {
       const v1 = currentGrid[d.r1][d.c1];
@@ -279,10 +309,19 @@ export class WebKropkiGenerator {
         });
 
         if (legalVals.length === 1) {
+          const forced = legalVals[0];
           deductions.set(`${tr},${tc}`, {
-            value: legalVals[0],
+            value: forced,
             type: d.type === 'white' ? 'dot_forced_white' : 'dot_forced_black',
-            rationale: d.type === 'white' ? 'White Dot Diff (+/-1) forced single value' : 'Black Dot Double (2x) forced single value',
+            rationale: d.type === 'white'
+              ? `White dot with ${knownVal} forced value ${forced}`
+              : `Black dot with ${knownVal} forced value ${forced}`,
+            humanZh: d.type === 'white'
+              ? `白點差值定式：相鄰為 ${knownVal}，經行列排除後僅剩 ${forced}！`
+              : `黑點倍數定式：相鄰為 ${knownVal}，經行列排除後僅剩 ${forced}！`,
+            humanEn: d.type === 'white'
+              ? `White dot adjacent to ${knownVal}; row/col elimination forces ${forced}!`
+              : `Black dot adjacent to ${knownVal}; row/col elimination forces ${forced}!`,
           });
         }
       }
@@ -306,6 +345,8 @@ export class WebKropkiGenerator {
               value: rem[0],
               type: 'naked_single',
               rationale: 'Row/Col Naked Single elimination',
+              humanZh: `行/列唯餘數定式：坐標 [${r + 1}, ${c + 1}] 僅剩唯一數字 ${rem[0]}！`,
+              humanEn: `Naked single in row/col: cell [${r + 1}, ${c + 1}] must be ${rem[0]}!`,
             });
           }
         }
@@ -331,8 +372,9 @@ export class WebKropkiGenerator {
       progressed = false;
       const deductions = this.getStrictDeductions(grid, dots, n);
 
-      if (deductions.size > 0) {
-        const [coord, info] = deductions.entries().next().value;
+      const entry = deductions.entries().next();
+      if (!entry.done && entry.value) {
+        const [coord, info] = entry.value;
         const [r, c] = coord.split(',').map(Number);
 
         grid[r][c] = info.value;
@@ -347,6 +389,10 @@ export class WebKropkiGenerator {
           col: c,
           value: info.value,
           rationale: info.rationale,
+          humanReadable: {
+            zh: info.humanZh,
+            en: info.humanEn,
+          },
         });
 
         progressed = true;
@@ -366,15 +412,18 @@ export class WebKropkiGenerator {
     };
   }
 
-  public static generate(tier: TierKey = 'kids'): PuzzleEntity {
+  public static generate(tier: TierKey = 'kids', inputSeed?: number): PuzzleEntity {
     const config = TIER_SPECS[tier] || TIER_SPECS.kids;
     const n = config.size;
-    let attempts = 0;
 
-    while (attempts < 80) {
+    const actualSeed = inputSeed !== undefined ? inputSeed : Math.floor(Math.random() * 0x7fffffff);
+    const rnd = mulberry32(actualSeed);
+
+    let attempts = 0;
+    while (attempts < 60) {
       attempts++;
-      const solution = this.generateLatinSquare(n);
-      const allDots = this.extractDotsStrict(solution, n);
+      const solution = this.generateLatinSquare(n, rnd);
+      const allDots = this.extractDotsStrict(solution, n, rnd);
 
       if (!this.isDotCoverageSufficient(allDots, n, config.minCoverageRatio)) {
         continue;
@@ -385,7 +434,11 @@ export class WebKropkiGenerator {
       for (let r = 0; r < n; r++) {
         for (let c = 0; c < n; c++) coords.push([r, c]);
       }
-      coords.sort(() => Math.random() - 0.5);
+
+      for (let i = coords.length - 1; i > 0; i--) {
+        const j = Math.floor(rnd() * (i + 1));
+        [coords[i], coords[j]] = [coords[j], coords[i]];
+      }
 
       for (let i = 0; i < config.targetPrefill && i < coords.length; i++) {
         const [r, c] = coords[i];
@@ -403,14 +456,14 @@ export class WebKropkiGenerator {
 
       const isSymmetric180 = this.checkSymmetry180(allDots, n);
       const dynamicIrt = Number((config.baseIrt + (depth / (n * n)) * 0.5).toFixed(2));
-      const puzzleId = `kropki_${tier}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+      const puzzleId = `kropki_${tier}_s${actualSeed}`;
 
       return {
         id: puzzleId,
         category: 'numeric_logic' as any,
         engine_type: 'kropki',
         tier,
-        checksum: `KROPKI_${n}x${n}_CERTIFIED_${Date.now().toString(36)}`,
+        checksum: `KROPKI_${n}x${n}_S${actualSeed}_SYM${isSymmetric180 ? '180' : 'NO'}`,
         puzzle: {
           size: n,
           initialGrid,
@@ -421,6 +474,7 @@ export class WebKropkiGenerator {
           maxForcedChain,
           isSymmetric180,
           pureDeductionRate: pureRate,
+          seed: actualSeed,
         } as unknown as KropkiSpec,
         solution: solution as any,
         cognitiveLoad: {
@@ -433,18 +487,21 @@ export class WebKropkiGenerator {
           estimated_time_sec: Math.max(15, depth * 7 + n * 4),
           irt_logit_difficulty: dynamicIrt,
           human_sim_steps: steps.length,
+          seed: actualSeed,
+          isSymmetric: isSymmetric180,
         } as any,
       };
     }
 
-    const fallback = this.generateLatinSquare(n);
-    const fallbackDots = this.extractDotsStrict(fallback, n);
+    // 確定性降級 Fallback
+    const fallback = this.generateLatinSquare(n, rnd);
+    const fallbackDots = this.extractDotsStrict(fallback, n, rnd);
     return {
-      id: `kropki_${tier}_fallback_${Date.now()}`,
+      id: `kropki_${tier}_s${actualSeed}_fb`,
       category: 'numeric_logic' as any,
       engine_type: 'kropki',
       tier,
-      checksum: `KROPKI_FALLBACK_${n}x${n}`,
+      checksum: `KROPKI_FB_${n}x${n}_S${actualSeed}`,
       puzzle: {
         size: n,
         initialGrid: fallback.map((r, ri) => r.map((c, ci) => (ri === ci ? c : 0))),
@@ -455,10 +512,11 @@ export class WebKropkiGenerator {
         maxForcedChain: 2,
         isSymmetric180: false,
         pureDeductionRate: 1.0,
+        seed: actualSeed,
       } as unknown as KropkiSpec,
       solution: fallback as any,
       cognitiveLoad: { spatial: 0.6, numeric: 0.9, workingMemory: 0.7, inhibition: 0.8 },
-      metrics: { estimated_time_sec: 40, irt_logit_difficulty: config.baseIrt } as any,
+      metrics: { estimated_time_sec: 40, irt_logit_difficulty: config.baseIrt, seed: actualSeed } as any,
     };
   }
 }
