@@ -22,7 +22,7 @@ export interface LightUpStep {
   type: LightUpDeductionType;
   r: number;
   c: number;
-  state: 1 | 2;
+  state: 1 | 2; // 1: 燈泡, 2: 留白防護點 (Dot)
   rationale: string;
   humanReadable: {
     zh: string;
@@ -41,6 +41,7 @@ export interface LightUpSpec {
   opticalEntropy: number;
   isSymmetric180: boolean;
   tier: ExtendedTierKey;
+  seed: number;
 }
 
 interface TierConfig {
@@ -61,14 +62,13 @@ const TIER_SPECS: Record<ExtendedTierKey, TierConfig> = {
   ultimate: { rows: 10, cols: 10, blackBlockRatio: 0.28, clueRatio: 0.40, minForcedChain: 24, baseIrt: 4.0 },
 };
 
-export async function generateAkariSignature(payload: string): Promise<string> {
-  if (typeof window !== 'undefined' && window.crypto?.subtle) {
-    const msgBuffer = new TextEncoder().encode(payload);
-    const hashBuffer = await window.crypto.subtle.digest('SHA-256', msgBuffer);
-    const hashArray = Array.from(new Uint8Array(hashBuffer));
-    return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('').slice(0, 16).toUpperCase();
-  }
-  return 'AKARI-' + Math.random().toString(36).substring(2, 10).toUpperCase();
+export function mulberry32(a: number) {
+  return function () {
+    let t = (a += 0x6d2b79f5);
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
 }
 
 export class WebLightUpGenerator {
@@ -120,11 +120,15 @@ export class WebLightUpGenerator {
     return Number(((rayEntropy * 0.65) + (blockDensity * 0.35)).toFixed(3));
   }
 
+  /**
+   * 嚴格防止燈泡互相直射的合法解構造演算法
+   */
   private static generateValidGroundTruth(
     rows: number,
     cols: number,
     blackRatio: number,
-    clueRatio: number
+    clueRatio: number,
+    rnd: () => number
   ): {
     blackBlocks: { r: number; c: number; clue: number | null }[];
     solutionBulbs: LightUpCoord[];
@@ -136,8 +140,8 @@ export class WebLightUpGenerator {
     let attempts = 0;
     while (placed < targetBlocks && attempts < 350) {
       attempts++;
-      const r = Math.floor(Math.random() * rows);
-      const c = Math.floor(Math.random() * cols);
+      const r = Math.floor(rnd() * rows);
+      const c = Math.floor(rnd() * cols);
       const symR = rows - 1 - r;
       const symC = cols - 1 - c;
 
@@ -148,22 +152,37 @@ export class WebLightUpGenerator {
       }
     }
 
+    const isBlock = (r: number, c: number) => isBlack[r][c];
     const isLit: boolean[][] = Array.from({ length: rows }, () => Array(cols).fill(false));
     const bulbs: LightUpCoord[] = [];
-    const isBlock = (r: number, c: number) => isBlack[r][c];
 
+    // 收集所有白格隨機打亂嘗試放燈
+    const whiteCoords: [number, number][] = [];
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
-        if (!isBlack[r][c] && !isLit[r][c]) {
-          bulbs.push({ r, c });
-          const illuminated = this.getIlluminatedCells(r, c, rows, cols, isBlock);
-          for (const [ir, ic] of illuminated) {
-            isLit[ir][ic] = true;
-          }
+        if (!isBlack[r][c]) whiteCoords.push([r, c]);
+      }
+    }
+    for (let i = whiteCoords.length - 1; i > 0; i--) {
+      const j = Math.floor(rnd() * (i + 1));
+      [whiteCoords[i], whiteCoords[j]] = [whiteCoords[j], whiteCoords[i]];
+    }
+
+    for (const [r, c] of whiteCoords) {
+      if (isLit[r][c]) continue;
+
+      // 檢查此處放燈是否會直射到既有燈泡
+      const ray = this.getIlluminatedCells(r, c, rows, cols, isBlock);
+      const clash = ray.some(([ir, ic]) => bulbs.some((b) => b.r === ir && b.c === ic));
+      if (!clash) {
+        bulbs.push({ r, c });
+        for (const [ir, ic] of ray) {
+          isLit[ir][ic] = true;
         }
       }
     }
 
+    // 驗證是否所有白格均被完全照亮
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         if (!isBlack[r][c] && !isLit[r][c]) return null;
@@ -201,7 +220,7 @@ export class WebLightUpGenerator {
           const c2 = countMap.get(`${symR},${symC}`) ?? 0;
 
           const isSameCount = c1 === c2;
-          const willGiveClue = Math.random() < clueRatio && isSameCount;
+          const willGiveClue = rnd() < clueRatio && isSameCount;
           const assignedClue = willGiveClue ? c1 : null;
 
           blackBlocks.push({ r, c, clue: assignedClue });
@@ -218,6 +237,9 @@ export class WebLightUpGenerator {
     return { blackBlocks, solutionBulbs: bulbs };
   }
 
+  /**
+   * 狀態定義：0: 未決, 1: 燈泡, 2: 留白防護點 (Dot), 9: 黑塊
+   */
   public static getStrictDeductions(
     rows: number,
     cols: number,
@@ -229,8 +251,9 @@ export class WebLightUpGenerator {
       { r: number; c: number; state: 1 | 2; type: LightUpDeductionType; rationale: string; humanReadable: { zh: string; en: string } }
     >();
 
-    const isBlock = (r: number, c: number) => currentBoard[r][c] === 2;
+    const isBlock = (r: number, c: number) => currentBoard[r][c] === 9;
 
+    // 定式 1: 0 號黑塊十字全排除
     for (const b of blackBlocks) {
       if (b.clue === 0) {
         const orth = [[-1, 0], [1, 0], [0, -1], [0, 1]];
@@ -252,6 +275,7 @@ export class WebLightUpGenerator {
       }
     }
 
+    // 定式 2: 燈泡視線射線覆蓋排除
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         if (currentBoard[r][c] === 1) {
@@ -273,6 +297,7 @@ export class WebLightUpGenerator {
       }
     }
 
+    // 定式 3: 黑塊線索度數飽和與缺額強推
     for (const b of blackBlocks) {
       if (b.clue !== null && b.clue > 0) {
         const orth = [[-1, 0], [1, 0], [0, -1], [0, 1]];
@@ -316,68 +341,7 @@ export class WebLightUpGenerator {
       }
     }
 
-    for (const b1 of blackBlocks) {
-      if (b1.clue === 1) {
-        for (const b2 of blackBlocks) {
-          if (b2.clue === 2 && (Math.abs(b1.r - b2.r) + Math.abs(b1.c - b2.c) === 1)) {
-            if (b1.r === b2.r && b1.c + 1 === b2.c) {
-              const farTarget = [b2.r, b2.c + 1];
-              if (this.inBounds(farTarget[0], farTarget[1], rows, cols) && currentBoard[farTarget[0]][farTarget[1]] === 0) {
-                const sharedOpen = [
-                  [b1.r - 1, b1.c],
-                  [b1.r + 1, b1.c],
-                ].filter(([sr, sc]) => this.inBounds(sr, sc, rows, cols) && currentBoard[sr][sc] === 0);
-
-                if (sharedOpen.length > 0) {
-                  deductions.set(`${farTarget[0]},${farTarget[1]}`, {
-                    r: farTarget[0], c: farTarget[1], state: 1,
-                    type: 'adjacent_clue_xor',
-                    rationale: '相鄰 1-2 黑塊組合互斥定式，遠側外翼必然放燈',
-                    humanReadable: {
-                      zh: '相鄰的 1 與 2 產生共用邊互斥：因為 1 限制了中間區域只能有 1 頂燈泡，所以 2 遠側的外翼必須放置燈泡 💡！',
-                      en: 'Adjacent 1-2 pair XOR: Since 1 limits the shared zone to 1 light, 2\'s far outer wing must have a light 💡!',
-                    },
-                  });
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-
-    for (const b of blackBlocks) {
-      if (b.clue === 1) {
-        const orth = [
-          { r: b.r - 1, c: b.c },
-          { r: b.r + 1, c: b.c },
-          { r: b.r, c: b.c - 1 },
-          { r: b.r, c: b.c + 1 },
-        ].filter((p) => this.inBounds(p.r, p.c, rows, cols) && currentBoard[p.r][p.c] !== 2);
-
-        const openOrth = orth.filter((p) => currentBoard[p.r][p.c] === 0);
-        if (openOrth.length === 2 && Math.abs(openOrth[0].r - openOrth[1].r) === 1 && Math.abs(openOrth[0].c - openOrth[1].c) === 1) {
-          const diagR = openOrth[0].r === b.r ? openOrth[1].r : openOrth[0].r;
-          const diagC = openOrth[0].c === b.c ? openOrth[1].c : openOrth[0].c;
-
-          if (this.inBounds(diagR, diagC, rows, cols) && currentBoard[diagR][diagC] === 0 && !deductions.has(`${diagR},${diagC}`)) {
-            const isProtected = blackBlocks.some((ob) => ob.r === diagR && ob.c === diagC && ob.clue === 0);
-            if (isProtected) {
-              deductions.set(`${openOrth[0].r},${openOrth[0].c}`, {
-                r: openOrth[0].r, c: openOrth[0].c, state: 1,
-                type: 'diagonal_exclusion',
-                rationale: '線索 1 與對角排除格形成直角收斂',
-                humanReadable: {
-                  zh: '線索 1 鄰格與對角禁置點形成幾何互斥，該直角側必須放置燈泡 💡！',
-                  en: 'Clue 1 corner constraint forces light placement on this branch 💡!',
-                },
-              });
-            }
-          }
-        }
-      }
-    }
-
+    // 定式 4: 未受照光格的唯一光源定式 (Isolated Illuminance)
     const isCellLit = Array.from({ length: rows }, () => Array(cols).fill(false));
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
@@ -390,7 +354,7 @@ export class WebLightUpGenerator {
 
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
-        if (currentBoard[r][c] !== 2 && !isCellLit[r][c]) {
+        if (currentBoard[r][c] !== 9 && !isCellLit[r][c]) {
           const potentialBulbSpots: [number, number][] = [];
           const testDirs = [[0, 0], [-1, 0], [1, 0], [0, -1], [0, 1]];
 
@@ -432,7 +396,7 @@ export class WebLightUpGenerator {
     blackBlocks: { r: number; c: number; clue: number | null }[]
   ): { steps: LightUpStep[]; maxForcedChain: number; pureRate: number } {
     const curBoard: number[][] = Array.from({ length: rows }, () => Array(cols).fill(0));
-    for (const b of blackBlocks) curBoard[b.r][b.c] = 2;
+    for (const b of blackBlocks) curBoard[b.r][b.c] = 9;
 
     const steps: LightUpStep[] = [];
     let progressed = true;
@@ -449,7 +413,7 @@ export class WebLightUpGenerator {
         if (!item) break;
         const { r, c, state, type, rationale, humanReadable } = item;
 
-        curBoard[r][c] = state === 1 ? 1 : 3;
+        curBoard[r][c] = state; // 1: 燈泡, 2: 防護點
         stepCount++;
         currentChain++;
         maxChain = Math.max(maxChain, currentChain);
@@ -474,33 +438,35 @@ export class WebLightUpGenerator {
     return { steps, maxForcedChain: maxChain, pureRate: Math.min(1.0, pureRate) };
   }
 
-  public static generate(tier: ExtendedTierKey = 'kids'): PuzzleEntity {
+  public static generate(tier: ExtendedTierKey = 'kids', inputSeed?: number): PuzzleEntity {
     const config = TIER_SPECS[tier] || TIER_SPECS.kids;
     const { rows, cols, blackBlockRatio, clueRatio, minForcedChain, baseIrt } = config;
-    let attempts = 0;
 
-    while (attempts < 100) {
-      attempts++;
-      const groundTruth = this.generateValidGroundTruth(rows, cols, blackBlockRatio, clueRatio);
+    const actualSeed = inputSeed !== undefined ? inputSeed : Math.floor(Math.random() * 0x7fffffff);
+    const rnd = mulberry32(actualSeed);
+
+    let attempts = 0;
+    while (attempts++ < 40) {
+      const groundTruth = this.generateValidGroundTruth(rows, cols, blackBlockRatio, clueRatio, rnd);
       if (!groundTruth) continue;
 
       const { blackBlocks, solutionBulbs } = groundTruth;
       const { steps, maxForcedChain, pureRate } = this.traceSolvingProcess(rows, cols, blackBlocks);
 
-      if ((tier === 'master' || tier === 'legendary' || tier === 'ultimate') && (maxForcedChain < minForcedChain || pureRate < 0.88)) {
+      if ((tier === 'master' || tier === 'legendary' || tier === 'ultimate') && (maxForcedChain < minForcedChain || pureRate < 0.85)) {
         continue;
       }
 
       const entropy = this.computeOpticalEntropy(rows, cols, blackBlocks, solutionBulbs);
       const dynamicIrt = Number((baseIrt + entropy * 0.45 + (steps.length / (rows * cols)) * 0.35).toFixed(2));
-      const puzzleId = `lightup_${tier}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+      const puzzleId = `lightup_${tier}_s${actualSeed}`;
 
       return {
         id: puzzleId,
         category: 'spatial_logic' as any,
         engine_type: 'lightup',
         tier: (tier === 'ultimate' || tier === 'legendary' ? 'master' : tier) as TierKey,
-        checksum: `LIGHTUP_${rows}x${cols}_${tier.toUpperCase()}_${Date.now().toString(36)}`,
+        checksum: `LIGHTUP_${rows}x${cols}_S${actualSeed}`,
         puzzle: {
           rows,
           cols,
@@ -512,6 +478,7 @@ export class WebLightUpGenerator {
           opticalEntropy: entropy,
           isSymmetric180: true,
           tier,
+          seed: actualSeed,
         } as unknown as LightUpSpec,
         solution: { bulbs: solutionBulbs } as any,
         cognitiveLoad: {
@@ -524,21 +491,23 @@ export class WebLightUpGenerator {
           estimated_time_sec: Math.max(25, steps.length * 6 + rows * cols * 2),
           irt_logit_difficulty: dynamicIrt,
           human_sim_steps: steps.length,
+          seed: actualSeed,
         } as any,
       };
     }
 
+    // 確定性降級 Fallback
     const fallbackBlocks = [
       { r: 1, c: 1, clue: 1 },
       { r: 2, c: 3, clue: 0 },
       { r: 3, c: 1, clue: 1 },
     ];
     return {
-      id: `lightup_${tier}_fallback_${Date.now()}`,
+      id: `lightup_${tier}_s${actualSeed}_fb`,
       category: 'spatial_logic' as any,
       engine_type: 'lightup',
       tier: (tier === 'ultimate' || tier === 'legendary' ? 'master' : tier) as TierKey,
-      checksum: `LIGHTUP_FALLBACK_${rows}x${cols}`,
+      checksum: `LIGHTUP_FB_${rows}x${cols}_S${actualSeed}`,
       puzzle: {
         rows, cols,
         blackBlocks: fallbackBlocks,
@@ -549,10 +518,11 @@ export class WebLightUpGenerator {
         opticalEntropy: 0.5,
         isSymmetric180: true,
         tier,
+        seed: actualSeed,
       } as unknown as LightUpSpec,
       solution: { bulbs: [{ r: 0, c: 1 }, { r: 3, c: 0 }, { r: 3, c: 2 }] } as any,
       cognitiveLoad: { spatial: 0.9, numeric: 0.3, workingMemory: 0.6, inhibition: 0.8 },
-      metrics: { estimated_time_sec: 45, irt_logit_difficulty: config.baseIrt } as any,
+      metrics: { estimated_time_sec: 45, irt_logit_difficulty: config.baseIrt, seed: actualSeed } as any,
     };
   }
 }
