@@ -3,37 +3,52 @@ import React, { lazy, Suspense } from 'react';
 import { PuzzleEntity } from '../generated';
 
 export interface BaseBoardProps {
-  puzzleData?: PuzzleEntity;
-  puzzle?: PuzzleEntity;
+  puzzleData?: any;
+  puzzle?: any;
   tournamentMode?: boolean;
+  [key: string]: any;
 }
 
-// 採用 React.lazy 實現動態代碼分割，按需載入 Board Chunk
-const MazeBoard = lazy(() => import('../components/MazeBoard').then(m => ({ default: m.MazeBoard })));
-const SudokuBoard = lazy(() => import('../components/SudokuBoard').then(m => ({ default: m.SudokuBoard })));
-const NonogramBoard = lazy(() => import('../components/NonogramBoard').then(m => ({ default: m.NonogramBoard })));
-const NurikabeBoard = lazy(() => import('../components/NurikabeBoard').then(m => ({ default: m.NurikabeBoard })));
-const SkyscraperBoard = lazy(() => import('../components/SkyscraperBoard').then(m => ({ default: m.SkyscraperBoard })));
-const HashiBoard = lazy(() => import('../components/HashiBoard').then(m => ({ default: m.HashiBoard })));
-const KropkiBoard = lazy(() => import('../components/KropkiBoard').then(m => ({ default: m.KropkiBoard })));
-const SlitherlinkBoard = lazy(() => import('../components/SlitherlinkBoard').then(m => ({ default: m.SlitherlinkBoard })));
-const TentsBoard = lazy(() => import('../components/TentsBoard').then(m => ({ default: m.TentsBoard })));
-const LightUpBoard = lazy(() => import('../components/LightUpBoard').then(m => ({ default: m.LightUpBoard })));
-const FutoshikiBoard = lazy(() => import('../components/FutoshikiBoard').then(m => ({ default: m.FutoshikiBoard })));
-const HitoriBoard = lazy(() => import('../components/HitoriBoard').then(m => ({ default: m.HitoriBoard })));
-const KakuroBoard = lazy(() => import('../components/KakuroBoard').then(m => ({ default: m.KakuroBoard })));
-const MasyuBoard = lazy(() => import('../components/MasyuBoard').then(m => ({ default: m.MasyuBoard })));
-const DominoesBoard = lazy(() => import('../components/DominoesBoard').then(m => ({ default: m.DominoesBoard })));
-const HeyawakeBoard = lazy(() => import('../components/HeyawakeBoard').then(m => ({ default: m.HeyawakeBoard })));
-const YajilinBoard = lazy(() => import('../components/YajilinBoard').then(m => ({ default: m.YajilinBoard })));
-const ShikakuBoard = lazy(() => import('../components/ShikakuBoard').then(m => ({ default: m.ShikakuBoard })));
+// 輔助函式：相容 named export 與 default export，防止 m[name] 為 undefined 導致崩潰
+const safeLazy = (importFn: () => Promise<any>, exportName: string) => {
+  return lazy(() =>
+    importFn().then((m) => {
+      const Component = m[exportName] || m.default;
+      if (!Component) {
+        throw new Error(`Component ${exportName} not exported properly.`);
+      }
+      return { default: Component };
+    })
+  );
+};
 
-// 認知儀表板懶載入
-export const CognitiveDashboard = lazy(() =>
-  import('../components/CognitiveDashboard').then(m => ({ default: m.CognitiveDashboard }))
+// 動態代碼分割載入 18 款謎題組件
+const MazeBoard = safeLazy(() => import('../components/MazeBoard'), 'MazeBoard');
+const SudokuBoard = safeLazy(() => import('../components/SudokuBoard'), 'SudokuBoard');
+const NonogramBoard = safeLazy(() => import('../components/NonogramBoard'), 'NonogramBoard');
+const NurikabeBoard = safeLazy(() => import('../components/NurikabeBoard'), 'NurikabeBoard');
+const SkyscraperBoard = safeLazy(() => import('../components/SkyscraperBoard'), 'SkyscraperBoard');
+const HashiBoard = safeLazy(() => import('../components/HashiBoard'), 'HashiBoard');
+const KropkiBoard = safeLazy(() => import('../components/KropkiBoard'), 'KropkiBoard');
+const SlitherlinkBoard = safeLazy(() => import('../components/SlitherlinkBoard'), 'SlitherlinkBoard');
+const TentsBoard = safeLazy(() => import('../components/TentsBoard'), 'TentsBoard');
+const LightUpBoard = safeLazy(() => import('../components/LightUpBoard'), 'LightUpBoard');
+const FutoshikiBoard = safeLazy(() => import('../components/FutoshikiBoard'), 'FutoshikiBoard');
+const HitoriBoard = safeLazy(() => import('../components/HitoriBoard'), 'HitoriBoard');
+const KakuroBoard = safeLazy(() => import('../components/KakuroBoard'), 'KakuroBoard');
+const MasyuBoard = safeLazy(() => import('../components/MasyuBoard'), 'MasyuBoard');
+const DominoesBoard = safeLazy(() => import('../components/DominoesBoard'), 'DominoesBoard');
+const HeyawakeBoard = safeLazy(() => import('../components/HeyawakeBoard'), 'HeyawakeBoard');
+const YajilinBoard = safeLazy(() => import('../components/YajilinBoard'), 'YajilinBoard');
+const ShikakuBoard = safeLazy(() => import('../components/ShikakuBoard'), 'ShikakuBoard');
+
+// 認知儀表板
+export const CognitiveDashboard = safeLazy(
+  () => import('../components/CognitiveDashboard'),
+  'CognitiveDashboard'
 );
 
-export const RENDERERS: Record<string, React.ComponentType<BaseBoardProps>> = {
+export const RENDERERS: Record<string, React.ComponentType<any>> = {
   maze: MazeBoard,
   sudoku: SudokuBoard,
   nonogram: NonogramBoard,
@@ -73,7 +88,7 @@ const BoardLoadingFallback: React.FC = () => (
 );
 
 export const PuzzleRenderer: React.FC<PuzzleRendererProps> = ({ puzzle, tournamentMode }) => {
-  const normalizedType = puzzle.engine_type?.toLowerCase().trim();
+  const normalizedType = puzzle?.engine_type?.toLowerCase().trim();
   const Component = RENDERERS[normalizedType];
 
   if (!Component) {
@@ -82,15 +97,26 @@ export const PuzzleRenderer: React.FC<PuzzleRendererProps> = ({ puzzle, tourname
         <div className="text-base mb-1">⚠️</div>
         <div className="font-bold uppercase tracking-wider mb-1">[Engine Missing]</div>
         <div className="text-[11px] text-slate-300">
-          Renderer not found for engine type: <span className="text-rose-300 font-bold">&quot;{puzzle.engine_type}&quot;</span>
+          Renderer not found for engine type: <span className="text-rose-300 font-bold">&quot;{puzzle?.engine_type}&quot;</span>
         </div>
       </div>
     );
   }
 
+  // 規格轉接器 (Universal Adapter)：
+  // 1. 保留完整 puzzle 與 puzzleData
+  // 2. 將內部 spec (puzzle.puzzle) 中的屬性展開到 props，相容不同時期的 Board 存取方式
+  const innerSpec = (puzzle?.puzzle && typeof puzzle.puzzle === 'object') ? puzzle.puzzle : {};
+  const mergedProps: BaseBoardProps = {
+    ...innerSpec,
+    puzzle,
+    puzzleData: puzzle,
+    tournamentMode: !!tournamentMode,
+  };
+
   return (
     <Suspense fallback={<BoardLoadingFallback />}>
-      <Component puzzle={puzzle} puzzleData={puzzle} tournamentMode={tournamentMode} />
+      <Component {...mergedProps} />
     </Suspense>
   );
 };
