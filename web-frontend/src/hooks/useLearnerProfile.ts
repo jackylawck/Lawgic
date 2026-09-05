@@ -2,7 +2,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import { SecureStorage } from '../utils/secureStorage';
 
-export type TierKey = 'kids' | 'intermediate' | 'expert' | 'master';
+export type TierKey = 'kids' | 'intermediate' | 'expert' | 'master' | 'legendary' | 'ultimate';
 export type CognitiveDimension = 'spatial' | 'numeric' | 'workingMemory' | 'inhibition' | 'processingSpeed';
 
 export interface HintDistributionTrend {
@@ -28,14 +28,14 @@ export interface AttemptPayload {
   hypothesisCount?: number;
   technique?: string;
   partialCompletionRatio?: number;
-  partialCredit?: number; // 🌟 補齊臨床部分計分欄位
+  partialCredit?: number; // 補齊臨床部分計分欄位
   isPureModeAttempt?: boolean;
   isPureClear?: boolean;
   hintLogs?: { secFromStart: number; level: number }[];
   irtDifficulty?: number;
 }
 
-// 🌟 匯出 AttemptRecord 供 psychometricsEngine.ts 使用
+// 匯出 AttemptRecord 供 psychometricsEngine.ts 使用
 export type AttemptRecord = AttemptPayload;
 
 export interface TechniqueStats {
@@ -186,8 +186,8 @@ function computeAdaptiveBootstrapCI(values: number[], nIterations = 1000): Metri
   }
 
   const half = Math.floor(n / 2);
-  const olderAvg = values.slice(0, half).reduce((a, b) => a + b, 0) / half;
-  const recentAvg = values.slice(half).reduce((a, b) => a + b, 0) / (n - half);
+  const olderAvg = values.slice(0, half).reduce((a, b) => a + b, 0) / (half || 1);
+  const recentAvg = values.slice(half).reduce((a, b) => a + b, 0) / (n - half || 1);
   const speedGain = olderAvg > 0 ? (olderAvg - recentAvg) / olderAvg : 0;
   const adaptiveDecay = Math.max(0.04, Math.min(0.16, 0.06 + speedGain * 0.4));
 
@@ -209,7 +209,8 @@ function computeAdaptiveBootstrapCI(values: number[], nIterations = 1000): Metri
         if (cdf[mid] >= rand) high = mid;
         else low = mid + 1;
       }
-      sum += values[low];
+      const safeIndex = Math.max(0, Math.min(n - 1, low));
+      sum += values[safeIndex] ?? 0;
     }
     resampledMeans[i] = sum / n;
   }
@@ -220,10 +221,10 @@ function computeAdaptiveBootstrapCI(values: number[], nIterations = 1000): Metri
 
   return {
     mean: Number(bootstrapMean.toFixed(1)),
-    sem: Number(Math.max(0.5, Math.sqrt(variance)).toFixed(1)),
+    sem: Number(Math.max(0.5, Math.sqrt(Math.max(0.001, variance))).toFixed(1)),
     ci95: [
-      Math.max(0, Math.round(resampledMeans[Math.floor(nIterations * 0.025)])),
-      Math.round(resampledMeans[Math.floor(nIterations * 0.975)]),
+      Math.max(0, Math.round(resampledMeans[Math.floor(nIterations * 0.025)] ?? bootstrapMean * 0.8)),
+      Math.round(resampledMeans[Math.floor(nIterations * 0.975)] ?? bootstrapMean * 1.2),
     ],
   };
 }
@@ -454,20 +455,36 @@ export const useLearnerProfile = () => {
     let splitHalfReliability = 0.85;
 
     if (records.length >= 8) {
-      const oddNormalized = records.filter((_, i) => i % 2 === 1).map((r) => r.timeSpentSec / (r.tier === 'kids' ? 60 : r.tier === 'intermediate' ? 120 : 240));
-      const evenNormalized = records.filter((_, i) => i % 2 === 0).map((r) => r.timeSpentSec / (r.tier === 'kids' ? 60 : r.tier === 'intermediate' ? 120 : 240));
+      const getExpectedTime = (tier: string) => {
+        switch (tier) {
+          case 'kids': return 60;
+          case 'intermediate': return 120;
+          case 'expert': return 240;
+          case 'master': return 360;
+          case 'legendary': return 480;
+          case 'ultimate': return 600;
+          default: return 180;
+        }
+      };
+
+      const oddNormalized = records.filter((_, i) => i % 2 === 1).map((r) => r.timeSpentSec / getExpectedTime(r.tier));
+      const evenNormalized = records.filter((_, i) => i % 2 === 0).map((r) => r.timeSpentSec / getExpectedTime(r.tier));
       const minLen = Math.min(oddNormalized.length, evenNormalized.length);
-      let num = 0, den1 = 0, den2 = 0;
-      const m1 = oddNormalized.slice(0, minLen).reduce((a, b) => a + b, 0) / minLen;
-      const m2 = evenNormalized.slice(0, minLen).reduce((a, b) => a + b, 0) / minLen;
-      for (let i = 0; i < minLen; i++) {
-        num += (oddNormalized[i] - m1) * (evenNormalized[i] - m2);
-        den1 += Math.pow(oddNormalized[i] - m1, 2);
-        den2 += Math.pow(evenNormalized[i] - m2, 2);
+
+      if (minLen >= 4) {
+        let num = 0, den1 = 0, den2 = 0;
+        const m1 = oddNormalized.slice(0, minLen).reduce((a, b) => a + b, 0) / minLen;
+        const m2 = evenNormalized.slice(0, minLen).reduce((a, b) => a + b, 0) / minLen;
+        for (let i = 0; i < minLen; i++) {
+          num += (oddNormalized[i] - m1) * (evenNormalized[i] - m2);
+          den1 += Math.pow(oddNormalized[i] - m1, 2);
+          den2 += Math.pow(evenNormalized[i] - m2, 2);
+        }
+        const denominator = Math.sqrt(den1 * den2);
+        const rHalf = denominator > 0.0001 ? Math.max(-0.99, Math.min(0.99, num / denominator)) : 0.75;
+        splitHalfReliability = Number(((2 * rHalf) / (1 + Math.abs(rHalf))).toFixed(2));
+        cronbachAlpha = Number(Math.min(0.96, Math.max(0.70, splitHalfReliability * 1.02)).toFixed(2));
       }
-      const rHalf = den1 > 0 && den2 > 0 ? Math.max(0.1, num / Math.sqrt(den1 * den2)) : 0.75;
-      splitHalfReliability = Number(((2 * rHalf) / (1 + rHalf)).toFixed(2));
-      cronbachAlpha = Number(Math.min(0.96, Math.max(0.78, splitHalfReliability * 1.02)).toFixed(2));
     }
 
     return {
