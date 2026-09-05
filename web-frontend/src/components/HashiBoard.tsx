@@ -86,7 +86,7 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
   const [hintLadderLevel, setHintLadderLevel] = useState<1 | 2 | 3>(1);
   const [animatedEvidenceSet, setAnimatedEvidenceSet] = useState<Set<number>>(new Set());
 
-  // 3. 覆盤播放器狀態（升級：分歧點標記與滿足度儀表板）
+  // 3. 覆盤播放器狀態
   const [isReplaying, setIsReplaying] = useState<boolean>(false);
   const [replaySpeed, setReplaySpeed] = useState<1 | 2 | 4>(1);
   const [replayStepIndex, setReplayStepIndex] = useState<number>(0);
@@ -242,7 +242,7 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
 
       if (targetCount > 0 && WebHashiGenerator.checkCrossing(minId, maxId, islands, bridges)) {
         if (navigator.vibrate) navigator.vibrate([30, 40, 30]);
-        setNoGuessWarning(isEn ? '[Collision Blocked] Bridges cannot cross!' : '【跨橋碰撞】星際橋樑不可交叉相交！');
+        setNoGuessWarning(isEn ? '[Collision Blocked] Bridges cannot intersect!' : '【跨橋碰撞】星際橋樑不可交叉相交！');
         setTimeout(() => setNoGuessWarning(null), 2400);
         return;
       }
@@ -380,9 +380,10 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isCompleted, isReplaying, handleUndo, handleRedo]);
 
-  // 勝利驗證與 SHA-256
+  // 勝利驗證與防空盤防禦
   useEffect(() => {
     if (isCompleted || isReplaying) return;
+    if (movesCountRef.current === 0 || history.length === 0) return;
 
     if (graphAnalysis.allSatisfied && graphAnalysis.isFullyConnected) {
       setIsCompleted(true);
@@ -428,7 +429,7 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
         }
       }
     }
-  }, [graphAnalysis, isCompleted, isReplaying, actualPuzzle, currentTier, recordAttempt, profile.personalBest.fastestTime, activeHint, tournamentMode]);
+  }, [graphAnalysis, isCompleted, isReplaying, actualPuzzle, currentTier, recordAttempt, profile.personalBest.fastestTime, activeHint, tournamentMode, history.length]);
 
   const handleRequestHint = () => {
     if (isCompleted || tournamentMode || isReplaying) return;
@@ -446,7 +447,6 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
     }
   };
 
-  // 細節 3：AI 變速覆盤引擎 + 玩家操作分歧點比對檢測
   const handleStartReplay = () => {
     setUserBridgesBackup(new Map(bridges));
 
@@ -461,7 +461,6 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
       simBridges.set(`${step.u}-${step.v}`, step.forcedCount);
     }
 
-    // 分歧點比對：尋找玩家第幾步開始與 AI 定式步驟產生分歧
     let firstDiverge: number | null = null;
     for (let i = 0; i < steps.length; i++) {
       const aiStep = steps[i];
@@ -510,24 +509,21 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
     return () => clearTimeout(timer);
   }, [isReplaying, replayStepIndex, replayStepsList, replaySpeed]);
 
-  // 一鍵生成對決連結
   const handleCopySeedShareCode = () => {
     const seed = (actualPuzzle as any)?.puzzle?.seed || (actualPuzzle?.metrics as any)?.seed || 0;
     const origin = typeof window !== 'undefined' ? window.location.origin : 'https://lawgic.app';
     const duelUrl = `${origin}/?engine=hashi&tier=${currentTier}&seed=${seed}`;
     navigator.clipboard.writeText(duelUrl);
-    setCopyToast(isEn ? '🔗 Direct duel link copied!' : '🔗 一鍵對決連結已複製！發送至群組即可發起對決！');
+    setCopyToast(isEn ? '🔗 Direct duel link copied!' : '🔗 一鍵對決連結已複製！');
     if (navigator.vibrate) navigator.vibrate(20);
     setTimeout(() => setCopyToast(null), 2400);
   };
 
-  // 細節 2：手動輸入純文字種子並無縫載入
   const handleApplyManualSeed = (e: React.FormEvent) => {
     e.preventDefault();
     const raw = manualSeedInput.trim();
     if (!raw) return;
 
-    // 解析格式：支援 hashi_master_s12345 或 HASHI-S12345-Texpert 或 純整數 12345
     let extractedSeed = raw;
     const seedMatch = raw.match(/s(\d+)/i) || raw.match(/S(\d+)/);
     if (seedMatch) extractedSeed = seedMatch[1];
@@ -540,7 +536,6 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
     window.location.href = url.toString();
   };
 
-  // 📸 生成高光戰績卡（Canvas 圖片匯出）
   const handleGenerateCard = () => {
     const canvas = document.createElement('canvas');
     canvas.width = 600;
@@ -631,7 +626,7 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
     link.href = canvas.toDataURL('image/png');
     link.click();
 
-    setCopyToast(isEn ? '📸 Performance card downloaded!' : '📸 高光戰績卡已生成並下載！');
+    setCopyToast(isEn ? '📸 Card downloaded!' : '📸 高光戰績卡已下載！');
     setTimeout(() => setCopyToast(null), 2500);
   };
 
@@ -677,8 +672,8 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
         {/* 手動輸入種子碼按鈕 */}
         <button
           onClick={() => setShowSeedInputModal(true)}
-          className="p-1 rounded border border-slate-800 bg-slate-950 text-slate-400 hover:text-amber-300 hover:border-amber-500/60 transition text-center"
-          title="Manual Enter Seed"
+          className="p-1 rounded border border-slate-800 bg-slate-950 text-slate-400 hover:text-amber-300 hover:border-amber-500/60 transition text-center cursor-pointer"
+          title={isEn ? 'Manual Enter Seed' : '手動輸入種子碼'}
         >
           <div className="text-[6.5px]">🔢 {isEn ? 'Seed' : '種子'}</div>
           <div className="text-[7.5px]">{isEn ? 'Input' : '輸入'}</div>
@@ -686,20 +681,20 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
 
         <button
           onClick={() => setHighContrast((prev) => !prev)}
-          className={`p-1 rounded border text-center transition ${
+          className={`p-1 rounded border text-center transition cursor-pointer ${
             highContrast
               ? 'bg-amber-950 border-amber-400 text-amber-300 font-bold shadow-xs'
               : 'bg-slate-950 border-slate-800 text-slate-500 hover:text-slate-300'
           }`}
         >
           <div className="text-[6.5px]">🌓 {isEn ? 'Theme' : '主題'}</div>
-          <div className="text-[7.5px]">{highContrast ? 'Paper' : 'Dark'}</div>
+          <div className="text-[7.5px]">{highContrast ? (isEn ? 'Paper' : '紙感') : (isEn ? 'Dark' : '深色')}</div>
         </button>
 
         <button
           onClick={() => setNoGuessMode((prev) => !prev)}
           disabled={tournamentMode}
-          className={`p-1 rounded border text-center transition ${
+          className={`p-1 rounded border text-center transition cursor-pointer ${
             tournamentMode
               ? 'bg-purple-950/80 border-purple-500 text-purple-300 font-bold cursor-not-allowed'
               : noGuessMode
@@ -708,7 +703,9 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
           }`}
         >
           <div className="text-[6.5px]">🛡️ {isEn ? 'No-Guess' : '無猜測'}</div>
-          <div className="text-[7.5px]">{tournamentMode ? 'Locked' : noGuessMode ? 'Strict' : 'OFF'}</div>
+          <div className="text-[7.5px]">
+            {tournamentMode ? (isEn ? 'Locked' : '賽事鎖定') : noGuessMode ? (isEn ? 'Strict' : '嚴謹') : (isEn ? 'OFF' : '關閉')}
+          </div>
         </button>
       </div>
 
@@ -718,7 +715,7 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
         </div>
       )}
 
-      {/* 細節 1 & 3：變速覆盤控制條 + 滿足度儀表板 + 分歧點警告 */}
+      {/* 變速覆盤控制條 + 滿足度儀表板 */}
       {isReplaying && (
         <div className="w-[min(88vw,42vh)] mb-1.5 p-1.5 bg-indigo-950/90 border border-cyan-500 rounded-lg text-cyan-200 text-[8px] animate-pulse font-mono">
           <div className="flex justify-between items-center text-[7px] text-cyan-400 mb-1 border-b border-cyan-900/60 pb-0.5">
@@ -733,12 +730,12 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
               )}
             </span>
             <div className="flex items-center gap-1">
-              <span className="text-[6.5px] text-slate-400">SPEED:</span>
+              <span className="text-[6.5px] text-slate-400">{isEn ? 'SPEED:' : '速度:'}</span>
               {[1, 2, 4].map((spd) => (
                 <button
                   key={spd}
                   onClick={() => setReplaySpeed(spd as 1 | 2 | 4)}
-                  className={`px-1 py-0.2 rounded text-[6.5px] font-bold ${
+                  className={`px-1 py-0.2 rounded text-[6.5px] font-bold cursor-pointer ${
                     replaySpeed === spd ? 'bg-cyan-500 text-slate-950' : 'bg-slate-800 text-slate-400'
                   }`}
                 >
@@ -747,21 +744,20 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
               ))}
               <button
                 onClick={handleRestoreUserBoard}
-                className="ml-1 px-1.5 py-0.2 bg-rose-950 hover:bg-rose-900 border border-rose-500/60 text-rose-300 rounded text-[6.5px] font-bold"
+                className="ml-1 px-1.5 py-0.2 bg-rose-950 hover:bg-rose-900 border border-rose-500/60 text-rose-300 rounded text-[6.5px] font-bold cursor-pointer"
               >
                 {isEn ? 'Restore Mine' : '還原我的盤面'}
               </button>
             </div>
           </div>
 
-          {/* 細節 1：島嶼滿足度進度條儀表板 */}
           <div className="flex items-center justify-between text-[6.5px] text-slate-300 mb-0.5">
             <span>
               {isEn ? 'Islands Satisfied:' : '島嶼滿額進度:'}{' '}
               <strong className="text-emerald-400">{graphAnalysis.satisfiedIslands.size}</strong>/{islands.length}
             </span>
             <span className="text-cyan-300">
-              {currentReplayStep ? `+${currentReplayStep.forcedCount} Bridge` : ''}
+              {currentReplayStep ? (isEn ? `+${currentReplayStep.forcedCount} Bridge` : `+${currentReplayStep.forcedCount} 條橋`) : ''}
             </span>
           </div>
           <div className="w-full bg-slate-900 h-1 rounded-full overflow-hidden mb-1">
@@ -772,7 +768,7 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
           </div>
 
           <div className="truncate text-cyan-300">
-            {currentReplayStep?.rationale || 'Demonstrating deductive bridge placement...'}
+            {currentReplayStep?.rationale || (isEn ? 'Demonstrating deductive bridge placement...' : '演示因果演繹架橋...')}
           </div>
         </div>
       )}
@@ -928,7 +924,7 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
               >
                 <button
                   onClick={() => handleIslandClick(isl.id)}
-                  className={`w-[85%] h-[85%] rounded-full flex items-center justify-center font-black text-xs sm:text-sm transition-all duration-150 z-20 shadow-md ${
+                  className={`w-[85%] h-[85%] rounded-full flex items-center justify-center font-black text-xs sm:text-sm transition-all duration-150 z-20 shadow-md cursor-pointer ${
                     isOverflow
                       ? 'bg-red-950 border-2 border-rose-500 text-rose-300 ring-2 ring-rose-500/50 scale-105'
                       : isSatisfied
@@ -958,40 +954,40 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
           <button
             onClick={handleUndo}
             disabled={history.length === 0 || isCompleted || isReplaying}
-            className="px-2 py-0.5 bg-slate-900 border border-slate-800 rounded hover:bg-slate-800 disabled:opacity-40"
+            className="px-2 py-0.5 bg-slate-900 border border-slate-800 rounded hover:bg-slate-800 disabled:opacity-40 cursor-pointer"
           >
             ↩ {isEn ? 'Undo (Z)' : '撤銷'}
           </button>
           <button
             onClick={handleRedo}
             disabled={redoStack.length === 0 || isCompleted || isReplaying}
-            className="px-2 py-0.5 bg-slate-900 border border-slate-800 rounded hover:bg-slate-800 disabled:opacity-40"
+            className="px-2 py-0.5 bg-slate-900 border border-slate-800 rounded hover:bg-slate-800 disabled:opacity-40 cursor-pointer"
           >
             ↪ {isEn ? 'Redo (Y)' : '重做'}
           </button>
           {!tournamentMode && (
             <button
               onClick={handleCopySeedShareCode}
-              className="px-2 py-0.5 bg-slate-900 border border-slate-800 rounded hover:bg-slate-800 text-amber-300"
-              title="Copy Duel Link"
+              className="px-2 py-0.5 bg-slate-900 border border-slate-800 rounded hover:bg-slate-800 text-amber-300 cursor-pointer"
+              title={isEn ? 'Copy Duel Link' : '複製對決連結'}
             >
               🔗 {isEn ? 'Duel Link' : '對決連結'}
             </button>
           )}
         </div>
-        <div className="text-slate-500">
-          <span>點選兩島循環：無 ➔ 單 ➔ 雙 ➔ 拆除</span>
+        <div className="text-slate-500 text-[8px]">
+          {isEn ? 'Click 2 islands: none ➔ single ➔ double ➔ remove' : '點選兩島循環：無 ➔ 單 ➔ 雙 ➔ 拆除'}
         </div>
       </div>
 
-      {/* 細節 2：純文字種子手動輸入彈窗 Modal */}
+      {/* 純文字種子手動輸入彈窗 Modal */}
       {showSeedInputModal && (
         <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4">
           <div className="bg-slate-950 border border-indigo-500/70 p-4 rounded-xl max-w-xs w-full shadow-2xl font-mono text-center animate-fade-in">
             <div className="text-indigo-400 font-bold text-xs mb-2">🔢 {isEn ? 'Enter Duel Seed' : '手動輸入對決種子碼'}</div>
             <p className="text-slate-400 text-[9px] mb-3 leading-relaxed">
               {isEn
-                ? 'Paste raw seed code (e.g. hashi_master_s12345 or 12345) to load the exact board.'
+                ? 'Paste seed string (e.g. hashi_master_s12345 or 12345) to load the exact board.'
                 : '貼入好友分享的短碼（例如 hashi_master_s12345 或純數字 12345），立即進入同題對決！'}
             </p>
             <form onSubmit={handleApplyManualSeed} className="flex flex-col gap-2">
@@ -1007,13 +1003,13 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
                 <button
                   type="button"
                   onClick={() => setShowSeedInputModal(false)}
-                  className="flex-1 py-1 bg-slate-900 border border-slate-800 text-slate-400 text-[10px] rounded hover:bg-slate-800"
+                  className="flex-1 py-1 bg-slate-900 border border-slate-800 text-slate-400 text-[10px] rounded hover:bg-slate-800 cursor-pointer"
                 >
                   {isEn ? 'Cancel' : '取消'}
                 </button>
                 <button
                   type="submit"
-                  className="flex-1 py-1 bg-gradient-to-r from-cyan-600 to-cyan-500 text-slate-950 font-bold text-[10px] rounded hover:from-cyan-500 shadow"
+                  className="flex-1 py-1 bg-gradient-to-r from-cyan-600 to-cyan-500 text-slate-950 font-bold text-[10px] rounded hover:from-cyan-500 shadow cursor-pointer"
                 >
                   {isEn ? 'Load' : '載入盤面'}
                 </button>
@@ -1029,7 +1025,9 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
           <div className="flex items-center justify-between border-b border-slate-800 pb-1 mb-1.5">
             <div className="text-left">
               <div className="text-[7.5px] text-slate-500 tracking-wider">HASHIWOKAKERO RESOLVED</div>
-              <div className="text-xs text-indigo-300 font-bold">🌉 星際數橋・完美歐拉連通</div>
+              <div className="text-xs text-indigo-300 font-bold">
+                {isEn ? '🌉 Hashi Spanning Euler Topology Solved!' : '🌉 星際數橋・完美歐拉連通'}
+              </div>
             </div>
             <div className="px-2 py-0.5 border border-cyan-500 bg-cyan-950/80 rounded text-[9px] font-bold text-cyan-300">
               Gf: IQ {cci.standardIQ} (Top {Number((100 - cci.percentileRank).toFixed(1))}%)
@@ -1038,16 +1036,18 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
 
           <div className="grid grid-cols-3 gap-1 text-[7.5px] text-slate-400 mb-1.5">
             <div className="bg-slate-900/80 p-1 rounded">
-              <div>耗時</div>
+              <div>{isEn ? 'Time' : '耗時'}</div>
               <div className="text-slate-200 font-bold text-[10px]">{(elapsedMs / 1000).toFixed(1)}s</div>
             </div>
             <div className="bg-slate-900/80 p-1 rounded">
-              <div>操作步數</div>
+              <div>{isEn ? 'Moves' : '操作步數'}</div>
               <div className="text-cyan-300 font-bold text-[10px]">{movesCountRef.current}</div>
             </div>
             <div className="bg-slate-900/80 p-1 rounded">
-              <div>衝突次數</div>
-              <div className="text-amber-300 font-bold text-[10px]">{conflictCountRef.current} 次</div>
+              <div>{isEn ? 'Conflicts' : '衝突次數'}</div>
+              <div className="text-amber-300 font-bold text-[10px]">
+                {conflictCountRef.current} {isEn ? '' : '次'}
+              </div>
             </div>
           </div>
 
@@ -1075,7 +1075,7 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
             <button
               onClick={handleStartReplay}
               disabled={isReplaying}
-              className="py-1 bg-indigo-950 hover:bg-indigo-900 border border-indigo-500/60 text-indigo-300 text-[7.5px] font-bold rounded transition shadow flex items-center justify-center gap-0.5 active:scale-95"
+              className="py-1 bg-indigo-950 hover:bg-indigo-900 border border-indigo-500/60 text-indigo-300 text-[7.5px] font-bold rounded transition shadow flex items-center justify-center gap-0.5 active:scale-95 cursor-pointer"
             >
               <span>🔁</span>
               <span>{isEn ? 'AI Replay' : '解法覆盤'}</span>
@@ -1083,7 +1083,7 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
 
             <button
               onClick={handleGenerateCard}
-              className="py-1 bg-purple-950 hover:bg-purple-900 border border-purple-500/60 text-purple-300 text-[7.5px] font-bold rounded transition shadow flex items-center justify-center gap-0.5 active:scale-95"
+              className="py-1 bg-purple-950 hover:bg-purple-900 border border-purple-500/60 text-purple-300 text-[7.5px] font-bold rounded transition shadow flex items-center justify-center gap-0.5 active:scale-95 cursor-pointer"
             >
               <span>📸</span>
               <span>{isEn ? 'Share Card' : '高光戰績卡'}</span>
@@ -1094,7 +1094,7 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
             {userBridgesBackup && (
               <button
                 onClick={handleRestoreUserBoard}
-                className="flex-1 py-1 bg-slate-900 hover:bg-slate-800 border border-cyan-500/60 text-cyan-300 text-[7.5px] font-bold rounded transition shadow flex items-center justify-center gap-0.5 active:scale-95"
+                className="flex-1 py-1 bg-slate-900 hover:bg-slate-800 border border-cyan-500/60 text-cyan-300 text-[7.5px] font-bold rounded transition shadow flex items-center justify-center gap-0.5 active:scale-95 cursor-pointer"
               >
                 <span>↩️</span>
                 <span>{isEn ? 'My Board' : '我的盤面'}</span>
@@ -1103,7 +1103,7 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
 
             <button
               onClick={handleCopySeedShareCode}
-              className="flex-1 py-1 bg-slate-900 hover:bg-slate-800 border border-amber-500/60 text-amber-300 text-[7.5px] font-bold rounded transition shadow flex items-center justify-center gap-0.5 active:scale-95"
+              className="flex-1 py-1 bg-slate-900 hover:bg-slate-800 border border-amber-500/60 text-amber-300 text-[7.5px] font-bold rounded transition shadow flex items-center justify-center gap-0.5 active:scale-95 cursor-pointer"
             >
               <span>🔗</span>
               <span>{isEn ? 'Duel Link' : '對決連結'}</span>
@@ -1111,7 +1111,7 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
 
             <button
               onClick={() => setShowSubmitModal(true)}
-              className="flex-1 py-1 bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 text-slate-950 text-[7.5px] font-black rounded shadow transition active:scale-95 flex items-center justify-center gap-0.5"
+              className="flex-1 py-1 bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 text-slate-950 text-[7.5px] font-black rounded shadow transition active:scale-95 flex items-center justify-center gap-0.5 cursor-pointer"
             >
               <span>📤</span>
               <span>{isEn ? 'Submit' : '賽事提交'}</span>
