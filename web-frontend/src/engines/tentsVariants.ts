@@ -11,6 +11,8 @@ export interface ITentsRuleStrategy {
   readonly displayNameZh: string;
   readonly displayNameEn: string;
   getAvailableCampNeighbors(tree: CellCoord, rows: number, cols: number): CellCoord[];
+  // 兼顧舊版呼叫 hasCollision 與新版 hasTentCollision
+  hasCollision(r: number, c: number, board: number[][], rows: number, cols: number): boolean;
   hasTentCollision(r: number, c: number, board: number[][], rows: number, cols: number): boolean;
   getRequiredTentsPerTree(tree: CellCoord): number;
   generateWpfAnswerKey(solutionTents: CellCoord[], rows: number, cols: number): string;
@@ -32,8 +34,7 @@ export class StandardTentsStrategy implements ITentsRuleStrategy {
       .filter((p) => p.r >= 0 && p.r < rows && p.c >= 0 && p.c < cols);
   }
 
-  hasTentCollision(r: number, c: number, board: number[][], rows: number, cols: number): boolean {
-    // 帳篷八向全方位排斥
+  hasCollision(r: number, c: number, board: number[][], rows: number, cols: number): boolean {
     for (let dr = -1; dr <= 1; dr++) {
       for (let dc = -1; dc <= 1; dc++) {
         if (dr === 0 && dc === 0) continue;
@@ -47,12 +48,16 @@ export class StandardTentsStrategy implements ITentsRuleStrategy {
     return false;
   }
 
+  hasTentCollision(r: number, c: number, board: number[][], rows: number, cols: number): boolean {
+    return this.hasCollision(r, c, board, rows, cols);
+  }
+
   getRequiredTentsPerTree(): number {
     return 1;
   }
 
   /**
-   * WPF 標準答案鍵：每行第一頂帳篷所在的 1-based 欄號；第 10 欄記為 '0'，若整行無帳篷記為 '-' 或 'X'
+   * WPF 標準答案鍵：每行第一頂帳篷所在的 1-based 欄號；第 10 欄記為 '0'，若整行無帳篷記為 '-'
    */
   generateWpfAnswerKey(solutionTents: CellCoord[], rows: number, cols: number): string {
     let key = '';
@@ -65,7 +70,6 @@ export class StandardTentsStrategy implements ITentsRuleStrategy {
         key += '-';
       } else {
         const firstCol1Based = tentsInRow[0].c + 1;
-        // 1~9 代表第 1~9 欄，10 記為 0，大於 10 用英文字母 A, B...
         if (firstCol1Based <= 9) {
           key += String(firstCol1Based);
         } else if (firstCol1Based === 10) {
@@ -102,8 +106,7 @@ export class DiagonalTentsStrategy implements ITentsRuleStrategy {
     return coords;
   }
 
-  hasTentCollision(r: number, c: number, board: number[][], rows: number, cols: number): boolean {
-    // 變體規則：帳篷與帳篷正交 4 向絕對不可相碰（對角線允許接觸）
+  hasCollision(r: number, c: number, board: number[][], rows: number, cols: number): boolean {
     const orthogonalDirs = [[-1, 0], [1, 0], [0, -1], [0, 1]];
     for (const [dr, dc] of orthogonalDirs) {
       const nr = r + dr;
@@ -113,6 +116,10 @@ export class DiagonalTentsStrategy implements ITentsRuleStrategy {
       }
     }
     return false;
+  }
+
+  hasTentCollision(r: number, c: number, board: number[][], rows: number, cols: number): boolean {
+    return this.hasCollision(r, c, board, rows, cols);
   }
 
   getRequiredTentsPerTree(): number {
@@ -201,7 +208,7 @@ export class LocalPuzzleLibrary {
       const raw = localStorage.getItem(STORAGE_KEY);
       const list: any[] = raw ? JSON.parse(raw) : [];
 
-      // 精簡快照（只保留關鍵重構資料，避免步驟鏈撐爆 LocalStorage）
+      // 補回 cognitiveLoad 解決 TS2741，並補齊相容欄位
       const compactSnapshot: PuzzleEntity = {
         id: puzzle.id,
         category: puzzle.category,
@@ -214,11 +221,19 @@ export class LocalPuzzleLibrary {
           trees: (puzzle.puzzle as any).trees,
           rowCounts: (puzzle.puzzle as any).rowCounts,
           colCounts: (puzzle.puzzle as any).colCounts,
+          rowClues: (puzzle.puzzle as any).rowClues || (puzzle.puzzle as any).rowCounts,
+          colClues: (puzzle.puzzle as any).colClues || (puzzle.puzzle as any).colCounts,
           variant: (puzzle.puzzle as any).variant || 'standard',
           seed: (puzzle.puzzle as any).seed,
         } as any,
         solution: puzzle.solution,
         metrics: puzzle.metrics,
+        cognitiveLoad: puzzle.cognitiveLoad || {
+          spatial: 0.8,
+          numeric: 0.5,
+          workingMemory: 0.6,
+          inhibition: 0.8,
+        },
       };
 
       const existingIndex = list.findIndex((p) => p.id === puzzle.id);
@@ -228,7 +243,6 @@ export class LocalPuzzleLibrary {
         list.unshift(compactSnapshot);
       }
 
-      // 嚴格控制題庫上限為 40 道
       localStorage.setItem(STORAGE_KEY, JSON.stringify(list.slice(0, 40)));
       return true;
     } catch (e) {
