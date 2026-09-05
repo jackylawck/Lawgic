@@ -44,7 +44,6 @@ export const FutoshikiBoard: React.FC<Props> = ({ puzzle, puzzleData, tournament
   const [isCompleted, setIsCompleted] = useState<boolean>(false);
   const [isTimeOut, setIsTimeOut] = useState<boolean>(false);
 
-  // 補丁 1：Crux 攻克突破閃爍動效
   const [cruxBreakthrough, setCruxBreakthrough] = useState<boolean>(false);
   const [seedCopied, setSeedCopied] = useState<boolean>(false);
 
@@ -209,7 +208,6 @@ export const FutoshikiBoard: React.FC<Props> = ({ puzzle, puzzleData, tournament
         const next = prev.map((row) => [...row]);
         next[r][c] = val;
 
-        // 補丁 1：攻克 Crux 觸發突破閃爍動畫
         if (r === cruxCoords[0] && c === cruxCoords[1] && val !== 0 && val === solution[r]?.[c]) {
           setCruxBreakthrough(true);
           setTimeout(() => setCruxBreakthrough(false), 1500);
@@ -382,7 +380,7 @@ export const FutoshikiBoard: React.FC<Props> = ({ puzzle, puzzleData, tournament
       onWheel={handleWheel}
       className="relative flex flex-col items-center justify-center p-2 select-none font-mono outline-none w-full max-w-[340px] mx-auto"
     >
-      {/* 補丁 1：攻克 Crux 突破橫幅 */}
+      {/* 攻克 Crux 突破橫幅 */}
       {cruxBreakthrough && (
         <div className="fixed top-3 z-50 px-3.5 py-1.5 bg-gradient-to-r from-amber-500 to-yellow-400 text-slate-950 font-black text-xs rounded-full shadow-[0_0_20px_rgba(251,191,36,0.8)] animate-bounce flex items-center gap-1.5 border border-white">
           <span>✨</span>
@@ -390,7 +388,7 @@ export const FutoshikiBoard: React.FC<Props> = ({ puzzle, puzzleData, tournament
         </div>
       )}
 
-      {/* 補丁 2：對稱性圖標 🔄 與盤面元數據視覺錨點 */}
+      {/* 對稱性與盤面元數據 */}
       <div className="w-full flex items-center justify-between gap-1 mb-2 px-1 text-[7.5px]">
         <div className="flex items-center gap-1">
           <button
@@ -401,9 +399,9 @@ export const FutoshikiBoard: React.FC<Props> = ({ puzzle, puzzleData, tournament
             }
             className="px-2 py-1 bg-slate-900 border border-slate-700 hover:border-cyan-400 rounded text-cyan-300 font-bold"
           >
-            {displayMode === 'numeric' && '🔢 數字'}
-            {displayMode === 'symbolic_dots' && '⚪ 點陣'}
-            {displayMode === 'symbolic_flora' && '🌱 符號'}
+            {displayMode === 'numeric' && (isEn ? '🔢 Numeric' : '🔢 數字')}
+            {displayMode === 'symbolic_dots' && (isEn ? '⚪ Dots' : '⚪ 點陣')}
+            {displayMode === 'symbolic_flora' && (isEn ? '🌱 Flora' : '🌱 符號')}
           </button>
           <button
             onClick={() => setEnableOffload((prev) => !prev)}
@@ -413,24 +411,26 @@ export const FutoshikiBoard: React.FC<Props> = ({ puzzle, puzzleData, tournament
                 : 'bg-slate-900 border-slate-700 text-slate-400'
             }`}
           >
-            🧠 卸載: {enableOffload ? 'ON' : 'OFF'}
+            🧠 {isEn ? 'Offload' : '卸載'}: {enableOffload ? (isEn ? 'ON' : '開啟') : (isEn ? 'OFF' : '關閉')}
           </button>
         </div>
         <div className="flex items-center gap-1.5 text-slate-400 font-semibold">
           {isSymmetric && (
-            <span className="text-cyan-400 font-bold flex items-center gap-0.5" title="180° 旋轉點對稱美學盤面">
-              🔄 180° 對稱
+            <span className="text-cyan-400 font-bold flex items-center gap-0.5" title={isEn ? '180° Point Symmetric Layout' : '180° 旋轉點對稱美學盤面'}>
+              🔄 {isEn ? '180° Sym' : '180° 對稱'}
             </span>
           )}
           <span className="text-slate-600">|</span>
-          <span className="text-purple-300 font-bold">鏈深: {chainDepth}</span>
+          <span className="text-purple-300 font-bold">
+            {isEn ? 'Chain' : '鏈深'}: {chainDepth}
+          </span>
           <span className="text-slate-600">|</span>
           <button
             onClick={handleCopySeed}
             className="text-slate-500 hover:text-slate-300 font-mono underline"
-            title="複製 Seed 題目種子"
+            title={isEn ? 'Copy Seed' : '複製 Seed 題目種子'}
           >
-            {seedCopied ? 'Copied' : `S:${String(seed).slice(-4)}`}
+            {seedCopied ? (isEn ? 'Copied' : '已複製') : `S:${String(seed).slice(-4)}`}
           </button>
         </div>
       </div>
@@ -438,7 +438,11 @@ export const FutoshikiBoard: React.FC<Props> = ({ puzzle, puzzleData, tournament
       {/* 工作記憶卸載草稿盤 */}
       {enableOffload && (
         <div className="w-full mb-2 p-1.5 bg-slate-950/80 border border-purple-900/60 rounded-lg text-[7.5px] text-slate-300 flex items-center justify-between">
-          <span className="text-purple-400 font-bold">格 [{selectedCell[0] + 1}, {selectedCell[1] + 1}] 候選:</span>
+          <span className="text-purple-400 font-bold">
+            {isEn
+              ? `Cell [${selectedCell[0] + 1}, ${selectedCell[1] + 1}] Candidates:`
+              : `格 [${selectedCell[0] + 1}, ${selectedCell[1] + 1}] 候選:`}
+          </span>
           <div className="flex gap-1">
             {offloadSummary.available.length > 0 ? (
               offloadSummary.available.map((val) => (
@@ -447,7 +451,9 @@ export const FutoshikiBoard: React.FC<Props> = ({ puzzle, puzzleData, tournament
                 </span>
               ))
             ) : (
-              <span className="text-rose-400 font-bold">無合法候選數</span>
+              <span className="text-rose-400 font-bold">
+                {isEn ? 'No Valid Candidates' : '無合法候選數'}
+              </span>
             )}
           </div>
         </div>
@@ -485,7 +491,6 @@ export const FutoshikiBoard: React.FC<Props> = ({ puzzle, puzzleData, tournament
                     >
                       {renderValue(val)}
 
-                      {/* 補丁 1：Crux 金色脈衝光環與突破粒子 */}
                       {isCruxCell && (
                         <div className="absolute inset-0 ring-2 ring-amber-400/70 animate-pulse rounded pointer-events-none" />
                       )}
@@ -527,7 +532,7 @@ export const FutoshikiBoard: React.FC<Props> = ({ puzzle, puzzleData, tournament
         ))}
       </div>
 
-      {/* 雙行觸控大按鍵 (>= 44px) */}
+      {/* 雙行觸控大按鍵 */}
       <div className="w-full mt-2.5">
         <div
           className="grid gap-1"
@@ -537,15 +542,15 @@ export const FutoshikiBoard: React.FC<Props> = ({ puzzle, puzzleData, tournament
             <button
               key={`num-pad-${num}`}
               onClick={() => setCellValue(selectedCell[0], selectedCell[1], num)}
-              className="h-11 bg-slate-900 border border-slate-700 hover:border-cyan-400 active:bg-cyan-950 text-cyan-300 font-bold text-sm rounded-lg transition shadow flex items-center justify-center"
+              className="h-11 bg-slate-900 border border-slate-700 hover:border-cyan-400 active:bg-cyan-950 text-cyan-300 font-bold text-sm rounded-lg transition shadow flex items-center justify-center cursor-pointer"
             >
               {renderValue(num)}
             </button>
           ))}
           <button
             onClick={() => setCellValue(selectedCell[0], selectedCell[1], 0)}
-            className="h-11 bg-slate-900 border border-slate-700 hover:border-rose-400 active:bg-rose-950 text-rose-400 font-bold text-sm rounded-lg transition shadow flex items-center justify-center"
-            title="清空"
+            className="h-11 bg-slate-900 border border-slate-700 hover:border-rose-400 active:bg-rose-950 text-rose-400 font-bold text-sm rounded-lg transition shadow flex items-center justify-center cursor-pointer"
+            title={isEn ? 'Clear' : '清空'}
           >
             ✕
           </button>
@@ -557,7 +562,7 @@ export const FutoshikiBoard: React.FC<Props> = ({ puzzle, puzzleData, tournament
         <button
           onClick={handleRequestHint}
           disabled={isCompleted || isTimeOut}
-          className="w-full py-1.5 text-xs font-bold rounded-lg border bg-slate-900 border-amber-500/50 text-amber-300 hover:bg-amber-950/40 transition flex items-center justify-center gap-1 shadow disabled:opacity-40"
+          className="w-full py-1.5 text-xs font-bold rounded-lg border bg-slate-900 border-amber-500/50 text-amber-300 hover:bg-amber-950/40 transition flex items-center justify-center gap-1 shadow disabled:opacity-40 cursor-pointer"
         >
           💡 {isEn ? 'Hint Ladder [H]' : '因果提示階梯 [H]'}
         </button>
@@ -565,27 +570,42 @@ export const FutoshikiBoard: React.FC<Props> = ({ puzzle, puzzleData, tournament
 
       {hintLevel > 0 && activeHint && (
         <div className="mt-2 p-2 rounded-xl text-center w-full font-mono border bg-slate-900/90 border-amber-500/60 text-slate-200 text-[8px]">
-          {hintLevel === 1 && <span>🔍 審視坐標 [{activeHint.r + 1}, {activeHint.c + 1}] 的偏序約束</span>}
-          {hintLevel === 2 && <span className="text-cyan-300 font-bold">⚡ {activeHint.humanReadable.zh}</span>}
+          {hintLevel === 1 && (
+            <span>
+              {isEn
+                ? `🔍 Inspect partial order constraints around [${activeHint.r + 1}, ${activeHint.c + 1}]`
+                : `🔍 審視坐標 [${activeHint.r + 1}, ${activeHint.c + 1}] 的偏序約束`}
+            </span>
+          )}
+          {hintLevel === 2 && (
+            <span className="text-cyan-300 font-bold">
+              ⚡ {isEn ? (activeHint.humanReadable.en || activeHint.rationale) : activeHint.humanReadable.zh}
+            </span>
+          )}
           {hintLevel === 3 && (
             <span className="text-rose-400 font-extrabold">
-              🎯 目標格必然填入 {renderValue(activeHint.forcedValue)}！
+              {isEn
+                ? `🎯 Target cell must strictly be ${renderValue(activeHint.forcedValue)}!`
+                : `🎯 目標格必然填入 ${renderValue(activeHint.forcedValue)}！`}
             </span>
           )}
         </div>
       )}
 
-      {/* 結算面板與補丁 3：賽後推理節奏圖 (Deduction Flow Map) */}
+      {/* 結算面板與推理節奏圖 (Deduction Flow Map) */}
       {isCompleted && (
         <div className="mt-2.5 p-3 bg-slate-950 border border-emerald-500/80 rounded-xl text-center w-full shadow-2xl font-mono animate-fade-in">
-          <div className="text-emerald-400 font-bold text-xs mb-0.5">RELATIONAL MATRIX BALANCED!</div>
+          <div className="text-emerald-400 font-bold text-xs mb-0.5 uppercase tracking-wider">
+            {isEn ? 'RELATIONAL MATRIX BALANCED!' : '關係矩陣完全收斂平衡！'}
+          </div>
 
-          {/* 補丁 3：標準化推理節奏圖 */}
           {depthProfile.length > 0 && (
             <div className="my-2 p-2 bg-slate-900/80 border border-slate-800 rounded-lg text-left">
               <div className="flex items-center justify-between text-[7px] text-slate-400 mb-1">
-                <span>🧠 推理節奏圖 (Deduction Flow)</span>
-                <span className="text-emerald-400 font-bold">對稱吻合度: 100%</span>
+                <span>🧠 {isEn ? 'Deduction Flow Map' : '推理節奏圖 (Deduction Flow)'}</span>
+                <span className="text-emerald-400 font-bold">
+                  {isEn ? 'Symmetry Match: 100%' : '對稱吻合度: 100%'}
+                </span>
               </div>
               <svg width="100%" height="22" viewBox="0 0 200 22" className="overflow-visible">
                 <polyline
@@ -607,20 +627,24 @@ export const FutoshikiBoard: React.FC<Props> = ({ puzzle, puzzleData, tournament
                 ))}
               </svg>
               <div className="flex justify-between text-[6px] text-slate-500 mt-1 px-1">
-                <span>鋪陳</span>
-                <span>爬坡</span>
-                <span className="text-amber-400 font-bold">⚡Crux</span>
-                <span>收割</span>
-                <span>尾聲</span>
+                <span>{isEn ? 'Intro' : '鋪陳'}</span>
+                <span>{isEn ? 'Ascent' : '爬坡'}</span>
+                <span className="text-amber-400 font-bold">⚡{isEn ? 'Crux' : '關鍵'}</span>
+                <span>{isEn ? 'Harvest' : '收割'}</span>
+                <span>{isEn ? 'Coda' : '尾聲'}</span>
               </div>
             </div>
           )}
 
           <div className="text-[8.5px] text-slate-300 mb-1">
-            耗時: {(accumulatedMs / 1000).toFixed(2)}s | 鏈深: {chainDepth} 階 | Gf 指標: IQ {cci.standardIQ}
+            {isEn
+              ? `Time: ${(accumulatedMs / 1000).toFixed(2)}s | Chain Depth: ${chainDepth} | Gf Index: IQ ${cci.standardIQ}`
+              : `耗時: ${(accumulatedMs / 1000).toFixed(2)}s | 鏈深: ${chainDepth} 階 | Gf 指標: IQ ${cci.standardIQ}`}
           </div>
           <div className="text-[8px] text-cyan-400 font-bold">
-            ✨ Seed: {seed} · 偏序鏈完全收斂
+            {isEn
+              ? `✨ Seed: ${seed} · Partial Order Chain Fully Converged`
+              : `✨ Seed: ${seed} · 偏序鏈完全收斂`}
           </div>
         </div>
       )}
