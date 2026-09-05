@@ -1,3 +1,4 @@
+// web-frontend/src/engines/dominoesGenerator.ts
 import { PuzzleEntity, TierKey } from '../generated';
 
 export type ExtendedTierKey = TierKey | 'legendary' | 'ultimate';
@@ -8,7 +9,7 @@ export interface DominoPiece {
   val2: number;
 }
 
-export type DominoBorderState = 0 | 1 | 2; // 0: 未決, 1: 成牌, 2: 隔離線
+export type DominoBorderState = 0 | 1 | 2; // 0: 未決, 1: 骨牌連線 (實體), 2: 分割牆 (紅線/隔離)
 
 export type DominoTechnique =
   | 'single_domino_candidate'
@@ -23,7 +24,7 @@ export interface DominoHintStep {
   c1: number;
   r2: number;
   c2: number;
-  forcedType: 1 | 2;
+  forcedType: 1 | 2; // 1: 成牌, 2: 隔離牆
   technique: DominoTechnique;
   evidenceCells: [number, number][];
   rationale: string;
@@ -144,6 +145,9 @@ export class WebDominoesGenerator {
     return solutionCount;
   }
 
+  /**
+   * 賽事級因果推導定式引擎（含奇偶性與 2x2 交錯）
+   */
   public static getNextForcedDeduction(
     rows: number,
     cols: number,
@@ -154,6 +158,7 @@ export class WebDominoesGenerator {
   ): DominoHintStep | null {
     const dirs = [[0, 1], [1, 0], [0, -1], [-1, 0]];
 
+    // 定式 1: 孤立端點死胡同強制定型
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         const isConnected =
@@ -198,16 +203,17 @@ export class WebDominoesGenerator {
             forcedType: 1,
             technique: 'dead_end_forced',
             evidenceCells: [[r, c], [nr, nc]],
-            rationale: `格 [${r + 1},${c + 1}] 僅剩唯一相鄰格 [${nr + 1},${nc + 1}]，強制成牌。`,
+            rationale: `格 [${r + 1},${c + 1}] 其他方向已被邊界牆封死，僅剩 [${nr + 1},${nc + 1}] 為唯一合法相鄰格，強制結合成骨牌。`,
             humanReadable: {
-              zh: `[${r + 1}, ${c + 1}] 其他方向皆被隔離牆阻斷，只能與 [${nr + 1}, ${nc + 1}] 結合，強制連成骨牌。`,
-              en: `Cell [${r + 1}, ${c + 1}] must pair with its sole open neighbor [${nr + 1}, ${nc + 1}].`,
+              zh: `觀察 [${r + 1}, ${c + 1}]：其他方向皆被隔離牆阻斷，只能與 [${nr + 1}, ${nc + 1}] 結合，強制連成骨牌！`,
+              en: `Cell [${r + 1}, ${c + 1}] is isolated; it must pair with its sole open neighbor [${nr + 1}, ${nc + 1}].`,
             },
           };
         }
       }
     }
 
+    // 定式 2: 全盤唯一候選骨牌
     const activeConfirmedKeys = new Set<string>();
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols - 1; c++) {
@@ -251,12 +257,90 @@ export class WebDominoesGenerator {
           forcedType: 1,
           technique: 'single_domino_candidate',
           evidenceCells: [[r1, c1], [r2, c2]],
-          rationale: `骨牌 [${piece.val1}-${piece.val2}] 在全盤上僅剩此唯一合法位置，強制成牌。`,
+          rationale: `骨牌 [${piece.val1}-${piece.val2}] 在全盤上僅剩唯一容納位置，強制成牌。`,
           humanReadable: {
-            zh: `骨牌 [${piece.val1}-${piece.val2}] 僅剩 [${r1 + 1},${c1 + 1}] 與 [${r2 + 1},${c2 + 1}] 能容納，必然成牌。`,
-            en: `Domino [${piece.val1}-${piece.val2}] has only one placement available.`,
+            zh: `骨牌 [${piece.val1}-${piece.val2}] 在全盤中僅剩 [${r1 + 1},${c1 + 1}] 與 [${r2 + 1},${c2 + 1}] 能容納，必然成牌。`,
+            en: `Domino [${piece.val1}-${piece.val2}] has only one possible placement on the entire board.`,
           },
         };
+      }
+    }
+
+    // 定式 3: 2x2 四格交錯排除 (Checkerboard 2x2 Exclusion)
+    for (let r = 0; r < rows - 1; r++) {
+      for (let c = 0; c < cols - 1; c++) {
+        // 若 (r,c)-(r,c+1) 與 (r+1,c)-(r+1,c+1) 構成相同的骨牌，但該骨牌全盤只有一張配額
+        const topKey = WebDominoesGenerator.getDominoKey(grid[r][c], grid[r][c + 1]);
+        const bottomKey = WebDominoesGenerator.getDominoKey(grid[r + 1][c], grid[r + 1][c + 1]);
+
+        if (topKey === bottomKey && hBorders[r][c] === 0 && hBorders[r + 1][c] === 0) {
+          // 兩組水平若同時成牌會違規重複，因此水平不可同時成立，若一側垂直成牌，另一側強制隔離
+          if (vBorders[r][c] === 1 && hBorders[r + 1][c] === 0) {
+            return {
+              step: 1,
+              r1: r + 1,
+              c1: c,
+              r2: r + 1,
+              c2: c + 1,
+              forcedType: 2,
+              technique: 'checkerboard_2x2_exclusion',
+              evidenceCells: [[r, c], [r + 1, c], [r, c + 1], [r + 1, c + 1]],
+              rationale: `2x2 區域內若 [${r + 2},${c + 1}] 水平成牌將引發骨牌 [${bottomKey}] 配額重複，強制劃上隔離牆。`,
+              humanReadable: {
+                zh: `2x2 交錯排除：左側已縱向成牌，下方若水平成牌會引發骨牌重複，[${r + 2},${c + 1}] 與 [${r + 2},${c + 2}] 間必為隔離牆。`,
+                en: `2x2 Checkerboard exclusion: pairing horizontally would cause domino duplication. Forced barrier placed.`,
+              },
+            };
+          }
+        }
+      }
+    }
+
+    // 定式 4: 骨牌配額已滿邊界封閉 (Exhausted Pair Barrier)
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        // 檢查未鎖定的水平相鄰格
+        if (c < cols - 1 && hBorders[r][c] === 0) {
+          const key = WebDominoesGenerator.getDominoKey(grid[r][c], grid[r][c + 1]);
+          if (activeConfirmedKeys.has(key)) {
+            return {
+              step: 1,
+              r1: r,
+              c1: c,
+              r2: r,
+              c2: c + 1,
+              forcedType: 2,
+              technique: 'exhausted_pair_barrier',
+              evidenceCells: [[r, c], [r, c + 1]],
+              rationale: `骨牌 [${key}] 已在盤面其他位置確認鎖定，此處不能再次成牌，強制劃上隔離邊界。`,
+              humanReadable: {
+                zh: `骨牌 [${key}] 已被鎖定，此處相鄰格不可再重複成牌，強制劃上隔離紅線。`,
+                en: `Domino [${key}] has already been placed elsewhere. Forced barrier between these cells.`,
+              },
+            };
+          }
+        }
+        // 檢查未鎖定的垂直相鄰格
+        if (r < rows - 1 && vBorders[r][c] === 0) {
+          const key = WebDominoesGenerator.getDominoKey(grid[r][c], grid[r + 1][c]);
+          if (activeConfirmedKeys.has(key)) {
+            return {
+              step: 1,
+              r1: r,
+              c1: c,
+              r2: r + 1,
+              c2: c,
+              forcedType: 2,
+              technique: 'exhausted_pair_barrier',
+              evidenceCells: [[r, c], [r + 1, c]],
+              rationale: `骨牌 [${key}] 已被鎖定，垂直方向不可成牌，強制劃上隔離牆。`,
+              humanReadable: {
+                zh: `骨牌 [${key}] 已經在其他位置使用，垂直相鄰格強制劃上隔離紅線。`,
+                en: `Domino [${key}] already exhausted. Forced vertical barrier.`,
+              },
+            };
+          }
+        }
       }
     }
 
@@ -315,6 +399,7 @@ export class WebDominoesGenerator {
       const solutions = this.countSolutions(rows, cols, grid, dominoSet, 2);
       if (solutions !== 1) continue;
 
+      const puzzleId = `dominoes_${tier}_s${actualSeed}`;
       const spec: DominoesSpec = {
         rows,
         cols,
@@ -327,7 +412,7 @@ export class WebDominoesGenerator {
       };
 
       return {
-        id: `dominoes_${tier}_s${actualSeed}`,
+        id: puzzleId,
         category: 'spatial_logic' as any,
         engine_type: 'dominoes',
         tier: (tier === 'ultimate' || tier === 'legendary' ? 'master' : tier) as TierKey,
