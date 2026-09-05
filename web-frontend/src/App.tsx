@@ -68,12 +68,17 @@ const TIER_NAMES: Record<ExtendedTierKey, { zh: string; en: string }> = {
   ultimate: { zh: '終極', en: 'Ultimate' },
 };
 
-const EngineFallbackUI: React.FC<{ resetErrorBoundary: () => void }> = ({ resetErrorBoundary }) => (
-  <div className="flex flex-col items-center justify-center p-6 bg-red-950/40 border border-red-800 text-center my-4 font-mono rounded-xl">
-    <p className="text-red-300 text-xs">載入異常 / Render Error</p>
+const EngineFallbackUI: React.FC<{ resetErrorBoundary: () => void; error?: Error }> = ({ resetErrorBoundary, error }) => (
+  <div className="flex flex-col items-center justify-center p-6 bg-red-950/40 border border-red-800 text-center my-4 font-mono rounded-xl max-w-md w-full">
+    <p className="text-red-300 text-xs font-bold uppercase tracking-wider">載入異常 / Render Error</p>
+    {error?.message && (
+      <p className="text-red-400/80 text-[10px] mt-1 break-all px-2 font-mono">
+        {error.message}
+      </p>
+    )}
     <button
       onClick={resetErrorBoundary}
-      className="mt-3 px-3 py-1 bg-red-900/60 hover:bg-red-800 text-red-100 text-[10px] border border-red-700 rounded transition"
+      className="mt-3 px-3 py-1 bg-red-900/60 hover:bg-red-800 text-red-100 text-[10px] border border-red-700 rounded transition cursor-pointer"
     >
       重試 / Retry
     </button>
@@ -101,8 +106,7 @@ PuzzleTimer.displayName = 'PuzzleTimer';
 
 function generateEnginePuzzle(gameId: string, tier: ExtendedTierKey): PuzzleEntity | null {
   try {
-    let puzzle: PuzzleEntity | null = null;
-    // 嚴格將 ExtendedTier 映射至生成的標準 4 個核心等級，確保完全符合引擎參數型別
+    let puzzle: any = null;
     const baseTier: GeneratedTierKey = (tier === 'legendary' || tier === 'ultimate') ? 'master' : (tier as GeneratedTierKey);
 
     switch (gameId) {
@@ -164,7 +168,15 @@ function generateEnginePuzzle(gameId: string, tier: ExtendedTierKey): PuzzleEnti
         return null;
     }
 
-    if (puzzle && (tier === 'legendary' || tier === 'ultimate')) {
+    if (!puzzle) return null;
+
+    // 安全保障：確保 engine_type 與 puzzle 資料存在
+    if (!puzzle.engine_type) puzzle.engine_type = gameId;
+    if (!puzzle.puzzle && (puzzle.grid || puzzle.solution || puzzle.clues)) {
+      puzzle.puzzle = { ...puzzle };
+    }
+
+    if (tier === 'legendary' || tier === 'ultimate') {
       puzzle.tier = tier as any;
       if (puzzle.metrics) {
         puzzle.metrics.irt_logit_difficulty = Number(
@@ -173,8 +185,9 @@ function generateEnginePuzzle(gameId: string, tier: ExtendedTierKey): PuzzleEnti
       }
     }
 
-    return puzzle;
-  } catch {
+    return puzzle as PuzzleEntity;
+  } catch (e) {
+    console.error(`[Generator Error] ${gameId}:`, e);
     return null;
   }
 }
@@ -508,9 +521,12 @@ const MainDashboard: React.FC = () => {
       {activePuzzle ? (
         <section className="flex flex-col items-center w-full max-w-sm sm:max-w-md">
           <div className="w-full p-1 bg-slate-900/60 border border-slate-800 rounded-xl shadow-2xl">
-            <ErrorBoundary FallbackComponent={EngineFallbackUI} resetKeys={[selectedType, currentLevel, puzzleIndex]}>
+            <ErrorBoundary
+              FallbackComponent={EngineFallbackUI}
+              resetKeys={[selectedType, currentLevel, puzzleIndex, activePuzzle.id]}
+            >
               <PuzzleRenderer
-                key={`${selectedType}-${currentLevel}-${puzzleIndex}-${activePuzzle.checksum || activePuzzle.id}`}
+                key={`${selectedType}-${currentLevel}-${puzzleIndex}-${activePuzzle.id}`}
                 puzzle={activePuzzle}
                 tournamentMode={tournamentMode}
               />
