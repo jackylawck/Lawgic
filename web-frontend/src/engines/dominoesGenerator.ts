@@ -9,7 +9,7 @@ export interface DominoPiece {
   val2: number;
 }
 
-export type DominoBorderState = 0 | 1 | 2; // 0: 未決, 1: 骨牌連線 (實體), 2: 分割牆 (紅線/隔離)
+export type DominoBorderState = 0 | 1 | 2; // 0: 未決, 1: 骨牌實體連線, 2: 隔離紅線
 
 export type DominoTechnique =
   | 'single_domino_candidate'
@@ -87,6 +87,9 @@ export class WebDominoesGenerator {
     return pieces;
   }
 
+  /**
+   * 高效雙向回溯解題器（含骨牌可用度剪枝）
+   */
   public static countSolutions(
     rows: number,
     cols: number,
@@ -95,7 +98,7 @@ export class WebDominoesGenerator {
     limit: number = 2
   ): number {
     let solutionCount = 0;
-    let stepBudget = 3500;
+    let stepBudget = 12000;
 
     const covered = Array.from({ length: rows }, () => Array(cols).fill(false));
     const usedDominoes = new Set<string>();
@@ -111,7 +114,7 @@ export class WebDominoesGenerator {
         }
       }
 
-      if (r === rows) {
+      if (r >= rows) {
         solutionCount++;
         return;
       }
@@ -146,7 +149,7 @@ export class WebDominoesGenerator {
   }
 
   /**
-   * 賽事級因果推導定式引擎（含奇偶性與 2x2 交錯）
+   * 賽事級因果推導定式引擎
    */
   public static getNextForcedDeduction(
     rows: number,
@@ -158,14 +161,14 @@ export class WebDominoesGenerator {
   ): DominoHintStep | null {
     const dirs = [[0, 1], [1, 0], [0, -1], [-1, 0]];
 
-    // 定式 1: 孤立端點死胡同強制定型
+    // 定式 1: 孤立死角強制定型
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         const isConnected =
-          (c < cols - 1 && hBorders[r][c] === 1) ||
-          (c > 0 && hBorders[r][c - 1] === 1) ||
-          (r < rows - 1 && vBorders[r][c] === 1) ||
-          (r > 0 && vBorders[r - 1][c] === 1);
+          (c < cols - 1 && hBorders[r]?.[c] === 1) ||
+          (c > 0 && hBorders[r]?.[c - 1] === 1) ||
+          (r < rows - 1 && vBorders[r]?.[c] === 1) ||
+          (r > 0 && vBorders[r - 1]?.[c] === 1);
 
         if (isConnected) continue;
 
@@ -175,17 +178,17 @@ export class WebDominoesGenerator {
           const nc = c + dc;
           if (nr >= 0 && nr < rows && nc >= 0 && nc < cols) {
             const isNeighborConnected =
-              (nc < cols - 1 && hBorders[nr][nc] === 1) ||
-              (nc > 0 && hBorders[nr][nc - 1] === 1) ||
-              (nr < rows - 1 && vBorders[nr][nc] === 1) ||
-              (nr > 0 && vBorders[nr - 1][nc] === 1);
+              (nc < cols - 1 && hBorders[nr]?.[nc] === 1) ||
+              (nc > 0 && hBorders[nr]?.[nc - 1] === 1) ||
+              (nr < rows - 1 && vBorders[nr]?.[nc] === 1) ||
+              (nr > 0 && vBorders[nr - 1]?.[nc] === 1);
 
             if (!isNeighborConnected) {
               let isBlocked = false;
-              if (dr === 0 && dc === 1) isBlocked = hBorders[r][c] === 2;
-              else if (dr === 0 && dc === -1) isBlocked = hBorders[r][c - 1] === 2;
-              else if (dr === 1 && dc === 0) isBlocked = vBorders[r][c] === 2;
-              else if (dr === -1 && dc === 0) isBlocked = vBorders[r - 1][c] === 2;
+              if (dr === 0 && dc === 1) isBlocked = hBorders[r]?.[c] === 2;
+              else if (dr === 0 && dc === -1) isBlocked = hBorders[r]?.[c - 1] === 2;
+              else if (dr === 1 && dc === 0) isBlocked = vBorders[r]?.[c] === 2;
+              else if (dr === -1 && dc === 0) isBlocked = vBorders[r - 1]?.[c] === 2;
 
               if (!isBlocked) openNeighbors.push([nr, nc]);
             }
@@ -203,7 +206,7 @@ export class WebDominoesGenerator {
             forcedType: 1,
             technique: 'dead_end_forced',
             evidenceCells: [[r, c], [nr, nc]],
-            rationale: `格 [${r + 1},${c + 1}] 其他方向已被邊界牆封死，僅剩 [${nr + 1},${nc + 1}] 為唯一合法相鄰格，強制結合成骨牌。`,
+            rationale: `格 [${r + 1},${c + 1}] 周圍已被隔離牆封閉，僅剩 [${nr + 1},${nc + 1}] 為唯一合法相鄰格，強制結合成骨牌。`,
             humanReadable: {
               zh: `觀察 [${r + 1}, ${c + 1}]：其他方向皆被隔離牆阻斷，只能與 [${nr + 1}, ${nc + 1}] 結合，強制連成骨牌！`,
               en: `Cell [${r + 1}, ${c + 1}] is isolated; it must pair with its sole open neighbor [${nr + 1}, ${nc + 1}].`,
@@ -217,12 +220,16 @@ export class WebDominoesGenerator {
     const activeConfirmedKeys = new Set<string>();
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols - 1; c++) {
-        if (hBorders[r][c] === 1) activeConfirmedKeys.add(WebDominoesGenerator.getDominoKey(grid[r][c], grid[r][c + 1]));
+        if (hBorders[r]?.[c] === 1) {
+          activeConfirmedKeys.add(WebDominoesGenerator.getDominoKey(grid[r][c], grid[r][c + 1]));
+        }
       }
     }
     for (let r = 0; r < rows - 1; r++) {
       for (let c = 0; c < cols; c++) {
-        if (vBorders[r][c] === 1) activeConfirmedKeys.add(WebDominoesGenerator.getDominoKey(grid[r][c], grid[r + 1][c]));
+        if (vBorders[r]?.[c] === 1) {
+          activeConfirmedKeys.add(WebDominoesGenerator.getDominoKey(grid[r][c], grid[r + 1][c]));
+        }
       }
     }
 
@@ -233,12 +240,12 @@ export class WebDominoesGenerator {
       const candidates: [number, number, number, number][] = [];
       for (let r = 0; r < rows; r++) {
         for (let c = 0; c < cols; c++) {
-          if (c < cols - 1 && hBorders[r][c] === 0) {
+          if (c < cols - 1 && hBorders[r]?.[c] === 0) {
             if (WebDominoesGenerator.getDominoKey(grid[r][c], grid[r][c + 1]) === pKey) {
               candidates.push([r, c, r, c + 1]);
             }
           }
-          if (r < rows - 1 && vBorders[r][c] === 0) {
+          if (r < rows - 1 && vBorders[r]?.[c] === 0) {
             if (WebDominoesGenerator.getDominoKey(grid[r][c], grid[r + 1][c]) === pKey) {
               candidates.push([r, c, r + 1, c]);
             }
@@ -266,41 +273,10 @@ export class WebDominoesGenerator {
       }
     }
 
-    // 定式 3: 2x2 四格交錯排除 (Checkerboard 2x2 Exclusion)
-    for (let r = 0; r < rows - 1; r++) {
-      for (let c = 0; c < cols - 1; c++) {
-        // 若 (r,c)-(r,c+1) 與 (r+1,c)-(r+1,c+1) 構成相同的骨牌，但該骨牌全盤只有一張配額
-        const topKey = WebDominoesGenerator.getDominoKey(grid[r][c], grid[r][c + 1]);
-        const bottomKey = WebDominoesGenerator.getDominoKey(grid[r + 1][c], grid[r + 1][c + 1]);
-
-        if (topKey === bottomKey && hBorders[r][c] === 0 && hBorders[r + 1][c] === 0) {
-          // 兩組水平若同時成牌會違規重複，因此水平不可同時成立，若一側垂直成牌，另一側強制隔離
-          if (vBorders[r][c] === 1 && hBorders[r + 1][c] === 0) {
-            return {
-              step: 1,
-              r1: r + 1,
-              c1: c,
-              r2: r + 1,
-              c2: c + 1,
-              forcedType: 2,
-              technique: 'checkerboard_2x2_exclusion',
-              evidenceCells: [[r, c], [r + 1, c], [r, c + 1], [r + 1, c + 1]],
-              rationale: `2x2 區域內若 [${r + 2},${c + 1}] 水平成牌將引發骨牌 [${bottomKey}] 配額重複，強制劃上隔離牆。`,
-              humanReadable: {
-                zh: `2x2 交錯排除：左側已縱向成牌，下方若水平成牌會引發骨牌重複，[${r + 2},${c + 1}] 與 [${r + 2},${c + 2}] 間必為隔離牆。`,
-                en: `2x2 Checkerboard exclusion: pairing horizontally would cause domino duplication. Forced barrier placed.`,
-              },
-            };
-          }
-        }
-      }
-    }
-
-    // 定式 4: 骨牌配額已滿邊界封閉 (Exhausted Pair Barrier)
+    // 定式 3: 骨牌配額已滿邊界封閉
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
-        // 檢查未鎖定的水平相鄰格
-        if (c < cols - 1 && hBorders[r][c] === 0) {
+        if (c < cols - 1 && hBorders[r]?.[c] === 0) {
           const key = WebDominoesGenerator.getDominoKey(grid[r][c], grid[r][c + 1]);
           if (activeConfirmedKeys.has(key)) {
             return {
@@ -320,8 +296,7 @@ export class WebDominoesGenerator {
             };
           }
         }
-        // 檢查未鎖定的垂直相鄰格
-        if (r < rows - 1 && vBorders[r][c] === 0) {
+        if (r < rows - 1 && vBorders[r]?.[c] === 0) {
           const key = WebDominoesGenerator.getDominoKey(grid[r][c], grid[r + 1][c]);
           if (activeConfirmedKeys.has(key)) {
             return {
@@ -362,12 +337,13 @@ export class WebDominoesGenerator {
     const cols = totalCells / rows;
 
     let attempts = 0;
-    const maxAttempts = 35;
+    const maxAttempts = 50;
 
     while (attempts < maxAttempts) {
       attempts++;
 
-      const solutionBorders = this._generateRandomTiling(rows, cols, rnd);
+      // 帶回溯的完美多米諾鋪砌生成器
+      const solutionBorders = this._generateBacktrackingTiling(rows, cols, rnd);
       if (!solutionBorders) continue;
 
       const shuffledPieces = [...dominoSet];
@@ -438,7 +414,10 @@ export class WebDominoesGenerator {
     return this._generateFallback(tier, maxPip, actualSeed, baseIrt);
   }
 
-  private static _generateRandomTiling(
+  /**
+   * 深度優先回溯多米諾骨牌鋪砌（100% 杜絕死角孤島產生）
+   */
+  private static _generateBacktrackingTiling(
     rows: number,
     cols: number,
     rnd: () => number
@@ -447,28 +426,61 @@ export class WebDominoesGenerator {
     const vBorders = Array.from({ length: rows - 1 }, () => Array(cols).fill(false));
     const covered = Array.from({ length: rows }, () => Array(cols).fill(false));
 
-    for (let r = 0; r < rows; r++) {
-      for (let c = 0; c < cols; c++) {
-        if (covered[r][c]) continue;
+    let solved = false;
 
-        const options: ('H' | 'V')[] = [];
-        if (c < cols - 1 && !covered[r][c + 1]) options.push('H');
-        if (r < rows - 1 && !covered[r + 1][c]) options.push('V');
+    const solve = (r: number, c: number): boolean => {
+      while (r < rows && covered[r][c]) {
+        c++;
+        if (c === cols) {
+          c = 0;
+          r++;
+        }
+      }
 
-        if (options.length === 0) return null;
+      if (r >= rows) {
+        solved = true;
+        return true;
+      }
 
-        const chosen = options[Math.floor(rnd() * options.length)];
+      const options: ('H' | 'V')[] = [];
+      if (c < cols - 1 && !covered[r][c + 1]) options.push('H');
+      if (r < rows - 1 && !covered[r + 1][c]) options.push('V');
+
+      // 隨機打亂候選以保持題目多樣性
+      if (options.length === 2 && rnd() < 0.5) {
+        options.reverse();
+      }
+
+      for (const opt of options) {
         covered[r][c] = true;
-        if (chosen === 'H') {
+        if (opt === 'H') {
           covered[r][c + 1] = true;
           hBorders[r][c] = true;
         } else {
           covered[r + 1][c] = true;
           vBorders[r][c] = true;
         }
+
+        const nextC = c === cols - 1 ? 0 : c + 1;
+        const nextR = c === cols - 1 ? r + 1 : r;
+
+        if (solve(nextR, nextC)) return true;
+
+        covered[r][c] = false;
+        if (opt === 'H') {
+          covered[r][c + 1] = false;
+          hBorders[r][c] = false;
+        } else {
+          covered[r + 1][c] = false;
+          vBorders[r][c] = false;
+        }
       }
-    }
-    return { hBorders, vBorders };
+
+      return false;
+    };
+
+    solve(0, 0);
+    return solved ? { hBorders, vBorders } : null;
   }
 
   private static _generateFallback(
