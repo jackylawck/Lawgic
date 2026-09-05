@@ -1,5 +1,10 @@
 use wasm_bindgen::prelude::*;
 
+// 🌟 啟用極限羽量級記憶體分配器（配合 Cargo.toml wee_alloc feature）
+#[cfg(feature = "wee_alloc")]
+#[global_allocator]
+static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
+
 type BitMask = u16;
 pub const ALL_CANDIDATES: BitMask = 0x03FE; // Bits 1..=9
 
@@ -38,7 +43,8 @@ pub struct SudokuEngine {
     initial_clues: [u8; 81],
     user_inputs: [u8; 81],
     cells: [BitMask; 81],
-    // 🌟 快照棧：支援 O(1) 毫秒級無損撤銷與試錯回滾
+    // 🌟 加註 allow(dead_code) 消除編譯器警告
+    #[allow(dead_code)]
     history_snapshots: Vec<[BitMask; 81]>,
 }
 
