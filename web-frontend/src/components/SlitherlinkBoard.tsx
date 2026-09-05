@@ -37,20 +37,50 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
     getBenchmarkMetrics,
     profile,
     getCompositeCognitiveIndex,
-    exportLongitudinalDataset,
   } = useLearnerProfile();
 
   const { lang } = useLanguage();
   const isEn = lang === 'en';
 
+  // 集中雙語字典，確保英文字串 100% 覆蓋
+  const t = useMemo(() => ({
+    speed: isEn ? 'Speed' : '競速',
+    moves: isEn ? 'Moves' : '步數',
+    conflicts: isEn ? 'Conflicts' : '衝突累加',
+    noGuess: isEn ? 'No-Guess' : '無猜測',
+    locked: isEn ? 'Locked' : '鎖定',
+    strict: isEn ? 'Strict' : '嚴格',
+    off: 'OFF',
+    hint: isEn ? 'Hint' : '提示',
+    exam: isEn ? 'Exam' : '測驗',
+    getHint: isEn ? 'Get' : '因果',
+    duelCopied: isEn ? '🔗 Direct duel link copied!' : '🔗 一鍵對決連結已複製！發送至群組即可同題對決！',
+    aiReplay: isEn ? 'AI Replay' : '解法覆盤',
+    restoreMine: isEn ? 'Restore Mine' : '還原我的盤面',
+    duelLink: isEn ? 'Duel Link' : '對決連結',
+    submit: isEn ? 'Submit' : '賽事提交',
+    undo: isEn ? 'Undo' : '撤銷',
+    redo: isEn ? 'Redo' : '重做',
+    instruction: isEn ? 'Click edge: Empty ➔ Line ➔ Cross' : '點擊邊緣：無 ➔ 實線 ➔ 標叉',
+    solvedTitle: isEn ? 'SLITHERLINK RESOLVED' : '迴路封閉・完美閉合',
+    timeElapsed: isEn ? 'Time' : '耗時',
+    opsCount: isEn ? 'Operations' : '操作步數',
+    conflictPenalties: isEn ? 'Penalty' : '衝突懲罰',
+    timesUnit: isEn ? '' : '次',
+    level: isEn ? 'LEVEL' : '等級',
+    mustConnect: isEn ? 'Must CONNECT' : '必然畫線',
+    mustCross: isEn ? 'Must CROSS' : '必然打叉',
+    blockedMsg: (reason: string) => isEn ? `[No-Guess Blocked] Prioritize: ${reason}` : `【無猜測攔截】依據定式應優先連線：${reason}`,
+    focusEdge: (r: number, c: number) => isEn ? `Focus on edges around [${r}, ${c}].` : `請關注 [${r}, ${c}] 附近的邊緣。`,
+    demonstrating: isEn ? 'Demonstrating AI deduction steps...' : '正在展示 AI 演繹步進...'
+  }), [isEn]);
+
   const spec: SlitherlinkSpec = (actualPuzzle as any)?.puzzle;
   const rows = spec?.rows || 6;
   const cols = spec?.cols || 6;
   const grid = useMemo(() => (spec as any)?.clues || (spec as any)?.grid || [], [spec]);
-
   const currentTier = (actualPuzzle?.tier as TierKey) || 'kids';
 
-  // 1. 邊緣狀態：0: 未決, 1: 實線 (連線), 2: 標叉 (不可連)
   const [hEdges, setHEdges] = useState<EdgeState[][]>(() =>
     Array.from({ length: rows + 1 }, () => Array(cols).fill(0))
   );
@@ -61,14 +91,12 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
   const [history, setHistory] = useState<EdgeDelta[]>([]);
   const [redoStack, setRedoStack] = useState<EdgeDelta[]>([]);
 
-  // 2. 輔助與提示狀態
   const [noGuessMode, setNoGuessMode] = useState<boolean>(false);
   const [noGuessWarning, setNoGuessWarning] = useState<string | null>(null);
   const [activeHint, setActiveHint] = useState<SlitherlinkHintStep | null>(null);
   const [hintLadderLevel, setHintLadderLevel] = useState<1 | 2 | 3>(1);
   const [animatedEvidenceSet, setAnimatedEvidenceSet] = useState<Set<string>>(new Set());
 
-  // 3. 覆盤播放器狀態
   const [isReplaying, setIsReplaying] = useState<boolean>(false);
   const [replaySpeed, setReplaySpeed] = useState<1 | 2 | 4>(1);
   const [replayStepIndex, setReplayStepIndex] = useState<number>(0);
@@ -123,7 +151,6 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
     return () => cancelAnimationFrame(frameId);
   }, [isCompleted, isReplaying]);
 
-  // 4. 即時度數違規分析
   const analysis = useMemo(() => {
     const clueViolations = new Set<string>();
     const vertexViolations = new Set<string>();
@@ -180,8 +207,8 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
           const isTarget = step.type === type && step.r === r && step.c === c;
           if (!isTarget) {
             if (navigator.vibrate) navigator.vibrate([25, 35, 25]);
-            const reason = isEn ? step.humanReadable.en : step.humanReadable.zh;
-            setNoGuessWarning(isEn ? `[No-Guess Blocked] Deduce: ${reason}` : `【無猜測攔截】依據定式應優先連線：${reason}`);
+            const reason = isEn ? step.humanReadable?.en || step.rationale : step.humanReadable?.zh || step.rationale;
+            setNoGuessWarning(t.blockedMsg(reason));
             setTimeout(() => setNoGuessWarning(null), 3000);
             return;
           }
@@ -197,13 +224,15 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
 
       if (type === 'H') {
         setHEdges((prev) => {
-          const next = prev.map((row) => [...row]);
+          const next = [...prev];
+          next[r] = [...next[r]];
           next[r][c] = targetState;
           return next;
         });
       } else {
         setVEdges((prev) => {
-          const next = prev.map((row) => [...row]);
+          const next = [...prev];
+          next[r] = [...next[r]];
           next[r][c] = targetState;
           return next;
         });
@@ -214,7 +243,7 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
         setAnimatedEvidenceSet(new Set());
       }
     },
-    [isCompleted, isReplaying, hEdges, vEdges, noGuessMode, rows, cols, grid, activeHint, isEn]
+    [isCompleted, isReplaying, hEdges, vEdges, noGuessMode, rows, cols, grid, activeHint, isEn, t]
   );
 
   const cycleEdge = useCallback(
@@ -233,13 +262,15 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
     const last = history[history.length - 1];
     if (last.type === 'H') {
       setHEdges((prev) => {
-        const next = prev.map((row) => [...row]);
+        const next = [...prev];
+        next[last.r] = [...next[last.r]];
         next[last.r][last.c] = last.from;
         return next;
       });
     } else {
       setVEdges((prev) => {
-        const next = prev.map((row) => [...row]);
+        const next = [...prev];
+        next[last.r] = [...next[last.r]];
         next[last.r][last.c] = last.from;
         return next;
       });
@@ -255,13 +286,15 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
     const nextDelta = redoStack[redoStack.length - 1];
     if (nextDelta.type === 'H') {
       setHEdges((prev) => {
-        const next = prev.map((row) => [...row]);
+        const next = [...prev];
+        next[nextDelta.r] = [...next[nextDelta.r]];
         next[nextDelta.r][nextDelta.c] = nextDelta.to;
         return next;
       });
     } else {
       setVEdges((prev) => {
-        const next = prev.map((row) => [...row]);
+        const next = [...prev];
+        next[nextDelta.r] = [...next[nextDelta.r]];
         next[nextDelta.r][nextDelta.c] = nextDelta.to;
         return next;
       });
@@ -286,7 +319,6 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isCompleted, isReplaying, handleUndo, handleRedo]);
 
-  // 5. 勝利條件檢驗
   useEffect(() => {
     if (isCompleted || isReplaying || analysis.totalConflicts > 0) return;
 
@@ -354,7 +386,6 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
     }
   }, [hEdges, vEdges, grid, analysis.totalConflicts, isCompleted, isReplaying, actualPuzzle, rows, cols, currentTier, recordAttempt, profile.personalBest.fastestTime, activeHint, tournamentMode]);
 
-  // 因果提示請求
   const handleRequestHint = () => {
     if (isCompleted || tournamentMode || isReplaying) return;
     if (navigator.vibrate) navigator.vibrate(12);
@@ -373,7 +404,6 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
     }
   };
 
-  // 6. 覆盤播放器
   const handleStartReplay = () => {
     setUserStateBackup({
       h: hEdges.map((row) => [...row]),
@@ -421,13 +451,15 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
       const step = replayStepsList[replayStepIndex];
       if (step.type === 'H') {
         setHEdges((prev) => {
-          const next = prev.map((row) => [...row]);
+          const next = [...prev];
+          next[step.r] = [...next[step.r]];
           next[step.r][step.c] = step.forcedState;
           return next;
         });
       } else {
         setVEdges((prev) => {
-          const next = prev.map((row) => [...row]);
+          const next = [...prev];
+          next[step.r] = [...next[step.r]];
           next[step.r][step.c] = step.forcedState;
           return next;
         });
@@ -464,19 +496,20 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
 
   return (
     <div className="flex flex-col items-center justify-center p-1 select-none font-mono">
+      {/* 頂部數據面板 */}
       <div className="w-full grid grid-cols-5 gap-1 px-0.5 mb-1.5 text-[8px] sm:text-[9px]">
         <div className="bg-slate-950 border border-slate-800 p-1 rounded text-center">
-          <div className="text-slate-500 text-[6.5px]">{isEn ? '⏱️ Speed' : '⏱️ 競速'}</div>
+          <div className="text-slate-500 text-[6.5px]">⏱️ {t.speed}</div>
           <div className="text-slate-200 font-bold">{(elapsedMs / 1000).toFixed(1)}s</div>
         </div>
 
         <div className="bg-slate-950 border border-slate-800 p-1 rounded text-center">
-          <div className="text-slate-500 text-[6.5px]">{isEn ? '♟️ Moves' : '♟️ 步數'}</div>
+          <div className="text-slate-500 text-[6.5px]">♟️ {t.moves}</div>
           <div className="text-cyan-300 font-bold">{movesCountRef.current}</div>
         </div>
 
         <div className="bg-slate-950 border border-slate-800 p-1 rounded text-center">
-          <div className="text-slate-500 text-[6.5px]">{isEn ? '⚠️ Conflicts' : '⚠️ 衝突累加'}</div>
+          <div className="text-slate-500 text-[6.5px]">⚠️ {t.conflicts}</div>
           <div className={`font-bold ${conflictDisplay > 0 ? 'text-rose-400' : 'text-slate-300'}`}>
             {conflictDisplay}
           </div>
@@ -493,8 +526,8 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
               : 'bg-slate-950 border-slate-800 text-slate-500 hover:text-slate-300'
           }`}
         >
-          <div className="text-[6.5px]">🛡️ {isEn ? 'No-Guess' : '無猜測'}</div>
-          <div className="text-[7.5px]">{tournamentMode ? (isEn ? 'Locked' : '鎖定') : noGuessMode ? 'Strict' : 'OFF'}</div>
+          <div className="text-[6.5px]">🛡️ {t.noGuess}</div>
+          <div className="text-[7.5px]">{tournamentMode ? t.locked : noGuessMode ? t.strict : t.off}</div>
         </button>
 
         <button
@@ -508,16 +541,16 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
               : 'bg-indigo-950/80 border-indigo-500/60 text-indigo-300 hover:bg-indigo-900'
           }`}
         >
-          <div className="text-[6.5px]">💡 {isEn ? 'Hint' : '提示'}</div>
+          <div className="text-[6.5px]">💡 {t.hint}</div>
           <div className="text-[7.5px] truncate">
-            {tournamentMode ? (isEn ? 'Exam' : '測驗') : activeHint ? `Lv.${hintLadderLevel}` : (isEn ? 'Get' : '因果')}
+            {tournamentMode ? t.exam : activeHint ? `Lv.${hintLadderLevel}` : t.getHint}
           </div>
         </button>
       </div>
 
       {copyToast && (
         <div className="w-[min(88vw,42vh)] mb-1 p-1 bg-emerald-950 border border-emerald-500 text-emerald-300 text-[7.5px] rounded animate-fade-in text-center font-bold">
-          {isEn ? '🔗 Direct duel link copied! Send to Discord!' : '🔗 一鍵對決連結已複製！發送至群組，好友點擊即可載入同題對決！'}
+          {t.duelCopied}
         </div>
       )}
 
@@ -542,12 +575,12 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
                 onClick={handleRestoreUserBoard}
                 className="ml-1 px-1.5 py-0.2 bg-rose-950 hover:bg-rose-900 border border-rose-500/60 text-rose-300 rounded text-[6.5px] font-bold"
               >
-                {isEn ? 'Restore Mine' : '還原我的盤面'}
+                {t.restoreMine}
               </button>
             </div>
           </div>
           <div className="truncate text-cyan-300">
-            {replayStepsList[replayStepIndex - 1]?.rationale || 'Demonstrating AI deduction steps...'}
+            {replayStepsList[replayStepIndex - 1]?.rationale || t.demonstrating}
           </div>
         </div>
       )}
@@ -561,20 +594,20 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
       {activeHint && !isReplaying && (
         <div className="w-[min(88vw,42vh)] mb-1.5 p-1.5 bg-amber-950/80 border border-amber-500/70 rounded-lg text-amber-200 text-[8px] animate-fade-in text-left shadow-lg">
           <div className="font-bold flex items-center justify-between text-[7px] text-amber-400 border-b border-amber-900/60 pb-0.5 mb-1">
-            <span>[LEVEL {hintLadderLevel}/3]</span>
+            <span>[{t.level} {hintLadderLevel}/3]</span>
             <span className="uppercase">{activeHint.technique.replace(/_/g, ' ')}</span>
           </div>
           {hintLadderLevel === 1 && (
-            <div>{isEn ? `Forced line deduction around [${activeHint.r + 1},${activeHint.c + 1}].` : `請關注 [${activeHint.r + 1},${activeHint.c + 1}] 附近的邊緣。`}</div>
+            <div>{t.focusEdge(activeHint.r + 1, activeHint.c + 1)}</div>
           )}
           {hintLadderLevel === 2 && (
-            <div>{isEn ? activeHint.humanReadable.en : activeHint.humanReadable.zh}</div>
+            <div>{isEn ? activeHint.humanReadable?.en || activeHint.rationale : activeHint.humanReadable?.zh || activeHint.rationale}</div>
           )}
           {hintLadderLevel === 3 && (
             <div className="font-bold text-amber-300">
               {activeHint.rationale}
               <span className="ml-1 text-cyan-300 underline">
-                {activeHint.forcedState === 1 ? (isEn ? 'Must CONNECT' : '必然畫線') : (isEn ? 'Must CROSS' : '必然打叉')}
+                {activeHint.forcedState === 1 ? t.mustConnect : t.mustCross}
               </span>
             </div>
           )}
@@ -590,7 +623,6 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
           ☯ 180° SYM
         </div>
 
-        {/* 網格數字與高亮證據格 */}
         <div
           className="relative w-full h-full"
           style={{
@@ -633,7 +665,6 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
           )}
         </div>
 
-        {/* 頂點點位 */}
         <div className="absolute inset-3 pointer-events-none z-10">
           {Array.from({ length: rows + 1 }).map((_, r) =>
             Array.from({ length: cols + 1 }).map((__, c) => (
@@ -649,7 +680,6 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
           )}
         </div>
 
-        {/* 水平邊緣交互 */}
         <div className="absolute inset-3 z-20">
           {Array.from({ length: rows + 1 }).map((_, r) =>
             Array.from({ length: cols }).map((__, c) => {
@@ -677,7 +707,6 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
             })
           )}
 
-          {/* 垂直邊緣交互 */}
           {Array.from({ length: rows }).map((_, r) =>
             Array.from({ length: cols + 1 }).map((__, c) => {
               const state = vEdges[r][c];
@@ -706,7 +735,7 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
         </div>
       </div>
 
-      {/* 底部快捷欄 */}
+      {/* 底部快捷操作 */}
       <div className="w-full max-w-[340px] flex items-center justify-between px-1 mt-1.5 text-[7.5px] text-slate-400">
         <div className="flex gap-1">
           <button
@@ -714,14 +743,14 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
             disabled={history.length === 0 || isCompleted || isReplaying}
             className="px-2 py-0.5 bg-slate-900 border border-slate-800 rounded hover:bg-slate-800 disabled:opacity-40"
           >
-            ↩ {isEn ? 'Undo' : '撤銷'}
+            ↩ {t.undo}
           </button>
           <button
             onClick={handleRedo}
             disabled={redoStack.length === 0 || isCompleted || isReplaying}
             className="px-2 py-0.5 bg-slate-900 border border-slate-800 rounded hover:bg-slate-800 disabled:opacity-40"
           >
-            ↪ {isEn ? 'Redo' : '重做'}
+            ↪ {t.redo}
           </button>
           {!tournamentMode && (
             <button
@@ -729,12 +758,12 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
               className="px-2 py-0.5 bg-slate-900 border border-slate-800 rounded hover:bg-slate-800 text-amber-300"
               title="Copy Duel URL"
             >
-              🔗 {isEn ? 'Duel Link' : '對決連結'}
+              🔗 {t.duelLink}
             </button>
           )}
         </div>
         <div className="text-slate-500">
-          <span>點擊邊緣：無 ➔ 實線 ➔ 標叉</span>
+          <span>{t.instruction}</span>
         </div>
       </div>
 
@@ -743,8 +772,8 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
         <div className="mt-2 p-2.5 bg-slate-950/95 border border-indigo-500/60 rounded-xl text-center w-[min(88vw,42vh)] shadow-2xl animate-fade-in font-mono">
           <div className="flex items-center justify-between border-b border-slate-800 pb-1 mb-1.5">
             <div className="text-left">
-              <div className="text-[7.5px] text-slate-500 tracking-wider">SLITHERLINK RESOLVED</div>
-              <div className="text-xs text-indigo-300 font-bold">🌀 迴路封閉・完美閉合</div>
+              <div className="text-[7.5px] text-slate-500 tracking-wider">{t.solvedTitle}</div>
+              <div className="text-xs text-indigo-300 font-bold">🌀 {isEn ? 'Topology Verified' : '拓撲閉合・完全驗證'}</div>
             </div>
             <div className="px-2 py-0.5 border border-cyan-500 bg-cyan-950/80 rounded text-[9px] font-bold text-cyan-300">
               Gf: IQ {cci.standardIQ} (Top {Number((100 - cci.percentileRank).toFixed(1))}%)
@@ -753,16 +782,16 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
 
           <div className="grid grid-cols-3 gap-1 text-[7.5px] text-slate-400 mb-1.5">
             <div className="bg-slate-900/80 p-1 rounded">
-              <div>耗時</div>
+              <div>{t.timeElapsed}</div>
               <div className="text-slate-200 font-bold text-[10px]">{(elapsedMs / 1000).toFixed(1)}s</div>
             </div>
             <div className="bg-slate-900/80 p-1 rounded">
-              <div>操作步數</div>
+              <div>{t.opsCount}</div>
               <div className="text-cyan-300 font-bold text-[10px]">{movesCountRef.current}</div>
             </div>
             <div className="bg-slate-900/80 p-1 rounded">
-              <div>衝突懲罰</div>
-              <div className="text-amber-300 font-bold text-[10px]">{conflictCountRef.current} 次</div>
+              <div>{t.conflictPenalties}</div>
+              <div className="text-amber-300 font-bold text-[10px]">{conflictCountRef.current} {t.timesUnit}</div>
             </div>
           </div>
 
@@ -792,7 +821,7 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
               className="flex-1 py-1 bg-indigo-950 hover:bg-indigo-900 border border-indigo-500/60 text-indigo-300 text-[7.5px] font-bold rounded transition shadow flex items-center justify-center gap-0.5 active:scale-95"
             >
               <span>🔁</span>
-              <span>{isEn ? 'AI Replay' : '解法覆盤'}</span>
+              <span>{t.aiReplay}</span>
             </button>
 
             {userStateBackup && (
@@ -801,7 +830,7 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
                 className="flex-1 py-1 bg-slate-900 hover:bg-slate-800 border border-cyan-500/60 text-cyan-300 text-[7.5px] font-bold rounded transition shadow flex items-center justify-center gap-0.5 active:scale-95"
               >
                 <span>↩️</span>
-                <span>{isEn ? 'My Board' : '我的盤面'}</span>
+                <span>{t.restoreMine}</span>
               </button>
             )}
 
@@ -810,7 +839,7 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
               className="flex-1 py-1 bg-slate-900 hover:bg-slate-800 border border-amber-500/60 text-amber-300 text-[7.5px] font-bold rounded transition shadow flex items-center justify-center gap-0.5 active:scale-95"
             >
               <span>🔗</span>
-              <span>{isEn ? 'Duel Link' : '對決連結'}</span>
+              <span>{t.duelLink}</span>
             </button>
 
             <button
@@ -818,7 +847,7 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
               className="flex-1 py-1 bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 text-slate-950 text-[7.5px] font-black rounded shadow transition active:scale-95 flex items-center justify-center gap-0.5"
             >
               <span>📤</span>
-              <span>{isEn ? 'Submit' : '賽事提交'}</span>
+              <span>{t.submit}</span>
             </button>
           </div>
 
