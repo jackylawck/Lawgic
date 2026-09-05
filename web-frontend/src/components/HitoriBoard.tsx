@@ -31,10 +31,8 @@ export const HitoriBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMod
   const solution = spec?.solution || [];
   const cruxCoords = (actualPuzzle?.metrics as any)?.cruxCoordinates || [0, 0];
   const depthProfile = (actualPuzzle?.metrics as any)?.depthProfile || [1, 2, 3, 2, 1];
-  const eqClassCount = (actualPuzzle?.metrics as any)?.equivalenceClassCount || spec?.equivalenceClassCount || 4;
   const maxDecisionDepth = (actualPuzzle?.metrics as any)?.maxDecisionDepth || spec?.maxDecisionDepth || 2;
   const seed = (actualPuzzle?.metrics as any)?.seed || spec?.seed || 12345;
-  const isSymmetric = (actualPuzzle?.metrics as any)?.isSymmetric ?? true;
   const rhythmType = (actualPuzzle?.metrics as any)?.rhythmType || spec?.rhythmType || 'peaked';
 
   const [displayMode, setDisplayMode] = useState<'numeric' | 'symbolic_dots' | 'symbolic_geo'>('numeric');
@@ -65,7 +63,6 @@ export const HitoriBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMod
   const [hintLevel, setHintLevel] = useState<number>(0);
   const [activeHint, setActiveHint] = useState<HitoriHintStep | null>(null);
 
-  // 修正點：允許傳入 number | string | undefined，嚴格防禦非數值類型
   const renderValue = useCallback(
     (val: number | string | undefined): string => {
       if (typeof val !== 'number') return '';
@@ -413,9 +410,9 @@ export const HitoriBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMod
   const cci = useMemo(() => getCompositeCognitiveIndex(), [getCompositeCognitiveIndex, isCompleted]);
 
   const RHYTHM_MAP: Record<string, { icon: string; name: string; desc: string }> = {
-    peaked: { icon: '⛰️', name: isEn ? 'Peaked' : '高峰型', desc: 'Crux 居中破局' },
-    climbing: { icon: '📈', name: isEn ? 'Climbing' : '漸進型', desc: '阻力攀升，尾盤決戰' },
-    wavy: { icon: '🌊', name: isEn ? 'Wavy' : '波浪型', desc: '多重等價類交鋒' },
+    peaked: { icon: '⛰️', name: isEn ? 'Peaked' : '高峰型', desc: isEn ? 'Crux centered breakthrough' : 'Crux 居中破局' },
+    climbing: { icon: '📈', name: isEn ? 'Climbing' : '漸進型', desc: isEn ? 'Progressive resistance' : '阻力攀升，尾盤決戰' },
+    wavy: { icon: '🌊', name: isEn ? 'Wavy' : '波浪型', desc: isEn ? 'Multiple equivalence classes' : '多重等價類交鋒' },
   };
   const curRhythm = RHYTHM_MAP[rhythmType] || RHYTHM_MAP.peaked;
 
@@ -441,22 +438,22 @@ export const HitoriBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMod
                 prev === 'numeric' ? 'symbolic_dots' : prev === 'symbolic_dots' ? 'symbolic_geo' : 'numeric'
               )
             }
-            className="px-2 py-1 bg-slate-900 border border-slate-700 hover:border-cyan-400 rounded text-cyan-300 font-bold"
+            className="px-2 py-1 bg-slate-900 border border-slate-700 hover:border-cyan-400 rounded text-cyan-300 font-bold cursor-pointer"
           >
-            {displayMode === 'numeric' && '🔢 數字'}
-            {displayMode === 'symbolic_dots' && '⚪ 點陣'}
-            {displayMode === 'symbolic_geo' && '▲ 圖形'}
+            {displayMode === 'numeric' && (isEn ? '🔢 Numeric' : '🔢 數字')}
+            {displayMode === 'symbolic_dots' && (isEn ? '⚪ Dots' : '⚪ 點陣')}
+            {displayMode === 'symbolic_geo' && (isEn ? '▲ Shapes' : '▲ 圖形')}
           </button>
 
           <button
             onClick={() => setPureInferenceMode((prev) => !prev)}
-            className={`px-2 py-1 rounded border font-bold transition ${
+            className={`px-2 py-1 rounded border font-bold transition cursor-pointer ${
               pureInferenceMode
                 ? 'bg-purple-950 border-purple-500 text-purple-300 shadow-[0_0_8px_rgba(168,85,247,0.4)]'
                 : 'bg-slate-900 border-slate-700 text-slate-400'
             }`}
           >
-            🧠 純推理: {pureInferenceMode ? 'ON' : 'OFF'}
+            🧠 {isEn ? 'Deduction' : '純推理'}: {pureInferenceMode ? (isEn ? 'ON' : '開啟') : (isEn ? 'OFF' : '關閉')}
           </button>
         </div>
 
@@ -464,15 +461,15 @@ export const HitoriBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMod
           <span className="px-1.5 py-0.5 bg-slate-900 border border-slate-700 rounded text-amber-300 font-bold" title={curRhythm.desc}>
             {curRhythm.icon} {curRhythm.name}
           </span>
-          <span className="px-1.5 py-0.5 bg-slate-900 border border-slate-700 rounded text-cyan-300 font-mono" title="預估推導步數">
-            📏 ~{estSteps} 步
+          <span className="px-1.5 py-0.5 bg-slate-900 border border-slate-700 rounded text-cyan-300 font-mono" title={isEn ? 'Estimated deduction steps' : '預估推導步數'}>
+            📏 ~{estSteps} {isEn ? 'steps' : '步'}
           </span>
           <button
             onClick={handleToggleFavorite}
-            className={`px-1.5 py-0.5 rounded border transition font-bold ${
+            className={`px-1.5 py-0.5 rounded border transition font-bold cursor-pointer ${
               isFav ? 'bg-amber-950 border-amber-500 text-amber-300' : 'bg-slate-900 border-slate-700 text-slate-500 hover:text-slate-300'
             }`}
-            title={isFav ? '已在傳奇庫' : '收藏到傳奇庫'}
+            title={isFav ? (isEn ? 'In Vault' : '已在傳奇庫') : (isEn ? 'Save to Vault' : '收藏到傳奇庫')}
           >
             {isFav ? '★' : '☆'}
           </button>
@@ -482,21 +479,25 @@ export const HitoriBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMod
       {/* 狀態進度看板 */}
       <div className="w-full grid grid-cols-3 gap-1 mb-2 text-[8px]">
         <div className="bg-slate-950 border border-slate-800 p-1 rounded text-center">
-          <div className="text-slate-500 text-[6.5px]">{tournamentMode ? '倒數' : '耗時'}</div>
+          <div className="text-slate-500 text-[6.5px]">{tournamentMode ? (isEn ? 'Countdown' : '倒數') : (isEn ? 'Time' : '耗時')}</div>
           <div className={`font-bold ${tournamentMode && remainingSec <= 30 ? 'text-rose-400 animate-pulse' : 'text-slate-200'}`}>
             {tournamentMode ? `${remainingSec}s` : `${(accumulatedMs / 1000).toFixed(1)}s`}
           </div>
         </div>
         <div className="bg-slate-950 border border-slate-800 p-1 rounded text-center">
-          <div className="text-slate-500 text-[6.5px]">黑格指標 (配額)</div>
+          <div className="text-slate-500 text-[6.5px]">{isEn ? 'Blacks Quota' : '黑格指標 (配額)'}</div>
           <div className={`font-bold ${currentBlackCount === targetBlackCount ? 'text-emerald-400' : 'text-amber-300'}`}>
             {currentBlackCount} / {targetBlackCount}
           </div>
         </div>
         <div className="bg-slate-950 border border-slate-800 p-1 rounded text-center">
-          <div className="text-slate-500 text-[6.5px]">網絡韌性</div>
+          <div className="text-slate-500 text-[6.5px]">{isEn ? 'Network Status' : '網絡韌性'}</div>
           <div className={`font-bold ${conflicts.size > 0 || isDisconnected ? 'text-rose-400' : 'text-emerald-400'}`}>
-            {conflicts.size > 0 ? '衝突違規' : isDisconnected ? '白格斷流' : '🛡️ 2-Edge'}
+            {conflicts.size > 0
+              ? (isEn ? 'Conflict' : '衝突違規')
+              : isDisconnected
+              ? (isEn ? 'Disconnected' : '白格斷流')
+              : '🛡️ 2-Edge'}
           </div>
         </div>
       </div>
@@ -506,17 +507,23 @@ export const HitoriBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMod
         <div className="w-full mb-2 p-2 bg-slate-950/90 border border-purple-700/60 rounded-xl text-[7.5px] text-slate-300 animate-fade-in shadow-lg">
           <div className="flex justify-between items-center pb-1 mb-1 border-b border-purple-950">
             <span className="font-bold text-purple-400 flex items-center gap-1">
-              <span>🧠 視覺暫存區</span>
-              <span className="text-slate-500 font-normal">焦點格: [{selectedCell[0] + 1}, {selectedCell[1] + 1}] ({renderValue(scratchpadData.selVal)})</span>
+              <span>🧠 {isEn ? 'Working Scratchpad' : '視覺暫存區'}</span>
+              <span className="text-slate-500 font-normal">
+                {isEn ? 'Focus:' : '焦點格:'} [{selectedCell[0] + 1}, {selectedCell[1] + 1}] ({renderValue(scratchpadData.selVal)})
+              </span>
             </span>
-            <span className="text-[6.5px] text-purple-300 bg-purple-950 px-1 py-0.2 rounded border border-purple-800">記憶負荷卸載中</span>
+            <span className="text-[6.5px] text-purple-300 bg-purple-950 px-1 py-0.2 rounded border border-purple-800">
+              {isEn ? 'Memory Offload Active' : '記憶負荷卸載中'}
+            </span>
           </div>
 
           <div className="grid grid-cols-2 gap-1.5">
             <div className="bg-slate-900/60 p-1.5 rounded border border-slate-800">
-              <div className="text-slate-400 font-bold mb-0.5">列 {selectedCell[0] + 1} 衝突狀態:</div>
+              <div className="text-slate-400 font-bold mb-0.5">
+                {isEn ? `Row ${selectedCell[0] + 1} Status:` : `列 ${selectedCell[0] + 1} 衝突狀態:`}
+              </div>
               <div className="flex items-center gap-1 mb-0.5">
-                <span className="text-rose-400 font-semibold">重複:</span>
+                <span className="text-rose-400 font-semibold">{isEn ? 'Dupes:' : '重複:'}</span>
                 {scratchpadData.rowDuplicates.length > 0 ? (
                   scratchpadData.rowDuplicates.map((v) => (
                     <span key={`rd-${v}`} className="px-1 bg-rose-950/80 border border-rose-800 text-rose-300 rounded font-bold">
@@ -524,11 +531,11 @@ export const HitoriBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMod
                     </span>
                   ))
                 ) : (
-                  <span className="text-emerald-400 font-normal">無</span>
+                  <span className="text-emerald-400 font-normal">{isEn ? 'None' : '無'}</span>
                 )}
               </div>
               <div className="flex items-center gap-1">
-                <span className="text-cyan-400 font-semibold">已決白格:</span>
+                <span className="text-cyan-400 font-semibold">{isEn ? 'Whites:' : '已決白格:'}</span>
                 {scratchpadData.rowCommittedWhites.length > 0 ? (
                   scratchpadData.rowCommittedWhites.map((v) => (
                     <span key={`rw-${v}`} className="px-1 bg-cyan-950/80 border border-cyan-800 text-cyan-300 rounded font-bold">
@@ -536,15 +543,17 @@ export const HitoriBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMod
                     </span>
                   ))
                 ) : (
-                  <span className="text-slate-500">無</span>
+                  <span className="text-slate-500">{isEn ? 'None' : '無'}</span>
                 )}
               </div>
             </div>
 
             <div className="bg-slate-900/60 p-1.5 rounded border border-slate-800">
-              <div className="text-slate-400 font-bold mb-0.5">行 {selectedCell[1] + 1} 衝突狀態:</div>
+              <div className="text-slate-400 font-bold mb-0.5">
+                {isEn ? `Col ${selectedCell[1] + 1} Status:` : `行 ${selectedCell[1] + 1} 衝突狀態:`}
+              </div>
               <div className="flex items-center gap-1 mb-0.5">
-                <span className="text-rose-400 font-semibold">重複:</span>
+                <span className="text-rose-400 font-semibold">{isEn ? 'Dupes:' : '重複:'}</span>
                 {scratchpadData.colDuplicates.length > 0 ? (
                   scratchpadData.colDuplicates.map((v) => (
                     <span key={`cd-${v}`} className="px-1 bg-rose-950/80 border border-rose-800 text-rose-300 rounded font-bold">
@@ -552,11 +561,11 @@ export const HitoriBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMod
                     </span>
                   ))
                 ) : (
-                  <span className="text-emerald-400 font-normal">無</span>
+                  <span className="text-emerald-400 font-normal">{isEn ? 'None' : '無'}</span>
                 )}
               </div>
               <div className="flex items-center gap-1">
-                <span className="text-cyan-400 font-semibold">已決白格:</span>
+                <span className="text-cyan-400 font-semibold">{isEn ? 'Whites:' : '已決白格:'}</span>
                 {scratchpadData.colCommittedWhites.length > 0 ? (
                   scratchpadData.colCommittedWhites.map((v) => (
                     <span key={`cw-${v}`} className="px-1 bg-cyan-950/80 border border-cyan-800 text-cyan-300 rounded font-bold">
@@ -564,7 +573,7 @@ export const HitoriBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMod
                     </span>
                   ))
                 ) : (
-                  <span className="text-slate-500">無</span>
+                  <span className="text-slate-500">{isEn ? 'None' : '無'}</span>
                 )}
               </div>
             </div>
@@ -625,24 +634,36 @@ export const HitoriBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMod
 
       {/* 快捷操作指示 */}
       <div className="w-full max-w-[280px] flex items-center justify-between px-1 mt-1.5 text-[7px] text-slate-500 font-mono">
-        <span>WASD: 移動</span>
-        <span>1/J: 塗黑 (■)</span>
-        <span>2/K: 圈白 (•)</span>
-        <span>Space: 清空</span>
+        <span>{isEn ? 'WASD: Move' : 'WASD: 移動'}</span>
+        <span>{isEn ? '1/J: Black (■)' : '1/J: 塗黑 (■)'}</span>
+        <span>{isEn ? '2/K: White (•)' : '2/K: 圈白 (•)'}</span>
+        <span>{isEn ? 'Space: Clear' : 'Space: 清空'}</span>
       </div>
 
       {/* 三階因果提示 */}
       {hintLevel > 0 && activeHint && (
         <div className="mt-2 p-2 rounded-xl text-center w-full max-w-[280px] font-mono border bg-slate-900/90 border-amber-500/60 text-slate-200 text-[8px]">
           <div className="text-[7.5px] font-bold text-amber-300 mb-0.5">
-            🔮 {isEn ? 'NEGATIVE ELIMINATION' : '反向排除・因果推導'}
+            🔮 {isEn ? 'NEGATIVE ELIMINATION INFERENCE' : '反向排除・因果推導'}
           </div>
           <div>
-            {hintLevel === 1 && <span>🔍 審視坐標 [{activeHint.r + 1}, {activeHint.c + 1}] 的連通與排他關係</span>}
-            {hintLevel === 2 && <span className="text-cyan-300 font-bold">⚡ {activeHint.humanReadable.zh}</span>}
+            {hintLevel === 1 && (
+              <span>
+                {isEn
+                  ? `🔍 Inspect connectivity & exclusivity constraints at [${activeHint.r + 1}, ${activeHint.c + 1}]`
+                  : `🔍 審視坐標 [${activeHint.r + 1}, ${activeHint.c + 1}] 的連通與排他關係`}
+              </span>
+            )}
+            {hintLevel === 2 && (
+              <span className="text-cyan-300 font-bold">
+                ⚡ {isEn ? (activeHint.humanReadable.en || activeHint.rationale) : activeHint.humanReadable.zh}
+              </span>
+            )}
             {hintLevel === 3 && (
               <span className="text-rose-400 font-extrabold">
-                🎯 目標格必然{activeHint.forcedState === 1 ? '塗黑 (■)' : '圈白 (•)'}！
+                {isEn
+                  ? `🎯 Target cell must strictly be ${activeHint.forcedState === 1 ? 'BLACK (■)' : 'WHITE (•)'}!`
+                  : `🎯 目標格必然${activeHint.forcedState === 1 ? '塗黑 (■)' : '圈白 (•)'}！`}
               </span>
             )}
           </div>
@@ -653,7 +674,7 @@ export const HitoriBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMod
         <button
           onClick={handleRequestHint}
           disabled={isCompleted || isTimeOut}
-          className="w-full py-1.5 text-xs font-bold rounded-lg border bg-slate-900 border-amber-500/50 text-amber-300 hover:bg-amber-950/40 transition flex items-center justify-center gap-1 shadow disabled:opacity-40"
+          className="w-full py-1.5 text-xs font-bold rounded-lg border bg-slate-900 border-amber-500/50 text-amber-300 hover:bg-amber-950/40 transition flex items-center justify-center gap-1 shadow disabled:opacity-40 cursor-pointer"
         >
           💡 {isEn ? 'Hint Ladder [H]' : '因果提示階梯 [H]'}
         </button>
@@ -662,13 +683,17 @@ export const HitoriBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMod
       {/* 結算面板 */}
       {isCompleted && (
         <div className="mt-2.5 p-3 bg-slate-950 border border-emerald-500/80 rounded-xl text-center w-full max-w-[280px] shadow-2xl font-mono animate-fade-in">
-          <div className="text-emerald-400 font-bold text-xs mb-0.5">HITORI CLEARED!</div>
+          <div className="text-emerald-400 font-bold text-xs mb-0.5 uppercase tracking-wider">
+            {isEn ? 'HITORI CLEARED & SANCTIONED!' : 'HITORI 孤島數壹・完美收斂！'}
+          </div>
 
           {depthProfile.length > 0 && (
             <div className="my-2 p-2 bg-slate-900/80 border border-slate-800 rounded-lg text-left">
               <div className="flex items-center justify-between text-[7px] text-slate-400 mb-1">
-                <span>🧠 推理節奏圖 (Deduction Flow)</span>
-                <span className="text-emerald-400 font-bold">韌性: 2-Edge-Connected</span>
+                <span>🧠 {isEn ? 'Deduction Flow Map' : '推理節奏圖 (Deduction Flow)'}</span>
+                <span className="text-emerald-400 font-bold">
+                  {isEn ? 'Resilience: 2-Edge-Connected' : '韌性: 2-Edge-Connected'}
+                </span>
               </div>
               <svg width="100%" height="22" viewBox="0 0 200 22" className="overflow-visible">
                 <polyline
@@ -690,39 +715,45 @@ export const HitoriBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMod
                 ))}
               </svg>
               <div className="flex justify-between text-[6px] text-slate-500 mt-1 px-1">
-                <span>鋪陳</span>
-                <span>爬坡</span>
-                <span className="text-amber-400 font-bold">⚡Crux</span>
-                <span>收割</span>
-                <span>尾聲</span>
+                <span>{isEn ? 'Intro' : '鋪陳'}</span>
+                <span>{isEn ? 'Ascent' : '爬坡'}</span>
+                <span className="text-amber-400 font-bold">⚡{isEn ? 'Crux' : '關鍵'}</span>
+                <span>{isEn ? 'Harvest' : '收割'}</span>
+                <span>{isEn ? 'Coda' : '尾聲'}</span>
               </div>
             </div>
           )}
 
           <div className="text-[8.5px] text-slate-300 mb-1">
-            耗時: {(accumulatedMs / 1000).toFixed(2)}s | 黑格: {currentBlackCount} (標稱 {targetBlackCount}) | Gf: IQ {cci.standardIQ}
+            {isEn
+              ? `Time: ${(accumulatedMs / 1000).toFixed(2)}s | Blacks: ${currentBlackCount} (Nominal ${targetBlackCount}) | Gf: IQ ${cci.standardIQ}`
+              : `耗時: ${(accumulatedMs / 1000).toFixed(2)}s | 黑格: ${currentBlackCount} (標稱 ${targetBlackCount}) | Gf: IQ ${cci.standardIQ}`}
           </div>
 
           <div className="mt-2 pt-2 border-t border-slate-800 flex items-center justify-between gap-1">
             <button
               onClick={handleToggleFavorite}
-              className={`px-2 py-1 rounded border text-[8px] font-bold transition flex items-center gap-1 ${
+              className={`px-2 py-1 rounded border text-[8px] font-bold transition flex items-center gap-1 cursor-pointer ${
                 isFav
                   ? 'bg-amber-500 text-slate-950 border-amber-300'
                   : 'bg-slate-900 border-slate-700 text-amber-300 hover:bg-slate-800'
               }`}
             >
               <span>{isFav ? '★' : '☆'}</span>
-              <span>{isFav ? '已在傳奇庫' : '收藏高光題'}</span>
+              <span>
+                {isFav
+                  ? isEn ? 'In Vault' : '已在傳奇庫'
+                  : isEn ? 'Star Vault' : '收藏高光題'}
+              </span>
             </button>
 
             <button
               onClick={handleCopyAsciiBadge}
-              className="px-2 py-1 rounded border border-slate-700 hover:border-cyan-400 bg-slate-900 text-cyan-300 text-[8px] font-mono transition flex items-center gap-1"
-              title="複製 Discord/社群純文字戰績卡"
+              className="px-2 py-1 rounded border border-slate-700 hover:border-cyan-400 bg-slate-900 text-cyan-300 text-[8px] font-mono transition flex items-center gap-1 cursor-pointer"
+              title={isEn ? 'Copy Discord / social ASCII badge' : '複製 Discord/社群純文字戰績卡'}
             >
               <span>📜</span>
-              <span>{badgeCopied ? '已複製!' : '榮譽卡'}</span>
+              <span>{badgeCopied ? (isEn ? 'Copied!' : '已複製!') : (isEn ? 'Badge' : '榮譽卡')}</span>
             </button>
           </div>
         </div>
