@@ -4,7 +4,6 @@ import { PuzzleEntity, TierKey } from '../generated';
 export type ExtendedTierKey = TierKey | 'legendary' | 'ultimate';
 export type StrategyPersona = 'Macro-Planner' | 'Wall-Follower' | 'Intuitive-Explorer';
 
-// 32-bit 高品質確定性 PRNG
 function mulberry32(a: number) {
   return function () {
     let t = (a += 0x6d2b79f5);
@@ -16,7 +15,6 @@ function mulberry32(a: number) {
 
 export class WebMazeGenerator {
   static generate(tier: ExtendedTierKey, personaBias?: StrategyPersona, inputSeed?: number): PuzzleEntity {
-    // 嚴格奇數網格尺寸階梯 (確保壁/道精確交替，完整涵蓋 6 大難度)
     const sizeMap: Record<ExtendedTierKey, number> = {
       kids: 11,
       intermediate: 17,
@@ -33,16 +31,17 @@ export class WebMazeGenerator {
     const width = size;
     const height = size;
 
-    // 1. 初始化實心牆面 (1: 牆, 0: 通路)
+    // 1. 初始化實心牆 (1: 牆, 0: 通路)
     const grid: number[][] = Array.from({ length: height }, () => Array(width).fill(1));
 
-    // 2. 深度遞迴隨機回溯樹生成 (DFS Spanning Tree)
+    // 2. 深度遞迴生成樹 (帶慣性動量的 DFS，取代寫死 chosenIdx = 0)
     const rootX = 1;
     const rootY = 1;
     grid[rootY][rootX] = 0;
     const stack: [number, number][] = [[rootX, rootY]];
 
-    const dirs: [number, number][] = [
+    let lastDir: [number, number] | null = null;
+    const baseDirs: [number, number][] = [
       [0, -2],
       [0, 2],
       [-2, 0],
@@ -51,64 +50,70 @@ export class WebMazeGenerator {
 
     while (stack.length > 0) {
       const [cx, cy] = stack[stack.length - 1];
-      const neighbors: [number, number, number, number][] = [];
+      const neighbors: [number, number, number, number, [number, number]][] = [];
 
-      for (const [dx, dy] of dirs) {
+      for (const [dx, dy] of baseDirs) {
         const nx = cx + dx;
         const ny = cy + dy;
         if (nx > 0 && nx < width - 1 && ny > 0 && ny < height - 1 && grid[ny][nx] === 1) {
-          neighbors.push([cx + dx / 2, cy + dy / 2, nx, ny]);
+          neighbors.push([cx + dx / 2, cy + dy / 2, nx, ny, [dx, dy]]);
         }
       }
 
       if (neighbors.length > 0) {
         let chosenIdx = Math.floor(rnd() * neighbors.length);
-        if (personaBias === 'Macro-Planner' && neighbors.length > 1) {
-          chosenIdx = 0; // 偏好長直道生成
+
+        // 策略偏好：Macro-Planner 具備方向前進慣性 (直道優先，而非寫死往北)
+        if (personaBias === 'Macro-Planner' && lastDir && neighbors.length > 1) {
+          const sameDirIdx = neighbors.findIndex((n) => n[4][0] === lastDir![0] && n[4][1] === lastDir![1]);
+          if (sameDirIdx !== -1 && rnd() < 0.72) {
+            chosenIdx = sameDirIdx;
+          }
         }
-        const [mx, my, nx, ny] = neighbors[chosenIdx];
+
+        const [mx, my, nx, ny, d] = neighbors[chosenIdx];
         grid[my][mx] = 0;
         grid[ny][nx] = 0;
         stack.push([nx, ny]);
+        lastDir = d;
       } else {
         stack.pop();
+        lastDir = null;
       }
     }
 
-    // 3. 圖論樹直徑搜尋：雙重 BFS 確保取得整張地圖拓撲距離最長之雙端點
+    // 3. 圖論樹直徑搜尋：雙重 BFS 取得整張地圖拓撲最遠之端點
     const { start, end } = this._findTopologicalDiameterEndpoints(grid, width, height);
 
-    // 4. 受控欺騙性死胡同注入 (嚴格不破壞唯一解拓撲結構)
+    // 4. 受控死胡同注入 (嚴格杜絕迴圈形成)
     const distractorBaseMap: Record<ExtendedTierKey, number> = {
       kids: 0,
-      intermediate: 3,
-      expert: 6,
-      master: 10,
-      legendary: 15,
-      ultimate: 22,
+      intermediate: 2,
+      expert: 5,
+      master: 8,
+      legendary: 12,
+      ultimate: 16,
     };
     let distractorCount = distractorBaseMap[tier] ?? 4;
-    if (personaBias === 'Intuitive-Explorer') distractorCount = Math.round(distractorCount * 1.5);
-    this._injectControlledBlindAlleys(grid, width, height, start, end, distractorCount, rnd);
+    if (personaBias === 'Intuitive-Explorer') distractorCount = Math.round(distractorCount * 1.4);
+    this._injectStrictBlindAlleys(grid, width, height, start, end, distractorCount, rnd);
 
-    // 5. 最優解計算 (BFS 最短唯一路徑)
+    // 5. 最優解計算 (BFS 最短路徑)
     const solution = this._bfs(grid, width, height, start, end);
 
     // 6. 人類工作記憶衰減尋路模擬 (FOV=3, Decay=0.7)
     const limitedHumanPath = this._simulateHumanPathLimited(grid, width, height, start, end, 3, 0.7);
-    const baselineWallFollow = this._simulateHumanPath(grid, width, height, start, end);
+    const baselineWallFollow = this._simulateWallFollower(grid, width, height, start, end);
     const cognitiveGap = Math.max(0, limitedHumanPath.length - solution.length);
 
-    // 7. 心理計量學與拓撲指標精算
+    // 7. 認知與拓撲指標計算
     const turnCount = this._countTurns(solution);
     const realDeadEndDepth = this._computeRealDeadEndDepth(grid, width, height);
     const pathEntropy = this._computePathEntropy(grid, width, height, solution);
     const tortuosity = this._computeTortuosity(solution);
 
-    // 只有終極難度 (Ultimate) 視為強制鎖定戰霧
     const isUltimate = tier === 'ultimate';
 
-    // 認知負荷建模 (CHC Gv 空間與 Gwm 工作記憶)
     const spatialLoad = Math.min(
       1.0,
       0.30 + (tortuosity / 2.5) * 0.40 + (turnCount / Math.max(8, width * 1.2)) * 0.30
@@ -122,7 +127,6 @@ export class WebMazeGenerator {
       0.25 + (realDeadEndDepth / 6.0) * 0.45 + (isUltimate ? 0.30 : 0.18)
     );
 
-    // 嚴謹 IRT Logit 難度 (-2.5 ~ +4.5)
     const normalizedSteps = limitedHumanPath.length / (width * height);
     const rawDifficulty = pathEntropy * 0.35 + realDeadEndDepth * 0.25 + normalizedSteps * 1.1;
     const tierBonus = tier === 'ultimate' ? 1.8 : tier === 'legendary' ? 1.2 : tier === 'master' ? 0.6 : 0;
@@ -138,10 +142,8 @@ export class WebMazeGenerator {
       `Inhibition Filter (${Math.round(realDeadEndDepth)} avg dead-end depth)`,
     ];
 
-    const id = `maze_${tier}_s${actualSeed}`;
-
     return {
-      id,
+      id: `maze_${tier}_s${actualSeed}`,
       category: 'topological',
       engine_type: 'maze',
       tier: (tier === 'ultimate' || tier === 'legendary' ? 'master' : tier) as TierKey,
@@ -243,7 +245,10 @@ export class WebMazeGenerator {
     return furthest;
   }
 
-  private static _injectControlledBlindAlleys(
+  /**
+   * 嚴格保持單一樹拓撲的死胡同注入器 (杜絕 2x2 與環狀連通)
+   */
+  private static _injectStrictBlindAlleys(
     grid: number[][],
     width: number,
     height: number,
@@ -294,13 +299,24 @@ export class WebMazeGenerator {
           grid[wallY][wallX] === 1 &&
           grid[blindY][blindX] === 1
         ) {
-          const hasLeak = dirs.some(([ddx, ddy]) => {
-            const tx = blindX + ddx;
-            const ty = blindY + ddy;
-            return !(tx === wallX && ty === wallY) && grid[ty]?.[tx] === 0;
-          });
+          // 嚴格檢測：blindX, blindY 周邊 8 鄰居除 wallX, wallY 外不得有任何已開通路
+          let hasNearbyLeak = false;
+          for (let ox = -1; ox <= 1; ox++) {
+            for (let oy = -1; oy <= 1; oy++) {
+              const tx = blindX + ox;
+              const ty = blindY + oy;
+              if (tx === wallX && ty === wallY) continue;
+              if (tx >= 0 && tx < width && ty >= 0 && ty < height) {
+                if (grid[ty][tx] === 0) {
+                  hasNearbyLeak = true;
+                  break;
+                }
+              }
+            }
+            if (hasNearbyLeak) break;
+          }
 
-          if (!hasLeak) {
+          if (!hasNearbyLeak) {
             grid[wallY][wallX] = 0;
             grid[blindY][blindX] = 0;
             added++;
@@ -380,7 +396,7 @@ export class WebMazeGenerator {
     let cy = start[1];
     const visited = new Map<string, number>();
     visited.set(`${cx},${cy}`, 0);
-    const dirs = [
+    const dirs: [number, number][] = [
       [0, 1],
       [1, 0],
       [0, -1],
@@ -389,7 +405,7 @@ export class WebMazeGenerator {
     let dirIdx = 0;
     let step = 0;
 
-    while (step < width * height * 4 && !(cx === end[0] && cy === end[1])) {
+    while (step < width * height * 3 && !(cx === end[0] && cy === end[1])) {
       step++;
       let bestDir: [number, number] | null = null;
       let bestScore = -Infinity;
@@ -434,7 +450,10 @@ export class WebMazeGenerator {
     return path;
   }
 
-  private static _simulateHumanPath(
+  /**
+   * 健全的右手摸牆法則模擬器（杜絕原地死循環震盪）
+   */
+  private static _simulateWallFollower(
     grid: number[][],
     width: number,
     height: number,
@@ -444,44 +463,38 @@ export class WebMazeGenerator {
     const path: [number, number][] = [start];
     let cx = start[0];
     let cy = start[1];
-    const visited = new Set<string>([`${cx},${cy}`]);
-    const dirs = [
+    let dir = 0; // 0: 南, 1: 東, 2: 北, 3: 西
+    const dirs: [number, number][] = [
       [0, 1],
       [1, 0],
       [0, -1],
       [-1, 0],
     ];
-    let dirIdx = 0;
 
-    for (let iter = 0; iter < width * height * 4; iter++) {
-      if (cx === end[0] && cy === end[1]) break;
+    let steps = 0;
+    const maxSteps = width * height * 4;
 
-      for (let i = 0; i < 4; i++) {
-        const idx = (dirIdx + i) % 4;
-        const [dx, dy] = dirs[idx];
+    while (!(cx === end[0] && cy === end[1]) && steps++ < maxSteps) {
+      // 右手摸牆優先嘗試右轉方向：(dir + 1) % 4
+      let moved = false;
+      for (let offset = 1; offset >= -2; offset--) {
+        const newDir = (dir + offset + 4) % 4;
+        const [dx, dy] = dirs[newDir];
         const nx = cx + dx;
         const ny = cy + dy;
-        if (nx >= 0 && nx < width && ny >= 0 && ny < height && grid[ny][nx] === 0) {
-          const key = `${nx},${ny}`;
-          if (!visited.has(key) || (nx === end[0] && ny === end[1])) {
-            visited.add(key);
-            path.push([nx, ny]);
-            cx = nx;
-            cy = ny;
-            dirIdx = (idx + 3) % 4;
-            break;
-          }
-        }
-      }
 
-      if (path.length > 2 && cx === path[path.length - 2][0] && cy === path[path.length - 2][1]) {
-        path.pop();
-        if (path.length > 1) {
-          cx = path[path.length - 1][0];
-          cy = path[path.length - 1][1];
+        if (nx >= 0 && nx < width && ny >= 0 && ny < height && grid[ny][nx] === 0) {
+          cx = nx;
+          cy = ny;
+          dir = newDir;
+          path.push([cx, cy]);
+          moved = true;
+          break;
         }
       }
+      if (!moved) break;
     }
+
     return path;
   }
 
@@ -539,12 +552,9 @@ export class WebMazeGenerator {
     if (path.length < 2) return 1.0;
     const start = path[0];
     const end = path[path.length - 1];
-    const euclideanDist = Math.sqrt(
-      Math.pow(end[0] - start[0], 2) + Math.pow(end[1] - start[1], 2)
-    );
+    const euclideanDist = Math.hypot(end[0] - start[0], end[1] - start[1]);
     if (euclideanDist === 0) return 1.0;
-    const actualLength = path.length - 1;
-    return Math.min(3.5, actualLength / euclideanDist);
+    return Math.min(3.5, (path.length - 1) / euclideanDist);
   }
 
   private static _computePathEntropy(
