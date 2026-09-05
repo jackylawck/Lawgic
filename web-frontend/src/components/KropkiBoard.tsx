@@ -13,7 +13,7 @@ interface Props {
 }
 
 export function KropkiBoard(props: Props) {
-  const { puzzle, puzzleData } = props;
+  const { puzzle, puzzleData, tournamentMode = false } = props;
   const actualPuzzle = puzzleData || puzzle;
   const { lang } = useLanguage();
   const isEn = lang === 'en';
@@ -23,7 +23,6 @@ export function KropkiBoard(props: Props) {
   const n = spec?.size || 4;
   const initialGrid = spec?.initialGrid || Array.from({ length: n }, () => Array(n).fill(0));
   const dots: KropkiDot[] = spec?.dots || [];
-  const solvingSteps = spec?.solvingSteps || [];
 
   const [grid, setGrid] = useState<number[][]>(() => initialGrid.map((r) => [...r]));
   const [notes, setNotes] = useState<Set<number>[][]>(() =>
@@ -41,9 +40,7 @@ export function KropkiBoard(props: Props) {
 
   const [hintLevel, setHintLevel] = useState<number>(0);
   const [activeHintStep, setActiveHintStep] = useState<SolvingStep | null>(null);
-  const [boardScale, setBoardScale] = useState<number>(1.0);
 
-  const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const startTimeRef = useRef<number>(Date.now());
   const hasRecordedRef = useRef<boolean>(false);
 
@@ -60,7 +57,7 @@ export function KropkiBoard(props: Props) {
     setActiveHintStep(null);
     startTimeRef.current = Date.now();
     hasRecordedRef.current = false;
-  }, [actualPuzzle?.id]);
+  }, [actualPuzzle?.id, n]);
 
   useEffect(() => {
     if (isCompleted) return;
@@ -141,11 +138,16 @@ export function KropkiBoard(props: Props) {
   }, [isCompleted, selectedCell, initialGrid, grid]);
 
   const handleRequestHint = useCallback(() => {
-    if (isCompleted) return;
+    if (isCompleted || tournamentMode) return;
 
     const deductions = WebKropkiGenerator.getStrictDeductions(grid, dots, n);
     if (deductions.size === 0) {
-      setGuessWarning(isEn ? 'Current grid requires global cross-check!' : '目前需要全局交叉比對！');
+      setGuessWarning(
+        isEn
+          ? 'Requires global Latin Square cross-elimination!'
+          : '目前需要全盤拉丁方陣交叉唯餘比對！'
+      );
+      setTimeout(() => setGuessWarning(null), 3000);
       return;
     }
 
@@ -171,7 +173,7 @@ export function KropkiBoard(props: Props) {
     } else {
       setHintLevel((prev) => Math.min(3, prev + 1));
     }
-  }, [isCompleted, grid, dots, n, isEn, activeHintStep]);
+  }, [isCompleted, tournamentMode, grid, dots, n, isEn, activeHintStep]);
 
   const handleInputNumber = useCallback((num: number) => {
     if (isCompleted || !selectedCell) return;
@@ -188,12 +190,13 @@ export function KropkiBoard(props: Props) {
       const deduction = deductions.get(`${r},${c}`);
 
       if (!deduction || deduction.value !== num) {
+        setConflictsCount((prev) => prev + 1);
         setGuessWarning(
           isEn
-            ? 'Not a forced deduction yet! Check adjacent dots or row/col eliminations first.'
-            : '這步還不是必然定式喔！先觀察相鄰圓點或行列唯餘吧。'
+            ? `[No-Guess Blocked] Cell [${r + 1}, ${c + 1}] is not a forced deduction yet! Inspect consecutive dots.`
+            : `【無猜測攔截】格 [${r + 1}, ${c + 1}] 尚未收斂為唯一確定解！請先觀察圓點倍數/相鄰約束。`
         );
-        setTimeout(() => setGuessWarning(null), 3000);
+        setTimeout(() => setGuessWarning(null), 3200);
         return;
       }
     }
@@ -235,19 +238,21 @@ export function KropkiBoard(props: Props) {
             timeSpentSec: timeSpent,
             conflictsCount,
             technique: 'ConstraintSatisfaction',
-            isPureClear: conflictsCount === 0,
+            isPureClear: conflictsCount === 0 && hintLevel === 0,
           });
 
-          setProofSignature(`VERIFIED_${Date.now()}`);
+          setProofSignature(`VERIFIED_KROPKI_${Date.now()}`);
         }
       }
       return next;
     });
-  }, [isCompleted, selectedCell, initialGrid, isNoteMode, toggleNote, isNoGuessMode, grid, dots, n, isEn, checkCompletion, actualPuzzle, conflictsCount, recordAttempt]);
+  }, [isCompleted, selectedCell, initialGrid, isNoteMode, toggleNote, isNoGuessMode, grid, dots, n, isEn, checkCompletion, actualPuzzle, conflictsCount, recordAttempt, hintLevel]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (isCompleted || !selectedCell) return;
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+
       const [r, c] = selectedCell;
 
       if (e.code === 'ArrowUp' || e.code === 'KeyW') setSelectedCell([Math.max(0, r - 1), c]);
@@ -264,7 +269,7 @@ export function KropkiBoard(props: Props) {
         } else {
           handleInputNumber(parsed);
         }
-      } else if (e.key === 'Backspace' || e.key === 'Delete') {
+      } else if (e.key === 'Backspace' || e.key === 'Delete' || e.key === '0' || e.key === ' ') {
         handleInputNumber(0);
       }
     };
@@ -275,32 +280,109 @@ export function KropkiBoard(props: Props) {
   const cci = useMemo(() => getCompositeCognitiveIndex(), [getCompositeCognitiveIndex, isCompleted]);
 
   return (
-    <div className="flex flex-col items-center justify-center p-2 select-none font-mono">
-      <div className="w-full grid grid-cols-3 gap-1 mb-1.5 text-[9px]">
+    <div className="flex flex-col items-center justify-center p-2 select-none font-mono outline-none w-full max-w-[380px] mx-auto">
+      {/* 頂部數據儀表 */}
+      <div className="w-full grid grid-cols-4 gap-1 mb-2 text-[8px] sm:text-[9px]">
         <div className="bg-slate-950 border border-slate-800 p-1.5 rounded text-center">
-          <div className="text-slate-500 text-[7px]">{isEn ? 'Speed' : '競速'}</div>
+          <div className="text-slate-500 text-[6.5px]">{isEn ? '⏱️ Speed' : '⏱️ 競速'}</div>
           <div className="text-slate-200 font-bold">{(elapsedMs / 1000).toFixed(1)}s</div>
         </div>
         <div className="bg-slate-950 border border-slate-800 p-1.5 rounded text-center">
-          <div className="text-slate-500 text-[7px]">{isEn ? 'Dimension' : '階數'}</div>
+          <div className="text-slate-500 text-[6.5px]">{isEn ? '📐 Order' : '📐 階數'}</div>
           <div className="text-cyan-300 font-bold">{n} &times; {n}</div>
         </div>
         <div className="bg-slate-950 border border-slate-800 p-1.5 rounded text-center">
-          <div className="text-slate-500 text-[7px]">{isEn ? 'Clues' : '提示'}</div>
+          <div className="text-slate-500 text-[6.5px]">{isEn ? '⚫⚪ Dots' : '⚫⚪ 圓點'}</div>
           <div className="text-amber-400 font-bold">{dots.length}</div>
         </div>
+        <button
+          onClick={() => setIsNoGuessMode((prev) => !prev)}
+          className={`p-1 rounded border text-center transition cursor-pointer ${
+            isNoGuessMode
+              ? 'bg-purple-950 border-purple-500 text-purple-300 font-bold shadow-xs'
+              : 'bg-slate-950 border-slate-800 text-slate-500 hover:text-slate-300'
+          }`}
+        >
+          <div className="text-[6.5px]">🛡️ {isEn ? 'No-Guess' : '無猜測'}</div>
+          <div className="text-[7.5px]">{isNoGuessMode ? (isEn ? 'Strict' : '嚴謹') : (isEn ? 'OFF' : '關閉')}</div>
+        </button>
       </div>
 
-      <div
-        className="relative p-2 bg-slate-950 border-2 border-slate-800 rounded-xl shadow-2xl transition-transform duration-150"
-        style={{ transform: `scale(${boardScale})`, transformOrigin: 'top center' }}
-      >
+      {/* 模式切換與提示控制列 */}
+      <div className="w-full flex items-center justify-between gap-1 mb-2 px-1 text-[8px]">
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => setIsNoteMode((prev) => !prev)}
+            className={`px-2 py-1 rounded border font-bold transition cursor-pointer ${
+              isNoteMode
+                ? 'bg-amber-950 border-amber-400 text-amber-300 shadow-[0_0_8px_rgba(251,191,36,0.4)]'
+                : 'bg-slate-900 border-slate-700 text-slate-400 hover:text-slate-200'
+            }`}
+            title={isEn ? 'Key [N]: Toggle candidate notes' : '快捷鍵 [N]：切換候選筆記模式'}
+          >
+            ✏️ {isEn ? 'Notes' : '筆記'}: {isNoteMode ? (isEn ? 'ON' : '開啟') : (isEn ? 'OFF' : '關閉')}
+          </button>
+        </div>
+
+        <button
+          onClick={handleRequestHint}
+          disabled={isCompleted || tournamentMode}
+          className={`px-2.5 py-1 rounded border transition font-bold cursor-pointer ${
+            tournamentMode
+              ? 'bg-slate-900 border-slate-800 text-slate-600 cursor-not-allowed'
+              : activeHintStep
+              ? 'bg-amber-950 border-amber-500 text-amber-300 shadow-xs'
+              : 'bg-indigo-950/80 border-indigo-500/60 text-indigo-300 hover:bg-indigo-900'
+          }`}
+        >
+          💡 {isEn ? 'Hint Ladder' : '提示階梯'} {activeHintStep ? `(Lv.${hintLevel}/3)` : ''}
+        </button>
+      </div>
+
+      {guessWarning && (
+        <div className="w-full mb-2 p-1.5 bg-rose-950 border border-rose-500 text-rose-300 text-[8px] rounded-lg animate-pulse text-center shadow-lg font-bold">
+          {guessWarning}
+        </div>
+      )}
+
+      {/* 三階因果推演提示視窗 */}
+      {hintLevel > 0 && activeHintStep && (
+        <div className="w-full mb-2 p-2 rounded-xl text-center font-mono border bg-slate-900/95 border-amber-500/60 text-slate-200 text-[8px] shadow-lg animate-fade-in">
+          <div className="text-[7.5px] font-bold text-amber-300 mb-0.5">
+            🔮 {isEn ? 'KROPKI DEDUCTIVE CHAIN' : '黑白雙星・定式因果推導'}
+          </div>
+          <div>
+            {hintLevel === 1 && (
+              <span>
+                {isEn
+                  ? `🔍 Focus on Cell [${activeHintStep.row + 1}, ${activeHintStep.col + 1}]. Dot constraints enforce parity here.`
+                  : `🔍 請關注坐標 [${activeHintStep.row + 1}, ${activeHintStep.col + 1}] 的相鄰圓點約束`}
+              </span>
+            )}
+            {hintLevel === 2 && (
+              <span className="text-cyan-300 font-bold">
+                ⚡ {activeHintStep.rationale || (isEn ? 'Ratio or adjacent difference excludes other candidates.' : '倍數或差一約束排除其餘候選數。')}
+              </span>
+            )}
+            {hintLevel === 3 && (
+              <span className="text-rose-400 font-extrabold">
+                {isEn
+                  ? `🎯 Cell [${activeHintStep.row + 1}, ${activeHintStep.col + 1}] must strictly be ${activeHintStep.value}!`
+                  : `🎯 目標格必然填入唯一解 ${activeHintStep.value}！`}
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* 棋盤主體 */}
+      <div className="relative p-2 bg-slate-950 border-2 border-slate-800 rounded-xl shadow-2xl">
         <div
           className="grid gap-1 bg-slate-900/80 p-1 rounded-lg"
           style={{
             gridTemplateColumns: `repeat(${n}, minmax(0, 1fr))`,
-            width: 'min(88vw, 44vh)',
-            height: 'min(88vw, 44vh)',
+            width: 'min(88vw, 42vh)',
+            height: 'min(88vw, 42vh)',
           }}
         >
           {grid.map((row, r) =>
@@ -329,7 +411,7 @@ export function KropkiBoard(props: Props) {
                 <div
                   key={key}
                   onClick={() => setSelectedCell([r, c])}
-                  className={`relative flex items-center justify-center font-black text-sm sm:text-base rounded-md cursor-pointer transition ${cellStyle}`}
+                  className={`relative flex items-center justify-center font-black text-sm sm:text-base rounded-md cursor-pointer transition select-none ${cellStyle}`}
                 >
                   {val !== 0 && <span>{val}</span>}
                   {val === 0 && cellNotes.size > 0 && (
@@ -368,13 +450,14 @@ export function KropkiBoard(props: Props) {
         </div>
       </div>
 
-      <div className="flex flex-col gap-1.5 mt-2.5 w-full max-w-[min(88vw,44vh)]">
+      {/* 虛擬數字觸控鍵盤 */}
+      <div className="flex flex-col gap-1.5 mt-2.5 w-full max-w-[min(88vw,42vh)]">
         <div className="flex gap-1.5">
           {Array.from({ length: n }, (_, i) => i + 1).map((num) => (
             <button
               key={num}
               onClick={() => handleInputNumber(num)}
-              className={`flex-1 py-2 border font-bold text-xs sm:text-sm rounded-lg transition active:scale-95 ${
+              className={`flex-1 py-2 border font-bold text-xs sm:text-sm rounded-lg transition active:scale-95 cursor-pointer ${
                 isNoteMode
                   ? 'bg-amber-950/40 border-amber-600/70 text-amber-300'
                   : 'bg-slate-900 border-slate-700 hover:bg-slate-800 text-cyan-300'
@@ -385,21 +468,46 @@ export function KropkiBoard(props: Props) {
           ))}
           <button
             onClick={() => handleInputNumber(0)}
-            className="px-2.5 py-2 bg-rose-950/60 hover:bg-rose-900 border border-rose-800 text-rose-300 font-bold text-xs rounded-lg transition active:scale-95"
+            className="px-3 py-2 bg-rose-950/60 hover:bg-rose-900 border border-rose-800 text-rose-300 font-bold text-xs rounded-lg transition active:scale-95 cursor-pointer"
+            title={isEn ? 'Clear' : '清空'}
           >
-            DEL
+            ✕
           </button>
         </div>
       </div>
 
+      {/* 快捷操作導引 */}
+      <div className="w-full max-w-[min(88vw,42vh)] flex items-center justify-between px-1 mt-2 text-[7px] text-slate-500 font-mono">
+        <span>{isEn ? 'WASD: Move' : 'WASD: 移動'}</span>
+        <span>{isEn ? '1-N: Input' : '1-N: 填數'}</span>
+        <span>{isEn ? 'N: Note Mode' : 'N: 筆記模式'}</span>
+        <span>{isEn ? 'Space: Clear' : 'Space: 清空'}</span>
+      </div>
+
+      {/* 通關成就結算面板 */}
       {isCompleted && (
-        <div className="mt-3 p-3 bg-slate-950/95 border border-indigo-500/60 rounded-xl text-center w-[min(88vw,44vh)] shadow-2xl font-mono">
-          <div className="text-emerald-400 font-bold text-xs mb-0.5">KROPKI RESOLVED</div>
-          <div className="text-[9px] text-slate-400 mb-2">
-            IQ {cci.standardIQ} | {(elapsedMs / 1000).toFixed(2)}s
+        <div className="mt-3 p-3 bg-slate-950/95 border border-emerald-500/80 rounded-xl text-center w-[min(88vw,42vh)] shadow-2xl font-mono animate-fade-in">
+          <div className="text-emerald-400 font-bold text-xs mb-0.5 uppercase tracking-wider">
+            {isEn ? 'KROPKI POLARITY BALANCED!' : '黑白雙星・完美收斂！'}
           </div>
+          <div className="text-[9px] text-slate-300 mb-2">
+            {isEn
+              ? `Time: ${(elapsedMs / 1000).toFixed(2)}s | Conflicts: ${conflictsCount} | Gf IQ: ${cci.standardIQ}`
+              : `耗時: ${(elapsedMs / 1000).toFixed(2)}s | 衝突: ${conflictsCount} 次 | Gf IQ: ${cci.standardIQ}`}
+          </div>
+
           <div className="bg-slate-900/40 p-2 rounded-lg border border-slate-800 flex flex-col items-center mb-2">
             <CognitiveRadarChart dimensions={profile.cognitiveDimensions} size={130} />
+          </div>
+
+          <div className="flex gap-1">
+            <button
+              onClick={exportLongitudinalDataset}
+              className="flex-1 py-1 bg-slate-900 hover:bg-slate-800 border border-cyan-500/60 text-cyan-300 text-[8px] font-bold rounded transition shadow flex items-center justify-center gap-1 active:scale-95 cursor-pointer"
+            >
+              <span>📊</span>
+              <span>{isEn ? 'Export Dataset' : '匯出數據集'}</span>
+            </button>
           </div>
         </div>
       )}
