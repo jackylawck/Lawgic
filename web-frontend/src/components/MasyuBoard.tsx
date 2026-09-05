@@ -83,6 +83,19 @@ export const MasyuBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode
     return () => clearInterval(timer);
   }, [isCompleted, isTimeOut, tournamentMode, timeLimit]);
 
+  // 格點度數分析（防止 > 2 產生分叉歧路）
+  const nodeDegrees = useMemo(() => {
+    const degMap = new Map<string, number>();
+    edges.forEach((key) => {
+      const [r1, c1, r2, c2] = key.split(',').map(Number);
+      const k1 = `${r1},${c1}`;
+      const k2 = `${r2},${c2}`;
+      degMap.set(k1, (degMap.get(k1) || 0) + 1);
+      degMap.set(k2, (degMap.get(k2) || 0) + 1);
+    });
+    return degMap;
+  }, [edges]);
+
   const toggleEdge = useCallback(
     (r1: number, c1: number, r2: number, c2: number, isRightClick: boolean = false) => {
       if (isCompleted || isTimeOut) return;
@@ -202,31 +215,35 @@ export const MasyuBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode
       <div className="w-full flex items-center justify-between gap-1 mb-2 px-1 text-[7.5px]">
         <div className="flex items-center gap-1.5">
           <div className="bg-slate-950 border border-slate-800 px-2 py-0.5 rounded text-center">
-            <span className="text-slate-500">{tournamentMode ? '倒數' : '耗時'}: </span>
+            <span className="text-slate-500">{tournamentMode ? (isEn ? 'Countdown' : '倒數') : (isEn ? 'Time' : '耗時')}: </span>
             <span className={`font-bold ${tournamentMode && remainingSec <= 30 ? 'text-rose-400 animate-pulse' : 'text-slate-200'}`}>
               {tournamentMode ? `${remainingSec}s` : `${(accumulatedMs / 1000).toFixed(1)}s`}
             </span>
           </div>
           <div className="bg-slate-950 border border-slate-800 px-2 py-0.5 rounded text-cyan-300 font-bold">
-            線段: {edges.size}
+            {isEn ? 'Edges' : '線段'}: {edges.size}
           </div>
         </div>
 
         <div className="flex items-center gap-1 text-slate-400 font-semibold">
           {tournamentMode ? (
-            <span className="text-amber-400 font-bold">🏆 WPF 賽事鎖定</span>
+            <span className="text-amber-400 font-bold">
+              🏆 {isEn ? 'WPF Sanctioned' : 'WPF 賽事鎖定'}
+            </span>
           ) : (
             <button
               onClick={handleToggleFavorite}
-              className={`px-1.5 py-0.5 rounded border ${
+              className={`px-1.5 py-0.5 rounded border transition cursor-pointer ${
                 isFav ? 'border-amber-500 text-amber-300 bg-amber-950' : 'border-slate-700 text-slate-500'
               }`}
             >
-              {isFav ? '★ 傳奇' : '☆ 收藏'}
+              {isFav ? (isEn ? '★ Vault' : '★ 傳奇') : (isEn ? '☆ Star' : '☆ 收藏')}
             </button>
           )}
           <span className="text-slate-600">|</span>
-          <span className="text-purple-300 font-bold">折角密度: {turnDensity}</span>
+          <span className="text-purple-300 font-bold">
+            {isEn ? 'Turn Density' : '折角密度'}: {turnDensity}
+          </span>
           <span className="text-slate-600">|</span>
           <span className="text-cyan-400 font-bold">{size}&times;{size}</span>
         </div>
@@ -242,7 +259,10 @@ export const MasyuBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode
           }}
         >
           {Array.from({ length: size }).map((_, r) =>
-            Array.from({ length: size }).map((_, c) => {
+            Array.from({ length: size }).map((__, c) => {
+              const cellCoordKey = `${r},${c}`;
+              const deg = nodeDegrees.get(cellCoordKey) || 0;
+              const hasBranchError = deg > 2;
               const pearl = grid[r]?.[c] || 'none';
               const rightKey = WebMasyuGenerator.makeEdgeKey(r, c, r, c + 1);
               const bottomKey = WebMasyuGenerator.makeEdgeKey(r, c, r + 1, c);
@@ -266,7 +286,9 @@ export const MasyuBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode
                   }`}
                   style={{ width: cellSize, height: cellSize }}
                 >
-                  <div className="w-1.5 h-1.5 rounded-full bg-slate-700/50" />
+                  <div className={`w-1.5 h-1.5 rounded-full transition-colors ${
+                    hasBranchError ? 'bg-rose-500 scale-150 ring-2 ring-rose-400' : 'bg-slate-700/50'
+                  }`} />
 
                   {pearl === 'white' && (
                     <div
@@ -313,10 +335,10 @@ export const MasyuBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode
 
       {/* 控制與手勢指引 */}
       <div className="w-full max-w-[280px] flex items-center justify-between px-1 mt-2 text-[7px] text-slate-500 font-mono">
-        <span>左鍵/拖曳: 連線</span>
-        <span>右鍵: 標記 ✕</span>
-        <span>⚪ 直穿+轉角</span>
-        <span>⚫ 轉折+直行</span>
+        <span>{isEn ? 'Left-click/Drag: Draw' : '左鍵/拖曳: 連線'}</span>
+        <span>{isEn ? 'Right-click: Cross ✕' : '右鍵: 標記 ✕'}</span>
+        <span>{isEn ? '⚪ Straight+Turn' : '⚪ 直穿+轉角'}</span>
+        <span>{isEn ? '⚫ Turn+Straight' : '⚫ 轉折+直行'}</span>
       </div>
 
       {/* 三階因果提示階梯 */}
@@ -325,7 +347,7 @@ export const MasyuBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode
           <button
             onClick={handleRequestHint}
             disabled={isCompleted || isTimeOut}
-            className="w-full py-1.5 text-xs font-bold rounded-lg border bg-slate-900 border-amber-500/50 text-amber-300 hover:bg-amber-950/40 transition flex items-center justify-center gap-1 shadow disabled:opacity-40"
+            className="w-full py-1.5 text-xs font-bold rounded-lg border bg-slate-900 border-amber-500/50 text-amber-300 hover:bg-amber-950/40 transition flex items-center justify-center gap-1 shadow disabled:opacity-40 cursor-pointer"
           >
             💡 {isEn ? 'Hint Ladder [H]' : '因果提示階梯 [H]'}
           </button>
@@ -335,14 +357,26 @@ export const MasyuBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode
       {hintLevel > 0 && activeHint && (
         <div className="mt-2 p-2 rounded-xl text-center w-full max-w-[280px] font-mono border bg-slate-900/90 border-amber-500/60 text-slate-200 text-[8px]">
           <div className="text-[7.5px] font-bold text-amber-300 mb-0.5">
-            🔮 {isEn ? 'MASYU DEDUCTION' : '珍珠迴路・因果推導'}
+            🔮 {isEn ? 'MASYU DEDUCTIVE CHAIN' : '珍珠迴路・因果推導'}
           </div>
           <div>
-            {hintLevel === 1 && <span>🔍 審視珍珠坐標 [{activeHint.r + 1}, {activeHint.c + 1}] 的幾何定式</span>}
-            {hintLevel === 2 && <span className="text-cyan-300 font-bold">⚡ {activeHint.humanReadable.zh}</span>}
+            {hintLevel === 1 && (
+              <span>
+                {isEn
+                  ? `🔍 Inspect pearl parity at [${activeHint.r + 1}, ${activeHint.c + 1}]`
+                  : `🔍 審視珍珠坐標 [${activeHint.r + 1}, ${activeHint.c + 1}] 的幾何定式`}
+              </span>
+            )}
+            {hintLevel === 2 && (
+              <span className="text-cyan-300 font-bold">
+                ⚡ {isEn ? (activeHint.humanReadable.en || activeHint.rationale) : activeHint.humanReadable.zh}
+              </span>
+            )}
             {hintLevel === 3 && (
               <span className="text-rose-400 font-extrabold">
-                🎯 定式強制線段：{activeHint.forcedEdge || '該格必須直角轉折！'}
+                {isEn
+                  ? `🎯 Forced segment deduction: ${activeHint.forcedEdge || 'Cell requires an orthogonal turn!'}`
+                  : `🎯 定式強制線段：${activeHint.forcedEdge || '該格必須直角轉折！'}`}
               </span>
             )}
           </div>
@@ -352,20 +386,26 @@ export const MasyuBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode
       {/* 通關成就面板 */}
       {isCompleted && (
         <div className="mt-2.5 p-3 bg-slate-950 border border-emerald-500/80 rounded-xl text-center w-full max-w-[320px] shadow-2xl font-mono animate-fade-in">
-          <div className="text-emerald-400 font-bold text-xs mb-0.5">EULERIAN LOOP CLOSED!</div>
+          <div className="text-emerald-400 font-bold text-xs mb-0.5 uppercase tracking-wider">
+            {isEn ? 'EULERIAN LOOP CLOSED!' : '歐拉單一閉環完全收斂！'}
+          </div>
 
           {sanctionedSig && (
             <div className="my-1.5 py-1 px-2 bg-slate-900 border border-indigo-700/60 rounded text-[7px] text-indigo-300 flex items-center justify-between">
-              <span>🛡️ SHA-256 賽事認證:</span>
+              <span>🛡️ {isEn ? 'SHA-256 Sanctioned Hash:' : 'SHA-256 賽事認證:'}</span>
               <span className="font-bold text-cyan-300">{sanctionedSig}</span>
             </div>
           )}
 
           <div className="text-[8.5px] text-slate-300 mb-1">
-            耗時: {(accumulatedMs / 1000).toFixed(2)}s | 歐拉單一閉環無割裂 | Gf: IQ {cci.standardIQ}
+            {isEn
+              ? `Time: ${(accumulatedMs / 1000).toFixed(2)}s | Single Loop Unbroken | Gf: IQ ${cci.standardIQ}`
+              : `耗時: ${(accumulatedMs / 1000).toFixed(2)}s | 歐拉單一閉環無割裂 | Gf: IQ ${cci.standardIQ}`}
           </div>
           <div className="text-[8px] text-cyan-400 font-bold">
-            ✨ 白珍珠直穿轉角、黑珍珠轉折直伸幾何約束完全收斂
+            {isEn
+              ? '✨ White/Black pearl orthogonality & arm lengths strictly converged.'
+              : '✨ 白珍珠直穿轉角、黑珍珠轉折直伸幾何約束完全收斂'}
           </div>
         </div>
       )}
