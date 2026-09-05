@@ -81,7 +81,7 @@ function mulberry32(a: number) {
 
 export class WebHashiGenerator {
   /**
-   * 正交視線鄰居檢索
+   * 正交視線鄰居檢索 (視線被中間島嶼阻擋即中斷)
    */
   public static getOrthogonalNeighbors(islId: number, islands: Island[], rows: number, cols: number): number[] {
     const src = islands.find((i) => i.id === islId);
@@ -112,11 +112,13 @@ export class WebHashiGenerator {
   }
 
   /**
-   * 檢查橋樑相交碰撞
+   * 檢查兩島連線是否與現存橋樑相交
    */
   public static checkCrossing(uId: number, vId: number, islands: Island[], bridges: Map<string, 1 | 2>): boolean {
-    const u = islands.find((i) => i.id === uId)!;
-    const v = islands.find((i) => i.id === vId)!;
+    const u = islands.find((i) => i.id === uId);
+    const v = islands.find((i) => i.id === vId);
+    if (!u || !v) return true;
+
     const isHorizontal = u.r === v.r;
 
     for (const [key] of bridges) {
@@ -151,7 +153,40 @@ export class WebHashiGenerator {
   }
 
   /**
-   * 因果推導定式推理引擎（供覆盤與提示階梯）
+   * 檢查全圖是否連通 (BFS)
+   */
+  public static isConnected(islands: Island[], bridges: Map<string, 1 | 2>): boolean {
+    if (islands.length <= 1) return true;
+    const adj = new Map<number, number[]>();
+    islands.forEach((isl) => adj.set(isl.id, []));
+
+    bridges.forEach((count, key) => {
+      if (count > 0) {
+        const [u, v] = key.split('-').map(Number);
+        adj.get(u)?.push(v);
+        adj.get(v)?.push(u);
+      }
+    });
+
+    const visited = new Set<number>();
+    const queue = [islands[0].id];
+    visited.add(islands[0].id);
+
+    while (queue.length > 0) {
+      const cur = queue.shift()!;
+      for (const next of adj.get(cur) || []) {
+        if (!visited.has(next)) {
+          visited.add(next);
+          queue.push(next);
+        }
+      }
+    }
+
+    return visited.size === islands.length;
+  }
+
+  /**
+   * 因果推導定式推理引擎
    */
   public static getNextForcedDeduction(
     islands: Island[],
@@ -163,14 +198,12 @@ export class WebHashiGenerator {
     islands.forEach((isl) => degrees.set(isl.id, 0));
 
     bridges.forEach((count, key) => {
-      const [uStr, vStr] = key.split('-');
-      const u = Number(uStr);
-      const v = Number(vStr);
+      const [u, v] = key.split('-').map(Number);
       degrees.set(u, (degrees.get(u) || 0) + count);
       degrees.set(v, (degrees.get(v) || 0) + count);
     });
 
-    // 定式 1: 剩餘可用方向容量極限收斂 (度數連鎖傳播)
+    // 定式 1: 度數飽和傳播
     for (const isl of islands) {
       const currentDeg = degrees.get(isl.id) || 0;
       if (currentDeg === isl.capacity) continue;
@@ -211,14 +244,14 @@ export class WebHashiGenerator {
           evidenceIslands: [isl.id, target],
           rationale: `島嶼 #${isl.id} (容量 ${isl.capacity}) 剩餘缺額 ${remainingNeeded}，所有剩餘方向必須全速連滿。`,
           humanReadable: {
-            zh: `島嶼 [${isl.r + 1},${isl.c + 1}]：扣除現有橋後，剩餘方向全連剛好滿足容量，此處必架橋！`,
-            en: `Island [${isl.r + 1},${isl.c + 1}] requires all remaining directions to be bridged.`,
+            zh: `島嶼 [${isl.r + 1},${isl.c + 1}]：剩餘可用方向完全連滿剛好達到容量限制，此處強制架橋！`,
+            en: `Island [${isl.r + 1},${isl.c + 1}] requires all remaining directions to be fully connected.`,
           },
         };
       }
     }
 
-    // 定式 2: 割邊隔離定式 (防止未包含全島時過早閉合孤立子圖)
+    // 定式 2: 割邊隔離定式 (防止 1-1 提前閉合)
     if (islands.length > 2) {
       for (const isl of islands) {
         if (isl.capacity === 1 && (degrees.get(isl.id) || 0) === 0) {
@@ -246,10 +279,10 @@ export class WebHashiGenerator {
                   en: 'Cut-Edge Isolation',
                 },
                 evidenceIslands: [isl.id, target, oneCapNeighbors[0]],
-                rationale: `島嶼 #${isl.id} 若與相鄰容量 1 島嶼連線將形成封閉孤島，切斷全域連通。因此必須連向替代方向。`,
+                rationale: `島嶼 #${isl.id} 若與相鄰容量 1 島嶼連線將形成孤島閉環，因此必須連向替代方向。`,
                 humanReadable: {
-                  zh: `島嶼 [${isl.r + 1},${isl.c + 1}] 不能與同為 1 度的島嶼相連（否則形成孤島閉環），必然連向另一側。`,
-                  en: `Connecting to another degree 1 island creates a closed component. Must bridge to alternate neighbor.`,
+                  zh: `島嶼 [${isl.r + 1},${isl.c + 1}] 不能與同為 1 度的島嶼直接連線（否則提早孤立），必然連向另一側。`,
+                  en: `Connecting to another degree-1 island isolates the component. Must bridge to alternate neighbor.`,
                 },
               };
             }
@@ -261,6 +294,9 @@ export class WebHashiGenerator {
     return null;
   }
 
+  /**
+   * 100% 保證全域單一連通圖的 Hashi 生成器
+   */
   public static generate(tier: ExtendedTierKey = 'kids', inputSeed?: number): PuzzleEntity {
     const config = TIER_SPECS[tier] || TIER_SPECS.kids;
     const { rows, cols, islandCount, baseIrt } = config;
@@ -268,105 +304,142 @@ export class WebHashiGenerator {
     const actualSeed = inputSeed !== undefined ? inputSeed : Math.floor(Math.random() * 0x7fffffff);
     const rnd = mulberry32(actualSeed);
 
-    const islands: Island[] = [];
-    const solutionBridges: { u: number; v: number; count: 1 | 2 }[] = [];
+    let attempts = 0;
+    while (attempts++ < 30) {
+      // 1. 基於生成樹（Spanning Tree）成長演算法鋪設島嶼，確保 100% 連通且無交叉
+      const islands: Island[] = [];
+      const bridgesMap = new Map<string, 1 | 2>();
+      const gridOccupied = Array.from({ length: rows }, () => Array(cols).fill(false));
 
-    // 1. 強制 180° 對稱播撒島嶼座標
-    const halfCoords: [number, number][] = [];
-    for (let r = 0; r < Math.ceil(rows / 2); r++) {
-      for (let c = 0; c < cols; c++) {
-        if (r === rows - 1 - r && c >= Math.ceil(cols / 2)) continue;
-        halfCoords.push([r, c]);
-      }
-    }
+      const startR = 1 + Math.floor(rnd() * (rows - 2));
+      const startC = 1 + Math.floor(rnd() * (cols - 2));
+      islands.push({ id: 0, r: startR, c: startC, capacity: 0 });
+      gridOccupied[startR][startC] = true;
 
-    for (let i = halfCoords.length - 1; i > 0; i--) {
-      const j = Math.floor(rnd() * (i + 1));
-      [halfCoords[i], halfCoords[j]] = [halfCoords[j], halfCoords[i]];
-    }
+      const dirs = [[-1, 0], [1, 0], [0, -1], [0, 1]];
+      let currentId = 1;
 
-    let idCounter = 0;
-    const pairCount = Math.floor(islandCount / 2);
+      while (islands.length < islandCount) {
+        // 隨機選一個現存島嶼作為母節點生長
+        const parent = islands[Math.floor(rnd() * islands.length)];
+        const dir = dirs[Math.floor(rnd() * dirs.length)];
+        const dist = 2 + Math.floor(rnd() * 3); // 間隔 2~4 格
 
-    for (let i = 0; i < pairCount && i < halfCoords.length; i++) {
-      const [r1, c1] = halfCoords[i];
-      const r2 = rows - 1 - r1;
-      const c2 = cols - 1 - c1;
+        const newR = parent.r + dir[0] * dist;
+        const newC = parent.c + dir[1] * dist;
 
-      islands.push({ id: idCounter++, r: r1, c: c1, capacity: 0 });
-      if (r1 !== r2 || c1 !== c2) {
-        islands.push({ id: idCounter++, r: r2, c: c2, capacity: 0 });
-      }
-    }
+        if (newR >= 0 && newR < rows && newC >= 0 && newC < cols && !gridOccupied[newR][newC]) {
+          const tempIsland: Island = { id: currentId, r: newR, c: newC, capacity: 0 };
+          const minId = Math.min(parent.id, tempIsland.id);
+          const maxId = Math.max(parent.id, tempIsland.id);
 
-    // 2. 建立連通支撐橋樑與計算島嶼容量
-    const bridgesMap = new Map<string, 1 | 2>();
-    for (let i = 0; i < islands.length; i++) {
-      const neighbors = WebHashiGenerator.getOrthogonalNeighbors(islands[i].id, islands, rows, cols);
-      for (const nId of neighbors) {
-        const minId = Math.min(islands[i].id, nId);
-        const maxId = Math.max(islands[i].id, nId);
-        const key = `${minId}-${maxId}`;
-
-        if (!bridgesMap.has(key) && !WebHashiGenerator.checkCrossing(minId, maxId, islands, bridgesMap)) {
-          if (rnd() < 0.38) {
-            const count: 1 | 2 = rnd() < 0.6 ? 1 : 2;
-            bridgesMap.set(key, count);
+          const allIslands = [...islands, tempIsland];
+          if (!WebHashiGenerator.checkCrossing(minId, maxId, allIslands, bridgesMap)) {
+            islands.push(tempIsland);
+            gridOccupied[newR][newC] = true;
+            bridgesMap.set(`${minId}-${maxId}`, rnd() < 0.5 ? 1 : 2);
+            currentId++;
           }
         }
       }
+
+      // 2. 額外隨機加入若干跨環橋樑增加難度，但嚴禁破壞無交叉規則
+      for (let i = 0; i < islands.length; i++) {
+        const neighbors = WebHashiGenerator.getOrthogonalNeighbors(islands[i].id, islands, rows, cols);
+        for (const nId of neighbors) {
+          const minId = Math.min(islands[i].id, nId);
+          const maxId = Math.max(islands[i].id, nId);
+          const key = `${minId}-${maxId}`;
+          if (!bridgesMap.has(key) && !WebHashiGenerator.checkCrossing(minId, maxId, islands, bridgesMap)) {
+            if (rnd() < 0.18) {
+              bridgesMap.set(key, rnd() < 0.6 ? 1 : 2);
+            }
+          }
+        }
+      }
+
+      // 3. 驗證全域連通性
+      if (!this.isConnected(islands, bridgesMap)) continue;
+
+      // 4. 計算每座島嶼真實容量
+      const solutionBridges: { u: number; v: number; count: 1 | 2 }[] = [];
+      bridgesMap.forEach((count, key) => {
+        const [u, v] = key.split('-').map(Number);
+        const islU = islands.find((isl) => isl.id === u);
+        const islV = islands.find((isl) => isl.id === v);
+        if (islU) islU.capacity += count;
+        if (islV) islV.capacity += count;
+        solutionBridges.push({ u, v, count });
+      });
+
+      const spec: HashiSpec = {
+        rows,
+        cols,
+        islands,
+        solutionBridges,
+        tier,
+        seed: actualSeed,
+        metricsAnalysis: {
+          is180Symmetric: false,
+          totalIslands: islands.length,
+          totalBridges: solutionBridges.length,
+        },
+      };
+
+      return {
+        id: `hashi_${tier}_s${actualSeed}`,
+        category: 'topological' as any,
+        engine_type: 'hashi',
+        tier: (tier === 'ultimate' || tier === 'legendary' ? 'master' : tier) as TierKey,
+        checksum: `HASHI_${rows}x${cols}_CONNECTED_S${actualSeed}`,
+        puzzle: spec as any,
+        solution: solutionBridges as any,
+        cognitiveLoad: {
+          spatial: 0.88,
+          numeric: 0.5,
+          workingMemory: 0.75,
+          inhibition: 0.82,
+        },
+        metrics: {
+          estimated_time_sec: Math.max(30, islands.length * 6),
+          irt_logit_difficulty: baseIrt,
+          seed: actualSeed,
+          actualTier: tier,
+        } as any,
+      };
     }
 
-    // 計算各島嶼實際容量
-    bridgesMap.forEach((count, key) => {
-      const [uStr, vStr] = key.split('-');
-      const u = Number(uStr);
-      const v = Number(vStr);
-      const islU = islands.find((isl) => isl.id === u);
-      const islV = islands.find((isl) => isl.id === v);
-      if (islU) islU.capacity += count;
-      if (islV) islV.capacity += count;
-      solutionBridges.push({ u, v, count });
-    });
+    // 兜底回退保證穩定
+    return this._generateFallback(tier, actualSeed, baseIrt);
+  }
 
-    // 剔除容量為 0 的孤島
-    const activeIslands = islands.filter((isl) => isl.capacity > 0);
-
-    const spec: HashiSpec = {
-      rows,
-      cols,
-      islands: activeIslands,
-      solutionBridges,
-      tier,
-      seed: actualSeed,
-      metricsAnalysis: {
-        is180Symmetric: true,
-        totalIslands: activeIslands.length,
-        totalBridges: solutionBridges.length,
-      },
-    };
+  private static _generateFallback(tier: ExtendedTierKey, seed: number, baseIrt: number): PuzzleEntity {
+    const islands: Island[] = [
+      { id: 0, r: 0, c: 0, capacity: 3 },
+      { id: 1, r: 0, c: 4, capacity: 4 },
+      { id: 2, r: 0, c: 6, capacity: 2 },
+      { id: 3, r: 4, c: 0, capacity: 2 },
+      { id: 4, r: 4, c: 4, capacity: 3 },
+      { id: 5, r: 4, c: 6, capacity: 2 },
+    ];
+    const solutionBridges: { u: number; v: number; count: 1 | 2 }[] = [
+      { u: 0, v: 1, count: 2 },
+      { u: 1, v: 2, count: 2 },
+      { u: 0, v: 3, count: 1 },
+      { u: 3, v: 4, count: 1 },
+      { u: 4, v: 5, count: 2 },
+    ];
 
     return {
-      id: `hashi_${tier}_s${actualSeed}`,
+      id: `hashi_${tier}_s${seed}_fb`,
       category: 'topological' as any,
       engine_type: 'hashi',
       tier: (tier === 'ultimate' || tier === 'legendary' ? 'master' : tier) as TierKey,
-      checksum: `HASHI_${rows}x${cols}_SYM180_S${actualSeed}`,
-      puzzle: spec as any,
+      checksum: `HASHI_FB_${seed}`,
+      puzzle: { rows: 7, cols: 7, islands, solutionBridges, tier, seed } as any,
       solution: solutionBridges as any,
-      cognitiveLoad: {
-        spatial: 0.88,
-        numeric: 0.5,
-        workingMemory: 0.75,
-        inhibition: 0.82,
-      },
-      metrics: {
-        estimated_time_sec: Math.max(30, activeIslands.length * 6),
-        irt_logit_difficulty: baseIrt,
-        seed: actualSeed,
-        actualTier: tier,
-        is180Symmetric: true,
-      } as any,
+      cognitiveLoad: { spatial: 0.75, numeric: 0.5, workingMemory: 0.7, inhibition: 0.8 },
+      metrics: { estimated_time_sec: 60, irt_logit_difficulty: baseIrt, seed } as any,
     };
   }
 }
