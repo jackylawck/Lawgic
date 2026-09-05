@@ -95,6 +95,16 @@ export function mulberry32(a: number) {
   };
 }
 
+export async function generateSanctionedSignature(payload: string): Promise<string> {
+  if (typeof window !== 'undefined' && window.crypto?.subtle) {
+    const msgBuffer = new TextEncoder().encode(payload);
+    const hashBuffer = await window.crypto.subtle.digest('SHA-256', msgBuffer);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('').slice(0, 16).toUpperCase();
+  }
+  return 'WPF-' + Math.random().toString(36).substring(2, 10).toUpperCase();
+}
+
 interface TierConfig {
   rows: number;
   cols: number;
@@ -295,9 +305,6 @@ export class WebKakuroGenerator {
     return null;
   }
 
-  /**
-   * 帶回溯的真實有效解填充器
-   */
   private static _fillGridBacktracking(
     grid: KakuroCell[][],
     whiteCells: [number, number][],
@@ -340,7 +347,6 @@ export class WebKakuroGenerator {
         if (!usedInRow.has(n) && !usedInCol.has(n)) candidates.push(n);
       }
 
-      // 隨機打亂候選數
       for (let i = candidates.length - 1; i > 0; i--) {
         const j = Math.floor(rnd() * (i + 1));
         [candidates[i], candidates[j]] = [candidates[j], candidates[i]];
@@ -380,7 +386,6 @@ export class WebKakuroGenerator {
         grid[rows - 1][c].type = 'black';
       }
 
-      // 內部隨機對稱散佈黑格
       for (let r = 1; r < rows - 1; r++) {
         for (let c = 1; c < cols - 1; c++) {
           if (rnd() < 0.24) {
@@ -392,7 +397,6 @@ export class WebKakuroGenerator {
         }
       }
 
-      // 約束校驗：所有連續白格長度必須在 2 ~ 9 之間
       let validLayout = true;
       for (let r = 1; r < rows - 1; r++) {
         let run = 0;
@@ -429,11 +433,9 @@ export class WebKakuroGenerator {
 
       if (whiteCells.length < 4) continue;
 
-      // 回溯構造合法解答
       const solution = this._fillGridBacktracking(grid, whiteCells, rows, cols, rnd);
       if (!solution) continue;
 
-      // 提取線索和
       for (let r = 0; r < rows; r++) {
         for (let c = 0; c < cols; c++) {
           if (grid[r][c].type === 'black') {
@@ -459,7 +461,6 @@ export class WebKakuroGenerator {
         }
       }
 
-      // 驗證唯一解
       if (this.countSolutions(grid, rows, cols, 2) !== 1) continue;
 
       let totalEntropy = 0;
