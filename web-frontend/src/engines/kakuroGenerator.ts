@@ -49,6 +49,7 @@ export interface KakuroSpec {
 const PARTITION_CACHE = new Map<string, number[][]>();
 
 export function getPartitions(length: number, sum: number): number[][] {
+  if (length <= 0 || sum <= 0 || length > 9) return [];
   const key = `${length}_${sum}`;
   if (PARTITION_CACHE.has(key)) return PARTITION_CACHE.get(key)!;
 
@@ -94,16 +95,6 @@ export function mulberry32(a: number) {
   };
 }
 
-export async function generateSanctionedSignature(payload: string): Promise<string> {
-  if (typeof window !== 'undefined' && window.crypto?.subtle) {
-    const msgBuffer = new TextEncoder().encode(payload);
-    const hashBuffer = await window.crypto.subtle.digest('SHA-256', msgBuffer);
-    const hashArray = Array.from(new Uint8Array(hashBuffer));
-    return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('').slice(0, 16).toUpperCase();
-  }
-  return 'WPF-' + Math.random().toString(36).substring(2, 10).toUpperCase();
-}
-
 interface TierConfig {
   rows: number;
   cols: number;
@@ -117,7 +108,7 @@ const TIER_SPECS: Record<ExtendedTierKey, TierConfig> = {
   expert: { rows: 7, cols: 7, baseIrt: 1.6, timeLimitSec: 270 },
   master: { rows: 8, cols: 8, baseIrt: 2.6, timeLimitSec: 390 },
   legendary: { rows: 9, cols: 9, baseIrt: 3.5, timeLimitSec: 540 },
-  ultimate: { rows: 12, cols: 12, baseIrt: 4.6, timeLimitSec: 720 },
+  ultimate: { rows: 11, cols: 11, baseIrt: 4.6, timeLimitSec: 720 },
 };
 
 export class WebKakuroGenerator {
@@ -208,9 +199,10 @@ export class WebKakuroGenerator {
 
     const testGrid: number[][] = Array.from({ length: rows }, () => Array(cols).fill(0));
     let solutions = 0;
+    let stepBudget = 4000;
 
     const solveMRV = (index: number) => {
-      if (solutions >= limit) return;
+      if (solutions >= limit || stepBudget-- <= 0) return;
       if (index === whiteCells.length) {
         solutions++;
         return;
@@ -303,6 +295,69 @@ export class WebKakuroGenerator {
     return null;
   }
 
+  /**
+   * 帶回溯的真實有效解填充器
+   */
+  private static _fillGridBacktracking(
+    grid: KakuroCell[][],
+    whiteCells: [number, number][],
+    rows: number,
+    cols: number,
+    rnd: () => number
+  ): number[][] | null {
+    const solution: number[][] = Array.from({ length: rows }, () => Array(cols).fill(0));
+
+    const solve = (idx: number): boolean => {
+      if (idx === whiteCells.length) return true;
+      const [r, c] = whiteCells[idx];
+
+      const usedInRow = new Set<number>();
+      let tc = c - 1;
+      while (tc >= 0 && grid[r][tc].type === 'white') {
+        if (solution[r][tc] > 0) usedInRow.add(solution[r][tc]);
+        tc--;
+      }
+      tc = c + 1;
+      while (tc < cols && grid[r][tc].type === 'white') {
+        if (solution[r][tc] > 0) usedInRow.add(solution[r][tc]);
+        tc++;
+      }
+
+      const usedInCol = new Set<number>();
+      let tr = r - 1;
+      while (tr >= 0 && grid[tr][c].type === 'white') {
+        if (solution[tr][c] > 0) usedInCol.add(solution[tr][c]);
+        tr--;
+      }
+      tr = r + 1;
+      while (tr < rows && grid[tr][c].type === 'white') {
+        if (solution[tr][c] > 0) usedInCol.add(solution[tr][c]);
+        tr++;
+      }
+
+      const candidates: number[] = [];
+      for (let n = 1; n <= 9; n++) {
+        if (!usedInRow.has(n) && !usedInCol.has(n)) candidates.push(n);
+      }
+
+      // 隨機打亂候選數
+      for (let i = candidates.length - 1; i > 0; i--) {
+        const j = Math.floor(rnd() * (i + 1));
+        [candidates[i], candidates[j]] = [candidates[j], candidates[i]];
+      }
+
+      for (const val of candidates) {
+        solution[r][c] = val;
+        if (solve(idx + 1)) return true;
+        solution[r][c] = 0;
+      }
+
+      return false;
+    };
+
+    return solve(0) ? solution : null;
+  }
+
   public static generate(tier: ExtendedTierKey = 'kids', inputSeed?: number): PuzzleEntity {
     const config = TIER_SPECS[tier] || TIER_SPECS.kids;
     const { rows, cols, baseIrt, timeLimitSec } = config;
@@ -311,9 +366,7 @@ export class WebKakuroGenerator {
     const rnd = mulberry32(actualSeed);
 
     let attempts = 0;
-    while (attempts < 40) {
-      attempts++;
-
+    while (attempts++ < 30) {
       const grid: KakuroCell[][] = Array.from({ length: rows }, () =>
         Array.from({ length: cols }, () => ({ type: 'white' }))
       );
@@ -327,9 +380,10 @@ export class WebKakuroGenerator {
         grid[rows - 1][c].type = 'black';
       }
 
+      // 內部隨機對稱散佈黑格
       for (let r = 1; r < rows - 1; r++) {
         for (let c = 1; c < cols - 1; c++) {
-          if (rnd() < 0.22) {
+          if (rnd() < 0.24) {
             const symR = rows - 1 - r;
             const symC = cols - 1 - c;
             grid[r][c].type = 'black';
@@ -338,57 +392,48 @@ export class WebKakuroGenerator {
         }
       }
 
+      // 約束校驗：所有連續白格長度必須在 2 ~ 9 之間
       let validLayout = true;
       for (let r = 1; r < rows - 1; r++) {
         let run = 0;
         for (let c = 1; c < cols - 1; c++) {
           if (grid[r][c].type === 'white') run++;
           else {
-            if (run === 1) validLayout = false;
+            if (run === 1 || run > 9) validLayout = false;
             run = 0;
           }
         }
-        if (run === 1) validLayout = false;
+        if (run === 1 || run > 9) validLayout = false;
       }
-      if (!validLayout) continue;
 
-      const solution: number[][] = Array.from({ length: rows }, () => Array(cols).fill(0));
-      let fillSuccess = true;
-
-      for (let r = 1; r < rows - 1; r++) {
-        for (let c = 1; c < cols - 1; c++) {
-          if (grid[r][c].type === 'white') {
-            const usedAcross: number[] = [];
-            let tc = c - 1;
-            while (tc >= 1 && grid[r][tc].type === 'white') {
-              if (solution[r][tc] > 0) usedAcross.push(solution[r][tc]);
-              tc--;
-            }
-            const usedDown: number[] = [];
-            let tr = r - 1;
-            while (tr >= 1 && grid[tr][c].type === 'white') {
-              if (solution[tr][c] > 0) usedDown.push(solution[tr][c]);
-              tr--;
-            }
-
-            const available = [1, 2, 3, 4, 5, 6, 7, 8, 9].filter(
-              (n) => !usedAcross.includes(n) && !usedDown.includes(n)
-            );
-
-            if (available.length === 0) {
-              fillSuccess = false;
-              break;
-            }
-            const picked = available[Math.floor(rnd() * available.length)];
-            solution[r][c] = picked;
-            grid[r][c].solution = picked;
+      for (let c = 1; c < cols - 1; c++) {
+        let run = 0;
+        for (let r = 1; r < rows - 1; r++) {
+          if (grid[r][c].type === 'white') run++;
+          else {
+            if (run === 1 || run > 9) validLayout = false;
+            run = 0;
           }
         }
-        if (!fillSuccess) break;
+        if (run === 1 || run > 9) validLayout = false;
       }
 
-      if (!fillSuccess) continue;
+      if (!validLayout) continue;
 
+      const whiteCells: [number, number][] = [];
+      for (let r = 1; r < rows - 1; r++) {
+        for (let c = 1; c < cols - 1; c++) {
+          if (grid[r][c].type === 'white') whiteCells.push([r, c]);
+        }
+      }
+
+      if (whiteCells.length < 4) continue;
+
+      // 回溯構造合法解答
+      const solution = this._fillGridBacktracking(grid, whiteCells, rows, cols, rnd);
+      if (!solution) continue;
+
+      // 提取線索和
       for (let r = 0; r < rows; r++) {
         for (let c = 0; c < cols; c++) {
           if (grid[r][c].type === 'black') {
@@ -414,23 +459,24 @@ export class WebKakuroGenerator {
         }
       }
 
+      // 驗證唯一解
       if (this.countSolutions(grid, rows, cols, 2) !== 1) continue;
 
       let totalEntropy = 0;
-      let whiteCount = 0;
-      for (let r = 1; r < rows - 1; r++) {
-        for (let c = 1; c < cols - 1; c++) {
-          if (grid[r][c].type === 'white') {
-            whiteCount++;
-            const run = this.getCellRunInfo(grid, rows, cols, r, c)!;
-            const partitions = getPartitions(run.acrossLength, run.acrossClue);
-            totalEntropy += Math.log2(Math.max(1, partitions.length));
-          }
-        }
+      for (const [wr, wc] of whiteCells) {
+        const run = this.getCellRunInfo(grid, rows, cols, wr, wc)!;
+        const partitions = getPartitions(run.acrossLength, run.acrossClue);
+        totalEntropy += Math.log2(Math.max(1, partitions.length));
       }
-      const partitionEntropy = Number((totalEntropy / Math.max(1, whiteCount)).toFixed(2));
+      const partitionEntropy = Number((totalEntropy / whiteCells.length).toFixed(2));
 
-      const crux: CruxInfo = { r: 2, c: 2, chainDepth: 3, stepOrder: 3, forcedValue: solution[2]?.[2] || 1 };
+      const crux: CruxInfo = {
+        r: whiteCells[0][0],
+        c: whiteCells[0][1],
+        chainDepth: 3,
+        stepOrder: 1,
+        forcedValue: solution[whiteCells[0][0]][whiteCells[0][1]],
+      };
 
       const spec: KakuroSpec = {
         rows,
@@ -462,8 +508,7 @@ export class WebKakuroGenerator {
         metrics: {
           estimated_time_sec: timeLimitSec,
           irt_logit_difficulty: Number((baseIrt + partitionEntropy * 0.2).toFixed(2)),
-          human_sim_steps: whiteCount,
-          longestInequalityChain: 4,
+          human_sim_steps: whiteCells.length,
           cruxCoordinates: [crux.r, crux.c],
           cruxChainDepth: crux.chainDepth,
           depthProfile: [1, 2, 4, 2, 1],
@@ -474,6 +519,16 @@ export class WebKakuroGenerator {
       };
     }
 
+    return this._generateFallback(tier, rows, cols, actualSeed, config.baseIrt);
+  }
+
+  private static _generateFallback(
+    tier: ExtendedTierKey,
+    rows: number,
+    cols: number,
+    seed: number,
+    baseIrt: number
+  ): PuzzleEntity {
     const fallbackGrid: KakuroCell[][] = [
       [{ type: 'black' }, { type: 'black', downClue: 4 }, { type: 'black', downClue: 11 }, { type: 'black' }, { type: 'black' }],
       [{ type: 'black', acrossClue: 3 }, { type: 'white', solution: 1 }, { type: 'white', solution: 2 }, { type: 'black', downClue: 4 }, { type: 'black' }],
@@ -490,20 +545,20 @@ export class WebKakuroGenerator {
     ];
 
     return {
-      id: `kakuro_${tier}_s${actualSeed}_fallback`,
+      id: `kakuro_${tier}_s${seed}_fb`,
       category: 'numerical_logic' as any,
       engine_type: 'kakuro',
       tier: (tier === 'ultimate' ? 'master' : tier) as TierKey,
-      checksum: `KAKURO_FALLBACK_${actualSeed}`,
+      checksum: `KAKURO_FALLBACK_${seed}`,
       puzzle: {
-        rows,
-        cols,
+        rows: 5,
+        cols: 5,
         grid: fallbackGrid,
         pureDeductionRate: 1.0,
         longestChainLength: 3,
         crux: { r: 1, c: 1, chainDepth: 2, stepOrder: 1, forcedValue: 1 },
         isSymmetric: true,
-        seed: actualSeed,
+        seed,
         depthProfile: [1, 2, 3, 2, 1],
         partitionEntropy: 1.2,
       } as unknown as KakuroSpec,
@@ -511,8 +566,8 @@ export class WebKakuroGenerator {
       cognitiveLoad: { spatial: 0.8, numeric: 0.95, workingMemory: 0.6, inhibition: 0.85 },
       metrics: {
         estimated_time_sec: 120,
-        irt_logit_difficulty: config.baseIrt,
-        seed: actualSeed,
+        irt_logit_difficulty: baseIrt,
+        seed,
         isSymmetric: true,
         partitionEntropy: 1.2,
       } as any,
