@@ -110,62 +110,25 @@ function generateEnginePuzzle(gameId: string, tier: ExtendedTierKey): PuzzleEnti
     const baseTier: GeneratedTierKey = (tier === 'legendary' || tier === 'ultimate') ? 'master' : (tier as GeneratedTierKey);
 
     switch (gameId) {
-      case 'maze':
-        puzzle = WebMazeGenerator.generate(baseTier);
-        break;
-      case 'sudoku':
-        puzzle = WebSudokuGenerator.generate(baseTier);
-        break;
-      case 'nonogram':
-        puzzle = WebNonogramGenerator.generate(baseTier);
-        break;
-      case 'nurikabe':
-        puzzle = WebNurikabeGenerator.generate(baseTier);
-        break;
-      case 'skyscraper':
-        puzzle = WebSkyscraperGenerator.generate(baseTier);
-        break;
-      case 'hashi':
-        puzzle = WebHashiGenerator.generate(baseTier);
-        break;
-      case 'kropki':
-        puzzle = WebKropkiGenerator.generate(baseTier);
-        break;
-      case 'slitherlink':
-        puzzle = WebSlitherlinkGenerator.generate(baseTier);
-        break;
-      case 'tents':
-        puzzle = WebTentsGenerator.generate(baseTier);
-        break;
-      case 'lightup':
-        puzzle = WebLightUpGenerator.generate(baseTier);
-        break;
-      case 'futoshiki':
-        puzzle = WebFutoshikiGenerator.generate(baseTier);
-        break;
-      case 'hitori':
-        puzzle = WebHitoriGenerator.generate(baseTier);
-        break;
-      case 'kakuro':
-        puzzle = WebKakuroGenerator.generate(baseTier);
-        break;
-      case 'masyu':
-        puzzle = WebMasyuGenerator.generate(baseTier);
-        break;
-      case 'dominoes':
-        puzzle = WebDominoesGenerator.generate(baseTier);
-        break;
-      case 'heyawake':
-        puzzle = WebHeyawakeGenerator.generate(baseTier);
-        break;
-      case 'yajilin':
-        puzzle = WebYajilinGenerator.generate(baseTier);
-        break;
-      case 'shikaku':
-        puzzle = WebShikakuGenerator.generate(baseTier);
-        break;
-      default:
-        return null;
+      case 'maze': puzzle = WebMazeGenerator.generate(baseTier); break;
+      case 'sudoku': puzzle = WebSudokuGenerator.generate(baseTier); break;
+      case 'nonogram': puzzle = WebNonogramGenerator.generate(baseTier); break;
+      case 'nurikabe': puzzle = WebNurikabeGenerator.generate(baseTier); break;
+      case 'skyscraper': puzzle = WebSkyscraperGenerator.generate(baseTier); break;
+      case 'hashi': puzzle = WebHashiGenerator.generate(baseTier); break;
+      case 'kropki': puzzle = WebKropkiGenerator.generate(baseTier); break;
+      case 'slitherlink': puzzle = WebSlitherlinkGenerator.generate(baseTier); break;
+      case 'tents': puzzle = WebTentsGenerator.generate(baseTier); break;
+      case 'lightup': puzzle = WebLightUpGenerator.generate(baseTier); break;
+      case 'futoshiki': puzzle = WebFutoshikiGenerator.generate(baseTier); break;
+      case 'hitori': puzzle = WebHitoriGenerator.generate(baseTier); break;
+      case 'kakuro': puzzle = WebKakuroGenerator.generate(baseTier); break;
+      case 'masyu': puzzle = WebMasyuGenerator.generate(baseTier); break;
+      case 'dominoes': puzzle = WebDominoesGenerator.generate(baseTier); break;
+      case 'heyawake': puzzle = WebHeyawakeGenerator.generate(baseTier); break;
+      case 'yajilin': puzzle = WebYajilinGenerator.generate(baseTier); break;
+      case 'shikaku': puzzle = WebShikakuGenerator.generate(baseTier); break;
+      default: return null;
     }
 
     if (!puzzle) return null;
@@ -198,6 +161,21 @@ const MainDashboard: React.FC = () => {
   const isEn = lang === 'en';
   const { profile, getCompositeCognitiveIndex } = useLearnerProfile();
 
+  // 100% 全雙語字典抽離
+  const t = useMemo(() => ({
+    synthesizing: isEn ? 'Synthesizing Topology...' : '神經網絡拓撲生成中...',
+    tournamentOn: isEn ? '🏆 TOURNAMENT SANCTIONED' : '🏆 賽事認證模式',
+    tournamentOff: isEn ? '○ TOURNAMENT OFF' : '○ 自由訓練模式',
+    prev: isEn ? '◀ Prev' : '◀ 上一題',
+    next: isEn ? 'Next ▶' : '下一題 ▶',
+    generate: isEn ? 'Generate' : '現場生成',
+    tierJump: isEn ? 'Tier Jump (+1)' : '升階挑戰 (+1)',
+    jumpExpert: isEn ? 'Direct Jump to Expert' : '直接跳級至專家',
+    puzzleProgress: isEn ? 'Puzzle' : '進度',
+    loading: isEn ? 'Generating puzzles...' : '題目載入生成中...',
+    titleSuffix: isEn ? 'Logic Arena' : '羅輯・遊戲',
+  }), [isEn]);
+
   const [selectedType, setSelectedType] = useState<string>('maze');
   const [currentLevel, setCurrentLevel] = useState<ExtendedTierKey>('kids');
   const [puzzleIndex, setPuzzleIndex] = useState<number>(0);
@@ -207,6 +185,7 @@ const MainDashboard: React.FC = () => {
   const [isGenerating, setIsGenerating] = useState<boolean>(false);
 
   const isGeneratingRef = useRef<boolean>(false);
+  const boardContainerRef = useRef<HTMLDivElement>(null);
 
   const [dynamicPuzzles, setDynamicPuzzles] = useState<Record<string, PuzzleEntity[]>>(() => {
     const initialPool: Record<string, PuzzleEntity[]> = {};
@@ -259,10 +238,7 @@ const MainDashboard: React.FC = () => {
           const oldList = prev[gameId] || [];
           const updated = [...oldList, ...generated];
           const bounded = updated.length > MAX_CACHED_PUZZLES ? updated.slice(updated.length - MAX_CACHED_PUZZLES) : updated;
-          return {
-            ...prev,
-            [gameId]: bounded,
-          };
+          return { ...prev, [gameId]: bounded };
         });
       }
 
@@ -336,19 +312,21 @@ const MainDashboard: React.FC = () => {
     const activeGame = ALL_GAMES.find((g) => g.id === selectedType);
     const gameName = activeGame ? (isEn ? activeGame.nameEn : activeGame.nameZh) : 'Cognitive Arena';
     const tierName = isEn ? TIER_NAMES[currentLevel].en : TIER_NAMES[currentLevel].zh;
-    document.title = `${gameName} [${tierName}] | Lawgic 羅輯`;
-  }, [selectedType, currentLevel, isEn]);
+    document.title = `${gameName} [${tierName}] | ${t.titleSuffix}`;
+  }, [selectedType, currentLevel, isEn, t.titleSuffix]);
 
   const isSpatialExplorationType = selectedType === 'maze';
 
   const handlePrevPuzzle = useCallback(() => {
     if (navigator.vibrate) navigator.vibrate(8);
     setPuzzleIndex((prev) => (prev > 0 ? prev - 1 : Math.max(0, activeList.length - 1)));
+    boardContainerRef.current?.focus();
   }, [activeList.length]);
 
   const handleNextPuzzle = useCallback(() => {
     if (navigator.vibrate) navigator.vibrate(10);
     setPuzzleIndex((prev) => (prev + 1) % (activeList.length || 1));
+    boardContainerRef.current?.focus();
   }, [activeList.length]);
 
   const handleLiveGenerate = useCallback(async () => {
@@ -371,6 +349,7 @@ const MainDashboard: React.FC = () => {
       }
     } finally {
       setIsGenerating(false);
+      boardContainerRef.current?.focus();
     }
   }, [selectedType, currentLevel, isEn]);
 
@@ -437,11 +416,10 @@ const MainDashboard: React.FC = () => {
       {isGenerating && (
         <div className="fixed top-1 left-1/2 -translate-x-1/2 z-50 flex items-center gap-1.5 px-3 py-1 bg-slate-900/95 border border-indigo-500/80 rounded-full text-indigo-300 text-[8px] font-mono shadow-2xl animate-pulse pointer-events-none">
           <div className="w-2 h-2 rounded-full border border-indigo-400 border-t-transparent animate-spin" />
-          <span>🧠 {isEn ? 'Synthesizing Topology...' : '神經網絡拓撲生成中...'}</span>
+          <span>🧠 {t.synthesizing}</span>
         </div>
       )}
 
-      {/* 修正：移除 CognitiveDashboard 的 onClose prop，改為在容器右上角設置關閉按鈕 */}
       {showDashboardModal && (
         <div className="fixed inset-0 z-50 bg-black/85 flex items-center justify-center p-2 sm:p-4 overflow-y-auto">
           <div className="relative w-full max-w-4xl bg-slate-950 border border-slate-800 rounded-2xl shadow-2xl overflow-hidden my-auto p-2 sm:p-4">
@@ -461,7 +439,7 @@ const MainDashboard: React.FC = () => {
         <div className="flex items-center gap-1.5">
           <button
             onClick={() => setShowDashboardModal(true)}
-            className="flex items-center gap-1 hover:text-cyan-300 transition"
+            className="flex items-center gap-1 hover:text-cyan-300 transition cursor-pointer"
             title={isEn ? 'Open Longitudinal Cognitive Dashboard' : '開啟全域縱向認知儀表板'}
           >
             <span className="font-bold text-cyan-400">IQ {cci.standardIQ}</span>
@@ -474,13 +452,13 @@ const MainDashboard: React.FC = () => {
         </div>
         <button
           onClick={() => setTournamentMode((prev) => !prev)}
-          className={`px-1.5 py-0.5 rounded border transition text-[7px] font-bold ${
+          className={`px-1.5 py-0.5 rounded border transition text-[7px] font-bold cursor-pointer ${
             tournamentMode
               ? 'bg-amber-950 border-amber-500 text-amber-300 shadow-xs'
               : 'bg-slate-900 border-slate-800 text-slate-500 hover:text-slate-300'
           }`}
         >
-          {tournamentMode ? '🏆 TOURNAMENT SANCTIONED' : '○ TOURNAMENT OFF'}
+          {tournamentMode ? t.tournamentOn : t.tournamentOff}
         </button>
       </div>
 
@@ -526,9 +504,12 @@ const MainDashboard: React.FC = () => {
       </header>
 
       {activePuzzle ? (
-        <section className="flex flex-col items-center w-full max-w-sm sm:max-w-md">
+        <section
+          ref={boardContainerRef}
+          tabIndex={-1}
+          className="flex flex-col items-center w-full max-w-sm sm:max-w-md outline-none"
+        >
           <div className="w-full p-1 bg-slate-900/60 border border-slate-800 rounded-xl shadow-2xl">
-            {/* 修正：加入 activePuzzle.id 監聽，切換題目時自動重設錯誤狀態 */}
             <ErrorBoundary
               FallbackComponent={EngineFallbackUI}
               resetKeys={[selectedType, currentLevel, puzzleIndex, activePuzzle.id]}
@@ -553,22 +534,22 @@ const MainDashboard: React.FC = () => {
           <div className="mt-2 grid grid-cols-3 gap-1.5 w-full">
             <button
               onClick={handlePrevPuzzle}
-              className="py-2 bg-slate-900 hover:bg-slate-800 text-slate-300 text-[10px] border border-slate-800 rounded transition"
+              className="py-2 bg-slate-900 hover:bg-slate-800 text-slate-300 text-[10px] border border-slate-800 rounded transition cursor-pointer"
             >
-              {isEn ? '◀ Prev' : '◀ 上一題'}
+              {t.prev}
             </button>
             <button
               onClick={handleLiveGenerate}
-              className="py-2 bg-cyan-950 hover:bg-cyan-900 text-cyan-300 font-bold text-[10px] border border-cyan-700/60 rounded shadow transition flex items-center justify-center gap-1"
+              className="py-2 bg-cyan-950 hover:bg-cyan-900 text-cyan-300 font-bold text-[10px] border border-cyan-700/60 rounded shadow transition flex items-center justify-center gap-1 cursor-pointer"
             >
               <span>⚡</span>
-              <span>{isEn ? 'Generate' : '現場生成'}</span>
+              <span>{t.generate}</span>
             </button>
             <button
               onClick={handleNextPuzzle}
-              className="py-2 bg-slate-800 hover:bg-slate-700 text-white text-[10px] border border-slate-700 rounded transition"
+              className="py-2 bg-slate-800 hover:bg-slate-700 text-white text-[10px] border border-slate-700 rounded transition cursor-pointer"
             >
-              {isEn ? 'Next ▶' : '下一題 ▶'}
+              {t.next}
             </button>
           </div>
 
@@ -576,16 +557,16 @@ const MainDashboard: React.FC = () => {
             <div className="flex gap-1.5 mt-1.5 w-full">
               <button
                 onClick={() => handleTierJump(1)}
-                className="flex-1 py-1.5 bg-gradient-to-r from-indigo-950 via-purple-950 to-slate-900 hover:from-indigo-900 border border-indigo-700/60 hover:border-indigo-500 text-indigo-300 text-[10px] font-bold rounded-lg transition shadow flex items-center justify-center gap-1"
+                className="flex-1 py-1.5 bg-gradient-to-r from-indigo-950 via-purple-950 to-slate-900 hover:from-indigo-900 border border-indigo-700/60 hover:border-indigo-500 text-indigo-300 text-[10px] font-bold rounded-lg transition shadow flex items-center justify-center gap-1 cursor-pointer"
               >
                 <span>🚀</span>
-                <span>{isEn ? 'Tier Jump (+1)' : '升階挑戰 (+1)'}</span>
+                <span>{t.tierJump}</span>
               </button>
               {currentLevel === 'kids' && (
                 <button
                   onClick={() => handleTierJump(2)}
-                  className="px-3 py-1.5 bg-rose-950/70 hover:bg-rose-900 border border-rose-700/60 text-rose-300 text-[10px] font-bold rounded-lg transition shadow"
-                  title={isEn ? 'Direct Jump to Expert' : '直接跳級至專家'}
+                  className="px-3 py-1.5 bg-rose-950/70 hover:bg-rose-900 border border-rose-700/60 text-rose-300 text-[10px] font-bold rounded-lg transition shadow cursor-pointer"
+                  title={t.jumpExpert}
                 >
                   <span>⚡ +2</span>
                 </button>
@@ -598,13 +579,13 @@ const MainDashboard: React.FC = () => {
               <PuzzleTimer activeId={activePuzzle.id} />
             </div>
             <div>
-              {isEn ? 'Puzzle' : '進度'}: {puzzleIndex + 1}/{activeList.length}
+              {t.puzzleProgress}: {puzzleIndex + 1}/{activeList.length}
             </div>
           </div>
         </section>
       ) : (
         <div className="mt-12 p-8 border border-slate-800 text-center max-w-sm rounded-xl">
-          <p className="text-slate-500 text-xs">{isEn ? 'Generating puzzles...' : '題目載入生成中...'}</p>
+          <p className="text-slate-500 text-xs">{t.loading}</p>
         </div>
       )}
     </main>
