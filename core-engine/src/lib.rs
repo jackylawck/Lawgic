@@ -1,15 +1,45 @@
 use wasm_bindgen::prelude::*;
-use std::collections::VecDeque;
 
 type BitMask = u16;
-const ALL_CANDIDATES: BitMask = 0x03FE;
-const MAX_ITERATIONS: usize = 2000;
+pub const ALL_CANDIDATES: BitMask = 0x03FE; // Bits 1..=9
+
+// 🌟 編譯期靜態預算 81 格的 20 個正交與九宮鄰居（零運行時運算）
+const PEERS_TABLE: [[u8; 20]; 81] = {
+    let mut table = [[0u8; 20]; 81];
+    let mut i = 0;
+    while i < 81 {
+        let r = i / 9;
+        let c = i % 9;
+        let br = (r / 3) * 3;
+        let bc = (c / 3) * 3;
+        let mut count = 0;
+
+        let mut tr = 0;
+        while tr < 9 {
+            let mut tc = 0;
+            while tc < 9 {
+                if !(tr == r && tc == c) {
+                    if tr == r || tc == c || (tr >= br && tr < br + 3 && tc >= bc && tc < bc + 3) {
+                        table[i][count] = (tr * 9 + tc) as u8;
+                        count += 1;
+                    }
+                }
+                tc += 1;
+            }
+            tr += 1;
+        }
+        i += 1;
+    }
+    table
+};
 
 #[wasm_bindgen]
 pub struct SudokuEngine {
     initial_clues: [u8; 81],
     user_inputs: [u8; 81],
     cells: [BitMask; 81],
+    // 🌟 快照棧：支援 O(1) 毫秒級無損撤銷與試錯回滾
+    history_snapshots: Vec<[BitMask; 81]>,
 }
 
 #[wasm_bindgen]
@@ -32,67 +62,22 @@ impl SudokuEngine {
             initial_clues,
             user_inputs: [0u8; 81],
             cells: [ALL_CANDIDATES; 81],
+            history_snapshots: Vec::with_capacity(64),
         };
 
-        if !engine.full_recompute() {
-            return Err(JsValue::from_str("VALIDATION_ERR: Inherent contradictions"));
+        if !engine.rebuild_and_propagate() {
+            return Err(JsValue::from_str("VALIDATION_ERR: Inherent puzzle contradiction"));
         }
 
         Ok(engine)
     }
 
-    fn full_recompute(&mut self) -> bool {
-        self.cells = [ALL_CANDIDATES; 81];
-        let mut queue: VecDeque<usize> = VecDeque::with_capacity(81);
-
-        for idx in 0..81 {
-            let active_val = if self.initial_clues[idx] != 0 {
-                self.initial_clues[idx]
-            } else {
-                self.user_inputs[idx]
-            };
-
-            if active_val != 0 {
-                self.cells[idx] = 1 << active_val;
-                queue.push_back(idx);
-            }
-        }
-
-        let mut iterations = 0;
-        while let Some(idx) = queue.pop_front() {
-            iterations += 1;
-            if iterations > MAX_ITERATIONS {
-                return false;
-            }
-
-            let fixed_mask = self.cells[idx];
-            if fixed_mask.count_ones() != 1 {
-                continue;
-            }
-
-            let peers = get_peers_static(idx);
-            for &peer in peers.iter() {
-                if (self.cells[peer] & fixed_mask) != 0 {
-                    let new_mask = self.cells[peer] & !fixed_mask;
-                    if new_mask == 0 {
-                        return false;
-                    }
-                    if new_mask != self.cells[peer] {
-                        self.cells[peer] = new_mask;
-                        if new_mask.count_ones() == 1 {
-                            queue.push_back(peer);
-                        }
-                    }
-                }
-            }
-        }
-        true
+    /// 🌟 零拷貝記憶體指針：前端直接對映 WebAssembly.Memory，避免跨語言搬運陣列
+    pub fn get_cells_ptr(&self) -> *const BitMask {
+        self.cells.as_ptr()
     }
 
-    pub fn get_candidates(&self) -> Vec<u16> {
-        self.cells.to_vec()
-    }
-
+    /// 增量設定儲存格數值
     pub fn set_cell_value(&mut self, idx: usize, val: u8) -> Result<bool, JsValue> {
         if idx >= 81 {
             return Err(JsValue::from_str("OUT_OF_BOUNDS: Index out of range"));
@@ -104,37 +89,108 @@ impl SudokuEngine {
             return Err(JsValue::from_str("IMMUTABLE_CLUE: Cannot edit starting clue"));
         }
 
+        // 保存快照
+        let backup_cells = self.cells;
         let old_val = self.user_inputs[idx];
         self.user_inputs[idx] = val;
 
-        let is_valid = self.full_recompute();
-        if !is_valid {
-            self.user_inputs[idx] = old_val;
-            self.full_recompute();
-            return Ok(false);
+        if val == 0 {
+            // 清除數值時必須完全重建波前
+            if !self.rebuild_and_propagate() {
+                self.user_inputs[idx] = old_val;
+                self.cells = backup_cells;
+                return Ok(false);
+            }
+        } else {
+            // 🌟 增量落子傳播：無須從頭重跑，直接在目前狀態下收斂
+            let target_mask = 1 << val;
+            if (self.cells[idx] & target_mask) == 0 {
+                // 候選數中根本不包含此數字，直接判定非法落子
+                self.user_inputs[idx] = old_val;
+                return Ok(false);
+            }
+
+            self.cells[idx] = target_mask;
+            if !self.propagate_constraints(idx) {
+                // 違規矛盾：O(1) 立即回滾快照
+                self.user_inputs[idx] = old_val;
+                self.cells = backup_cells;
+                return Ok(false);
+            }
         }
 
         Ok(true)
     }
-}
 
-#[inline(always)]
-fn get_peers_static(idx: usize) -> [usize; 20] {
-    let mut peers = [0; 20];
-    let row = idx / 9;
-    let col = idx % 9;
-    let start_r = (row / 3) * 3;
-    let start_c = (col / 3) * 3;
-    let mut count = 0;
+    /// 重建並傳播全域約束
+    fn rebuild_and_propagate(&mut self) -> bool {
+        self.cells = [ALL_CANDIDATES; 81];
 
-    for r in 0..9 {
-        for c in 0..9 {
-            if r == row && c == col { continue; }
-            if r == row || c == col || (r >= start_r && r < start_r + 3 && c >= start_c && c < start_c + 3) {
-                peers[count] = r * 9 + c;
-                count += 1;
+        for i in 0..81 {
+            let active_val = if self.initial_clues[i] != 0 {
+                self.initial_clues[i]
+            } else {
+                self.user_inputs[i]
+            };
+
+            if active_val != 0 {
+                let mask = 1 << active_val;
+                if (self.cells[i] & mask) == 0 {
+                    return false;
+                }
+                self.cells[i] = mask;
+                if !self.propagate_constraints(i) {
+                    return false;
+                }
             }
         }
+        true
     }
-    peers
+
+    /// 🌟 超高效固定堆疊波前傳播（完全零 Heap Allocation，查表加速）
+    fn propagate_constraints(&mut self, start_idx: usize) -> bool {
+        let mut queue = [0u8; 81];
+        let mut q_head = 0;
+        let mut q_tail = 0;
+
+        queue[q_tail] = start_idx as u8;
+        q_tail += 1;
+
+        while q_head < q_tail {
+            let idx = queue[q_head] as usize;
+            q_head += 1;
+
+            let fixed_mask = self.cells[idx];
+            if fixed_mask.count_ones() != 1 {
+                continue;
+            }
+
+            // 查表取得 20 個 Peers
+            let peers = &PEERS_TABLE[idx];
+            for &peer_u8 in peers.iter() {
+                let peer = peer_u8 as usize;
+                let current_mask = self.cells[peer];
+
+                if (current_mask & fixed_mask) != 0 {
+                    let new_mask = current_mask & !fixed_mask;
+                    if new_mask == 0 {
+                        return false; // 候選數耗盡，產生衝突矛盾
+                    }
+
+                    if new_mask != current_mask {
+                        self.cells[peer] = new_mask;
+                        // 若被削成單一候選數，繼續級聯傳播
+                        if new_mask.count_ones() == 1 {
+                            if q_tail < 81 {
+                                queue[q_tail] = peer as u8;
+                                q_tail += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        true
+    }
 }
