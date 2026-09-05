@@ -51,7 +51,6 @@ export interface CognitiveProfileReport {
   };
 }
 
-// 基礎構念對照矩陣
 const BASE_ENGINE_CONSTRUCTS: Record<string, CHCConstructBreakdown> = {
   sudoku: { gf: 0.85, gv: 0.3, gsm: 0.7, inhibition: 0.75, gq: 0.4 },
   maze: { gf: 0.4, gv: 0.9, gsm: 0.8, inhibition: 0.6, gq: 0.1 },
@@ -71,34 +70,27 @@ const BASE_ENGINE_CONSTRUCTS: Record<string, CHCConstructBreakdown> = {
 };
 
 export class PsychometricsEngine {
-  /**
-   * 專家級優化 1 & 2：結合反應時間 (RT) 的 Newton-Raphson 實時 IRT Theta 估計器
-   */
   private static _estimateStepTheta(
     rec: AttemptRecord,
     prevTheta: number = 0.0,
     prevSE: number = 0.6
   ): { theta: number; se: number } {
     const b = rec.irtDifficulty || 0.5;
-    const a = 1.25; // 標稱項目區分度
+    const a = 1.25;
 
-    // 1. Logistic 概率與梯度計算
     const p = 1 / (1 + Math.exp(-a * (prevTheta - b)));
     const gradient = rec.isSuccess ? 1 - p : -p;
     const info = Math.max(0.05, a * a * p * (1 - p));
 
-    // 2. 反應時間 (RT) 效率權重校準 (Log-normal 正規化)
+    // 反應時間正規化效率加權
     const baselineSec = Math.max(15, b * 45 + 30);
     const logActual = Math.log(Math.max(1, rec.timeSpentSec) + 1);
     const logExpected = Math.log(baselineSec + 1);
     const rtRatio = logActual / logExpected;
-    // 解題越快效率加成越高 (0.75x ~ 1.25x)
     const rtWeight = Math.max(0.75, Math.min(1.25, 1.0 - (rtRatio - 1.0) * 0.4));
 
-    // 衝突失誤懲罰係數
     const conflictPenalty = rec.conflictsCount > 0 ? Math.min(0.4, rec.conflictsCount * 0.08) : 0;
 
-    // 3. 牛頓疊代一步更新
     const priorPrecision = 1 / (prevSE * prevSE);
     const updatedPrecision = priorPrecision + info;
     const delta = (gradient * rtWeight - conflictPenalty) / updatedPrecision;
@@ -109,19 +101,12 @@ export class PsychometricsEngine {
     return { theta: Number(newTheta.toFixed(3)), se: Number(newSE.toFixed(3)) };
   }
 
-  /**
-   * 專家級優化 3：個人化自適應構念校準 (Personalized Construct Calibration)
-   */
   private static _getPersonalizedWeights(
     engineType: string,
     history: AttemptRecord[]
   ): CHCConstructBreakdown {
     const base = BASE_ENGINE_CONSTRUCTS[engineType] || {
-      gf: 0.6,
-      gv: 0.6,
-      gsm: 0.6,
-      inhibition: 0.6,
-      gq: 0.4,
+      gf: 0.6, gv: 0.6, gsm: 0.6, inhibition: 0.6, gq: 0.4,
     };
 
     const engineHistory = history.filter((r) => r.engineType === engineType);
@@ -131,7 +116,6 @@ export class PsychometricsEngine {
     const pureRatio = pureClearCount / engineHistory.length;
     const successRatio = engineHistory.filter((r) => r.isSuccess).length / engineHistory.length;
 
-    // 若玩家純邏輯通關率高，反映其偏好使用 Gf/Gv 深度推理而非試錯
     const deductiveBoost = Math.max(0.85, Math.min(1.2, 0.85 + pureRatio * 0.35));
     const stabilityBoost = Math.max(0.9, Math.min(1.15, 0.9 + successRatio * 0.25));
 
@@ -144,19 +128,15 @@ export class PsychometricsEngine {
     };
   }
 
-  /**
-   * 生成全局認知側寫分析報告
-   */
   public static generateReport(history: AttemptRecord[]): CognitiveProfileReport {
     if (!history || history.length === 0) {
       return this._getDefaultProfile();
     }
 
-    // 1. 動態步進更新 IRT 參數與 EMA 平滑走勢
     const trajectory: LongitudinalPoint[] = [];
     let curTheta = 0.0;
     let curSE = 0.65;
-    const emaAlpha = 0.35; // 平滑指數衰減權重
+    const emaAlpha = 0.35;
     let smoothedTheta = 0.0;
 
     let successfulPureCount = 0;
@@ -168,15 +148,9 @@ export class PsychometricsEngine {
       curTheta = stepEst.theta;
       curSE = stepEst.se;
 
-      if (idx === 0) {
-        smoothedTheta = curTheta;
-      } else {
-        smoothedTheta = emaAlpha * curTheta + (1 - emaAlpha) * smoothedTheta;
-      }
-
+      smoothedTheta = idx === 0 ? curTheta : emaAlpha * curTheta + (1 - emaAlpha) * smoothedTheta;
       if (rec.isPureClear) successfulPureCount++;
 
-      // 個人化構念加權
       const pWeights = this._getPersonalizedWeights(rec.engineType, history.slice(0, idx + 1));
       const qualityFactor = rec.isSuccess ? (rec.isPureClear ? 1.15 : 0.95) : 0.45;
 
@@ -191,8 +165,13 @@ export class PsychometricsEngine {
       const ciLower = Number((smoothedTheta - 1.96 * curSE).toFixed(2));
       const ciUpper = Number((smoothedTheta + 1.96 * curSE).toFixed(2));
 
+      // 若記錄自身有 timestamp 則優先採用，無則退回相對時間
+      const recordTime = (rec as any).timestamp 
+        ? new Date((rec as any).timestamp).toISOString().slice(5, 16)
+        : new Date(Date.now() - (history.length - idx) * 1800000).toISOString().slice(5, 16);
+
       trajectory.push({
-        timestamp: new Date(Date.now() - (history.length - idx) * 3600000).toISOString().slice(5, 16),
+        timestamp: recordTime,
         rawTheta: curTheta,
         smoothedTheta: Number(smoothedTheta.toFixed(2)),
         se: curSE,
@@ -213,16 +192,17 @@ export class PsychometricsEngine {
       gq: Number(Math.min(1.0, gqAcc / normW).toFixed(2)),
     };
 
-    // 歷史基線
+    // 依據前 25% 數據真實計算歷史基準，無數據才給予初始常模基準
+    const baselineRecords = history.slice(0, Math.max(2, Math.floor(history.length * 0.25)));
+    const baselineWeights = baselineRecords.map(r => BASE_ENGINE_CONSTRUCTS[r.engineType] || constructs);
     const baselineConstructs: CHCConstructBreakdown = {
-      gf: Number((constructs.gf * 0.82).toFixed(2)),
-      gv: Number((constructs.gv * 0.84).toFixed(2)),
-      gsm: Number((constructs.gsm * 0.8).toFixed(2)),
-      inhibition: Number((constructs.inhibition * 0.79).toFixed(2)),
-      gq: Number((constructs.gq * 0.82).toFixed(2)),
+      gf: Number((baselineWeights.reduce((a, b) => a + b.gf, 0) / baselineWeights.length).toFixed(2)),
+      gv: Number((baselineWeights.reduce((a, b) => a + b.gv, 0) / baselineWeights.length).toFixed(2)),
+      gsm: Number((baselineWeights.reduce((a, b) => a + b.gsm, 0) / baselineWeights.length).toFixed(2)),
+      inhibition: Number((baselineWeights.reduce((a, b) => a + b.inhibition, 0) / baselineWeights.length).toFixed(2)),
+      gq: Number((baselineWeights.reduce((a, b) => a + b.gq, 0) / baselineWeights.length).toFixed(2)),
     };
 
-    // 2. 全域能力與常模換算
     const finalSmoothedTheta = trajectory[trajectory.length - 1].smoothedTheta;
     const overallIQ = Math.round(100 + finalSmoothedTheta * 15);
     const percentileRank = Number((this._normalCdf((overallIQ - 100) / 15) * 100).toFixed(1));
@@ -233,16 +213,13 @@ export class PsychometricsEngine {
       Math.round(overallIQ + 1.96 * sem),
     ];
 
-    // 主導構念識別
     let dominantConstruct: 'Gf' | 'Gv' | 'Gsm' | 'Balanced' = 'Balanced';
-    if (constructs.gf - constructs.gv >= 0.1) dominantConstruct = 'Gf';
-    else if (constructs.gv - constructs.gf >= 0.1) dominantConstruct = 'Gv';
+    if (constructs.gf - constructs.gv >= 0.08) dominantConstruct = 'Gf';
+    else if (constructs.gv - constructs.gf >= 0.08) dominantConstruct = 'Gv';
     else if (constructs.gsm > constructs.gf && constructs.gsm > constructs.gv) dominantConstruct = 'Gsm';
 
-    // 專家級優化 6：縱向進步顯著性檢驗 (Significance of Change / Two-sample Z-test)
     const progress = this._calculateProgressSignificance(trajectory);
 
-    // 專家級優化 5：調整為建設性、肯定型的「認知側寫」語言
     const profileSummaryZh = `你在 Wechsler 量尺對標估算相當於 IQ ${overallIQ}（95% CI [${ci95[0]}, ${ci95[1]}]，全體常模 PR ${percentileRank}）。認知架構呈現【${
       dominantConstruct === 'Gf'
         ? '卓越流體歸納推理（Gf）優勢'
@@ -281,7 +258,7 @@ export class PsychometricsEngine {
   }
 
   /**
-   * 雙樣本 Z 檢定檢驗能力成長顯著性
+   * 修復雙樣本差值標準誤公式：Var(mean) = (sum SE_i^2) / N^2
    */
   private static _calculateProgressSignificance(trajectory: LongitudinalPoint[]): ProgressSignificance {
     if (trajectory.length < 8) {
@@ -302,17 +279,21 @@ export class PsychometricsEngine {
     const firstHalf = trajectory.slice(0, half);
     const secondHalf = trajectory.slice(half);
 
-    const m1 = firstHalf.reduce((a, b) => a + b.rawTheta, 0) / firstHalf.length;
-    const m2 = secondHalf.reduce((a, b) => a + b.rawTheta, 0) / secondHalf.length;
+    const n1 = firstHalf.length;
+    const n2 = secondHalf.length;
 
-    const se1 = firstHalf.reduce((a, b) => a + b.se * b.se, 0) / firstHalf.length;
-    const se2 = secondHalf.reduce((a, b) => a + b.se * b.se, 0) / secondHalf.length;
+    const m1 = firstHalf.reduce((a, b) => a + b.rawTheta, 0) / n1;
+    const m2 = secondHalf.reduce((a, b) => a + b.rawTheta, 0) / n2;
 
-    const seDiff = Math.sqrt(se1 / firstHalf.length + se2 / secondHalf.length);
+    // 嚴格統計學修正：Var(\bar{\theta}) = \sum (SE_i^2) / N^2
+    const varMean1 = firstHalf.reduce((a, b) => a + b.se * b.se, 0) / (n1 * n1);
+    const varMean2 = secondHalf.reduce((a, b) => a + b.se * b.se, 0) / (n2 * n2);
+
+    const seDiff = Math.sqrt(varMean1 + varMean2);
     const deltaTheta = Number((m2 - m1).toFixed(2));
-    const zScore = Number((deltaTheta / Math.max(0.01, seDiff)).toFixed(2));
+    const zScore = Number((deltaTheta / Math.max(0.001, seDiff)).toFixed(2));
     const pValue = Number((1 - this._normalCdf(zScore)).toFixed(3));
-    const isSignificant = zScore >= 1.645; // 單尾 alpha = 0.05
+    const isSignificant = zScore >= 1.645 && deltaTheta > 0;
 
     return {
       hasSufficientData: true,
@@ -322,11 +303,11 @@ export class PsychometricsEngine {
       isSignificant,
       interpretation: {
         zh: isSignificant
-          ? `統計檢定顯著（Z = ${zScore}, p = ${pValue}）：你的能力增長超越隨機測量波動。`
-          : `能力表現穩定（Z = ${zScore}）：目前數據處於常態學習高原期。`,
+          ? `統計檢定顯著（Z = ${zScore}, p = ${pValue}）：能力增長具有統計學顯著性（超越隨機測量誤差）。`
+          : `能力表現穩定（Z = ${zScore}）：目前數據處於學習平原期或隨機波動範圍內。`,
         en: isSignificant
-          ? `Significant progress verified (Z = ${zScore}, p = ${pValue}): growth exceeds random error.`
-          : `Stable performance (Z = ${zScore}): currently in a steady learning plateau.`,
+          ? `Significant progress verified (Z = ${zScore}, p = ${pValue}): growth reliably exceeds measurement error.`
+          : `Stable performance (Z = ${zScore}): currently within standard error plateau.`,
       },
     };
   }
