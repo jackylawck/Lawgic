@@ -11,7 +11,7 @@ export interface JoystickElements {
   rightKnob?: HTMLElement | null;
   gripBtn?: HTMLElement | null;
   onMove?: JoystickCallback;
-  onMoveStep?: DirectionStepCallback; // 專為網格遊戲設計的離散步進事件
+  onMoveStep?: DirectionStepCallback;
   onRotate?: JoystickCallback;
   onGrip?: ActionCallback;
 }
@@ -26,21 +26,29 @@ export class JoystickManagerInstance {
   private activePointers: { left: number | null; right: number | null } = { left: null, right: null };
   private _cachedZones: { left: CachedZoneData | null; right: CachedZoneData | null } = { left: null, right: null };
   private _listeners: { target: EventTarget; type: string; fn: EventListenerOrEventListenerObject }[] = [];
+  
   private _hapticState = {
     left: { passedDeadzone: false, reachedMax: false },
     right: { passedDeadzone: false, reachedMax: false },
   };
 
-  // 離散步進定時器
+  // 當前方向向量快取（修復方向鎖定閉包 Bug）
+  private _currentStepDir: { left: [number, number]; right: [number, number] } = {
+    left: [0, 0],
+    right: [0, 0],
+  };
+
   private _stepTimers: { left: ReturnType<typeof setInterval> | null; right: ReturnType<typeof setInterval> | null } = {
     left: null,
     right: null,
   };
 
+  private _rafId: { left: number | null; right: number | null } = { left: null, right: null };
+
   public config = {
-    deadzone: 0.12,         // 12% 防誤觸死區
-    curve: 1.6,             // 1.6 階響應曲線
-    discreteStepInterval: 140, // 離散網格移動步進間隔 (ms)
+    deadzone: 0.12,            // 12% 防誤觸死區
+    curve: 1.6,                // 1.6 階非線性響應曲線
+    discreteStepInterval: 135, // 離散網格移動步進間隔 (ms)
     snapToCenterEasing: 'transform 0.18s cubic-bezier(0.34, 1.56, 0.64, 1)',
   };
 
@@ -71,7 +79,6 @@ export class JoystickManagerInstance {
       active = true;
       this.activePointers[id] = e.pointerId;
 
-      // 快取幾何計算，避免 move 時觸發 Layout Thrashing
       const rect = zone.getBoundingClientRect();
       this._cachedZones[id] = {
         centerX: rect.left + rect.width / 2,
@@ -86,7 +93,9 @@ export class JoystickManagerInstance {
       zone.classList.add('active');
       knob.style.transition = 'none';
 
-      if (navigator.vibrate) navigator.vibrate(8);
+      if (typeof navigator !== 'undefined' && navigator.vibrate) {
+        navigator.vibrate(8);
+      }
       this._handleMove(e, knob, id, analogCallback, stepCallback);
     };
 
@@ -103,11 +112,16 @@ export class JoystickManagerInstance {
 
       this._hapticState[id].passedDeadzone = false;
       this._hapticState[id].reachedMax = false;
+      this._currentStepDir[id] = [0, 0];
 
-      // 清除離散步進循環
       if (this._stepTimers[id]) {
         clearInterval(this._stepTimers[id]!);
         this._stepTimers[id] = null;
+      }
+
+      if (this._rafId[id]) {
+        cancelAnimationFrame(this._rafId[id]!);
+        this._rafId[id] = null;
       }
 
       try {
@@ -118,7 +132,6 @@ export class JoystickManagerInstance {
 
       zone.classList.remove('active');
 
-      // 物理回彈
       knob.style.transition = this.config.snapToCenterEasing;
       knob.style.transform = 'translate(-50%, -50%)';
 
@@ -157,10 +170,15 @@ export class JoystickManagerInstance {
 
     // 死區判定
     if (dist < deadzonePx) {
-      knob.style.transform = 'translate(-50%, -50%)';
-      this._hapticState[id].passedDeadzone = false;
-      if (analogCallback) analogCallback(0, 0);
+      if (this._rafId[id]) cancelAnimationFrame(this._rafId[id]!);
+      this._rafId[id] = requestAnimationFrame(() => {
+        knob.style.transform = 'translate(-50%, -50%)';
+      });
 
+      this._hapticState[id].passedDeadzone = false;
+      this._currentStepDir[id] = [0, 0];
+
+      if (analogCallback) analogCallback(0, 0);
       if (this._stepTimers[id]) {
         clearInterval(this._stepTimers[id]!);
         this._stepTimers[id] = null;
@@ -177,31 +195,32 @@ export class JoystickManagerInstance {
     const nx = Math.cos(angle) * curvedMagnitude;
     const ny = Math.sin(angle) * curvedMagnitude;
 
-    // 觸覺微反饋
-    if (navigator.vibrate) {
-      if (!this._hapticState[id].passedDeadzone && rawMagnitude > 0.05) {
+    // 觸覺微反饋 (加入回滯區間保護，避免抖動反覆觸發)
+    if (typeof navigator !== 'undefined' && navigator.vibrate) {
+      if (!this._hapticState[id].passedDeadzone && rawMagnitude > 0.08) {
         navigator.vibrate(6);
         this._hapticState[id].passedDeadzone = true;
       }
       if (!this._hapticState[id].reachedMax && rawMagnitude >= 0.96) {
         navigator.vibrate(10);
         this._hapticState[id].reachedMax = true;
-      } else if (rawMagnitude < 0.88) {
+      } else if (rawMagnitude < 0.85) {
         this._hapticState[id].reachedMax = false;
       }
     }
 
-    // 渲染搖桿球
+    // rAF 節流位移渲染
     const displayX = Math.cos(angle) * clampedDist;
     const displayY = Math.sin(angle) * clampedDist;
-    knob.style.transform = `translate(calc(-50% + ${displayX}px), calc(-50% + ${displayY}px))`;
+    if (this._rafId[id]) cancelAnimationFrame(this._rafId[id]!);
+    this._rafId[id] = requestAnimationFrame(() => {
+      knob.style.transform = `translate(calc(-50% + ${displayX.toFixed(1)}px), calc(-50% + ${displayY.toFixed(1)}px))`;
+    });
 
-    // 類比訊號回傳
     if (analogCallback) analogCallback(nx, ny);
 
-    // 離散步進支援（專門解決走迷宮一次走一格的問題）
+    // 離散步進支援（動態方向讀取，徹底解決閉包鎖定）
     if (stepCallback) {
-      // 四方向吸附 (4-Way Discrete Snap)
       let stepDx = 0;
       let stepDy = 0;
       if (Math.abs(nx) > Math.abs(ny)) {
@@ -210,12 +229,22 @@ export class JoystickManagerInstance {
         stepDy = ny > 0 ? 1 : -1;
       }
 
-      // 如果尚未開啟步進循環，立即觸發一次並排程
+      const prevDir = this._currentStepDir[id];
+      this._currentStepDir[id] = [stepDx, stepDy];
+
+      // 若尚未建立循環，立即發射一次並排程
       if (!this._stepTimers[id]) {
         stepCallback(stepDx, stepDy);
         this._stepTimers[id] = setInterval(() => {
-          stepCallback(stepDx, stepDy);
+          // 動態讀取最新方向向量，支援無縫切換方向
+          const [currentDx, currentDy] = this._currentStepDir[id];
+          if (currentDx !== 0 || currentDy !== 0) {
+            stepCallback(currentDx, currentDy);
+          }
         }, this.config.discreteStepInterval);
+      } else if (prevDir[0] !== stepDx || prevDir[1] !== stepDy) {
+        // 當手指在推動中直接切換方向時，立即響應新方向一次
+        stepCallback(stepDx, stepDy);
       }
     }
   }
@@ -229,7 +258,9 @@ export class JoystickManagerInstance {
       if (cooldown) return;
       cooldown = true;
 
-      if (navigator.vibrate) navigator.vibrate(15);
+      if (typeof navigator !== 'undefined' && navigator.vibrate) {
+        navigator.vibrate(15);
+      }
       btn.style.transform = 'scale(0.88)';
       if (onGrip) onGrip();
 
@@ -246,6 +277,9 @@ export class JoystickManagerInstance {
   public destroy() {
     Object.values(this._stepTimers).forEach((t) => {
       if (t) clearInterval(t);
+    });
+    Object.values(this._rafId).forEach((id) => {
+      if (id) cancelAnimationFrame(id);
     });
     this._listeners.forEach(({ target, type, fn }) => {
       target.removeEventListener(type, fn);
