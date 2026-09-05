@@ -28,7 +28,6 @@ interface ProcessTelemetry {
   cognitiveAdvantage: number;
 }
 
-// 預設視野：專家、大師、傳奇、終極開局皆為 3x3 戰霧
 const getDefaultViewMode = (tier: string): ViewMode => {
   switch (tier) {
     case 'kids': return 'full';
@@ -55,13 +54,11 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode 
   const isEn = lang === 'en';
 
   const currentTier = (actualPuzzle?.tier as TierKey) || 'kids';
-  // 取得真實階梯（相容傳奇與終極）
   const actualTier =
     (actualPuzzle as any)?.puzzle?.actualTier ||
     (actualPuzzle as any)?.metrics?.actualTier ||
     currentTier;
 
-  // 僅終極難度 (Ultimate) 鎖死戰霧
   const isUltimate = actualTier === 'ultimate';
 
   const rawData = (actualPuzzle as any)?.puzzle || (actualPuzzle as any)?.spec || (actualPuzzle as any);
@@ -115,7 +112,6 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode 
   const [lookOffset, setLookOffset] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const [isWallBlockedPulse, setIsWallBlockedPulse] = useState<boolean>(false);
 
-  // 自適應戰霧視野狀態
   const [viewMode, setViewMode] = useState<ViewMode>(() => getDefaultViewMode(actualTier));
   const [isCompleted, setIsCompleted] = useState<boolean>(false);
   const [showPBModal, setShowPBModal] = useState<boolean>(false);
@@ -139,7 +135,6 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode 
   const [replayStep, setReplayStep] = useState<number>(0);
   const replayTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // 初始化重置
   useEffect(() => {
     setPlayerPos(startPos);
     setTrail([startPos]);
@@ -176,7 +171,6 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode 
     return () => cancelAnimationFrame(frameId);
   }, [isCompleted]);
 
-  // 視野切換：僅終極鎖定，其餘均可自由切換
   const handleCycleViewMode = () => {
     if (isUltimate || isCompleted || isReplaying) return;
     if (navigator.vibrate) navigator.vibrate(10);
@@ -204,12 +198,10 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode 
     if (navigator.vibrate) navigator.vibrate(20);
   }, [playerPos, isCompleted, isReplaying]);
 
-  // 核心移動邏輯（嚴格整數步進）
   const movePlayer = useCallback(
     (rawDx: number, rawDy: number) => {
       if (isCompleted || isReplaying || !grid || grid.length === 0) return;
 
-      // 強制整數投影，防止浮點座標造成判定失效
       const dx = rawDx > 0 ? 1 : rawDx < 0 ? -1 : 0;
       const dy = rawDy > 0 ? 1 : rawDy < 0 ? -1 : 0;
       if (dx === 0 && dy === 0) return;
@@ -221,7 +213,6 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode 
         const nextX = currX + dx;
         const nextY = currY + dy;
 
-        // 越界或撞牆
         if (
           nextY < 0 ||
           nextY >= grid.length ||
@@ -315,7 +306,6 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode 
     [grid, endPos, isCompleted, isReplaying, visitedSet, actualPuzzle, currentTier, viewMode, isUltimate, recordAttempt, profile.personalBest.fastestTime]
   );
 
-  // 鍵盤移動監聽
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (isCompleted || isReplaying) return;
@@ -329,7 +319,6 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode 
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [movePlayer, toggleBreadcrumb, isCompleted, isReplaying]);
 
-  // 全域虛擬手把事件監聽（增設防抖冷卻與向量離散轉換）
   useEffect(() => {
     let moveThrottle = false;
 
@@ -339,7 +328,6 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode 
 
       if (moveThrottle) return;
 
-      // 4 向吸附轉換
       let stepX = 0;
       let stepY = 0;
       if (Math.abs(dx) > Math.abs(dy)) {
@@ -380,7 +368,6 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode 
     };
   }, [movePlayer, toggleBreadcrumb]);
 
-  // 手勢滑動處理
   const handleTouchStart = (e: React.TouchEvent) => {
     if (e.touches.length > 0) {
       touchStartRef.current = {
@@ -409,7 +396,6 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode 
     touchStartRef.current = null;
   };
 
-  // 幽靈重播
   const handleStartGhostReplay = useCallback(() => {
     if (trail.length === 0) return;
     setIsReplaying(true);
@@ -479,18 +465,18 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode 
     const bt = backtrackCountRef.current;
 
     if (overheadRatio <= 1.05 && bt === 0) {
-      return { grade: 'S++', color: 'text-amber-300 border-amber-400 bg-amber-950/80', desc: isEn ? 'Flawless Deduction' : '神之先驗 (Flawless)' };
+      return { grade: 'S++', color: 'text-amber-300 border-amber-400 bg-amber-950/80', desc: isEn ? 'Flawless Deduction (S++)' : '神之先驗 (S++)' };
     }
     if (overheadRatio <= 1.25 && bt <= 2) {
-      return { grade: 'S', color: 'text-cyan-300 border-cyan-400 bg-cyan-950/80', desc: isEn ? 'Master Foresight' : '大師前瞻 (Mastery)' };
+      return { grade: 'S', color: 'text-cyan-300 border-cyan-400 bg-cyan-950/80', desc: isEn ? 'Master Foresight (S)' : '大師前瞻 (S)' };
     }
     if (overheadRatio <= 1.55 && bt <= 5) {
-      return { grade: 'A', color: 'text-emerald-300 border-emerald-400 bg-emerald-950/80', desc: isEn ? 'Excellent Derivation' : '頂尖推導 (Excellent)' };
+      return { grade: 'A', color: 'text-emerald-300 border-emerald-400 bg-emerald-950/80', desc: isEn ? 'Excellent Derivation (A)' : '頂尖推導 (A)' };
     }
     if (overheadRatio <= 2.0 && bt <= 10) {
-      return { grade: 'B', color: 'text-blue-300 border-blue-400 bg-blue-950/80', desc: isEn ? 'Competent Exploration' : '穩健探索 (Competent)' };
+      return { grade: 'B', color: 'text-blue-300 border-blue-400 bg-blue-950/80', desc: isEn ? 'Competent Exploration (B)' : '穩健探索 (B)' };
     }
-    return { grade: 'C', color: 'text-slate-400 border-slate-600 bg-slate-900', desc: isEn ? 'Excessive Backtracking' : '過度回溯 (Drifting)' };
+    return { grade: 'C', color: 'text-slate-400 border-slate-600 bg-slate-900', desc: isEn ? 'Excessive Backtracking (C)' : '過度回溯 (C)' };
   }, [isCompleted, optimalSolution.length, trail.length, isEn]);
 
   const handleNavigateTargetGame = (gameId: string) => {
@@ -514,7 +500,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode 
         </div>
 
         <div className="bg-slate-950 border border-slate-800 p-1 rounded text-center">
-          <div className="text-slate-500 text-[6.5px]">{isEn ? '🎯 Steps' : '🎯 步數/最佳'}</div>
+          <div className="text-slate-500 text-[6.5px]">{isEn ? '🎯 Steps/Opt' : '🎯 步數/最佳'}</div>
           <div className={`font-bold ${currentOverhead > 140 ? 'text-rose-400' : 'text-cyan-300'}`}>
             {isReplaying ? replayStep + 1 : trail.length}/{optimalLen}
           </div>
@@ -523,22 +509,22 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode 
         <div className="bg-slate-950 border border-slate-800 p-1 rounded text-center">
           <div className="text-slate-500 text-[6.5px]">{isEn ? '🔄 Backtrack' : '🔄 回溯'}</div>
           <div className={`font-bold ${backtrackDisplay > 3 ? 'text-amber-400' : 'text-slate-300'}`}>
-            {backtrackDisplay} {isEn ? 'pts' : '次'}
+            {backtrackDisplay} {isEn ? '' : '次'}
           </div>
         </div>
 
         <div className="bg-slate-950 border border-slate-800 p-1 rounded text-center">
           <div className="text-slate-500 text-[6.5px]">{isEn ? '🧱 Wall-Hit' : '🧱 觸壁'}</div>
           <div className={`font-bold ${wallHitsDisplay > 4 ? 'text-rose-400' : 'text-slate-300'}`}>
-            {wallHitsDisplay} {isEn ? 'pts' : '次'}
+            {wallHitsDisplay} {isEn ? '' : '次'}
           </div>
         </div>
 
-        {/* 視野切換按鈕：僅終極鎖死，大師與傳奇均可點擊切換 */}
+        {/* 視野切換按鈕 */}
         <button
           onClick={handleCycleViewMode}
           disabled={isUltimate}
-          className={`p-1 rounded border text-center transition ${
+          className={`p-1 rounded border text-center transition cursor-pointer ${
             isUltimate
               ? 'bg-purple-950/80 border-purple-500 text-purple-300 cursor-not-allowed shadow-xs font-bold'
               : viewMode !== 'full'
@@ -560,7 +546,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode 
         </button>
       </div>
 
-      {/* 迷宮主盤面（加入 touchAction: none 防止手勢被 iOS 搶佔） */}
+      {/* 迷宮主盤面 */}
       <div
         className={`relative overflow-hidden p-1 rounded-xl bg-slate-950 border-2 transition-all duration-150 shadow-2xl ${
           isWallBlockedPulse ? 'border-rose-500 ring-2 ring-rose-500/50 scale-[0.99]' : 'border-slate-800'
@@ -662,8 +648,8 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode 
 
       {/* 滑動與按鍵提示指引 */}
       <div className="w-full max-w-[340px] flex items-center justify-between px-1 mt-1 text-[7px] text-slate-500">
-        <span>🎮 虛擬搖桿 / 螢幕滑動移動</span>
-        <span>E / MARK 放置信標 ✦</span>
+        <span>{isEn ? '🎮 Virtual Joystick / Swipe to move' : '🎮 虛擬搖桿 / 螢幕滑動移動'}</span>
+        <span>{isEn ? 'E / MARK: Drop Beacon ✦' : 'E / MARK 放置信標 ✦'}</span>
       </div>
 
       {/* 賽事級反思面板 */}
@@ -691,19 +677,21 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode 
 
           <div className="grid grid-cols-4 gap-1 text-[7.5px] text-slate-400 mb-1.5">
             <div className="bg-slate-900/80 p-1 rounded">
-              <div>耗時</div>
+              <div>{isEn ? 'Time' : '耗時'}</div>
               <div className="text-slate-200 font-bold text-[10px]">{(elapsedMs / 1000).toFixed(2)}s</div>
             </div>
             <div className="bg-slate-900/80 p-1 rounded">
-              <div>步數效率</div>
+              <div>{isEn ? 'Efficiency' : '步數效率'}</div>
               <div className="text-cyan-300 font-bold text-[10px]">{trail.length}/{optimalLen}</div>
             </div>
             <div className="bg-slate-900/80 p-1 rounded">
-              <div>回溯懲罰</div>
-              <div className="text-amber-300 font-bold text-[10px]">{backtrackCountRef.current} 次</div>
+              <div>{isEn ? 'Backtrack' : '回溯懲罰'}</div>
+              <div className="text-amber-300 font-bold text-[10px]">
+                {backtrackCountRef.current} {isEn ? '' : '次'}
+              </div>
             </div>
             <div className="bg-slate-900/80 p-1 rounded">
-              <div>觸壁干擾</div>
+              <div>{isEn ? 'Wall Penalty' : '觸壁干擾'}</div>
               <div className="text-rose-300 font-bold text-[10px]">{telemetryAnalysis.wallHitRate}%</div>
             </div>
           </div>
@@ -733,7 +721,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode 
             </div>
             <button
               onClick={() => handleNavigateTargetGame(benchmarkData.recommendedFocus.targetGame)}
-              className="shrink-0 px-2 py-1 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[7.5px] rounded transition active:scale-95"
+              className="shrink-0 px-2 py-1 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[7.5px] rounded transition active:scale-95 cursor-pointer"
             >
               ➜ {isEn ? 'Train' : '訓練'}
             </button>
@@ -743,7 +731,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode 
             <button
               onClick={handleStartGhostReplay}
               disabled={isReplaying}
-              className={`flex-1 py-1 rounded text-[7.5px] font-bold border transition flex items-center justify-center gap-0.5 ${
+              className={`flex-1 py-1 rounded text-[7.5px] font-bold border transition flex items-center justify-center gap-0.5 cursor-pointer ${
                 isReplaying
                   ? 'bg-slate-800 border-slate-700 text-slate-500 cursor-not-allowed'
                   : 'bg-indigo-950/80 hover:bg-indigo-900 border-indigo-500/60 text-indigo-300 shadow'
@@ -755,7 +743,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode 
 
             <button
               onClick={exportLongitudinalDataset}
-              className="flex-1 py-1 bg-slate-900 hover:bg-slate-800 border border-cyan-600/50 hover:border-cyan-400 text-cyan-300 text-[7.5px] font-bold rounded transition shadow flex items-center justify-center gap-0.5 active:scale-95"
+              className="flex-1 py-1 bg-slate-900 hover:bg-slate-800 border border-cyan-600/50 hover:border-cyan-400 text-cyan-300 text-[7.5px] font-bold rounded transition shadow flex items-center justify-center gap-0.5 active:scale-95 cursor-pointer"
             >
               <span>📊</span>
               <span>{isEn ? 'Dataset' : '匯出數據'}</span>
@@ -763,7 +751,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode 
 
             <button
               onClick={() => setShowSubmitModal(true)}
-              className="flex-1 py-1 bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 text-slate-950 text-[7.5px] font-black rounded shadow transition active:scale-95 flex items-center justify-center gap-0.5"
+              className="flex-1 py-1 bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 text-slate-950 text-[7.5px] font-black rounded shadow transition active:scale-95 flex items-center justify-center gap-0.5 cursor-pointer"
             >
               <span>📤</span>
               <span>{isEn ? 'Submit' : '賽事提交'}</span>
@@ -773,7 +761,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode 
           {proofSignature && (
             <div className="p-1 bg-slate-900 border border-slate-800 rounded text-left">
               <div className="text-[6.5px] text-slate-500 font-bold uppercase flex justify-between">
-                <span>LOCAL RECEIPT (SHA-256)</span>
+                <span>{isEn ? 'LOCAL RECEIPT (SHA-256)' : '本地存證 (SHA-256)'}</span>
                 <span className="text-emerald-400 font-mono text-[5.5px]">TAMPER-PROOF</span>
               </div>
               <div className="text-[6px] font-mono text-cyan-400/80 break-all select-all mt-0.5">
