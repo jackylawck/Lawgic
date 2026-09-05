@@ -28,11 +28,15 @@ export interface AttemptPayload {
   hypothesisCount?: number;
   technique?: string;
   partialCompletionRatio?: number;
+  partialCredit?: number; // 🌟 補齊臨床部分計分欄位
   isPureModeAttempt?: boolean;
   isPureClear?: boolean;
   hintLogs?: { secFromStart: number; level: number }[];
   irtDifficulty?: number;
 }
+
+// 🌟 匯出 AttemptRecord 供 psychometricsEngine.ts 使用
+export type AttemptRecord = AttemptPayload;
 
 export interface TechniqueStats {
   attempts: number;
@@ -285,7 +289,7 @@ export const useLearnerProfile = () => {
 
       const effectiveAccuracy = payload.isSuccess
         ? payload.conflictsCount === 0 ? 1 : 0.85
-        : (payload.partialCompletionRatio || 0) * 0.7;
+        : (payload.partialCompletionRatio || payload.partialCredit || 0) * 0.7;
 
       const newAvgTime = Math.round(newTimes.reduce((a, b) => a + b, 0) / newTimes.length);
       const newAccuracy = Number(
@@ -487,14 +491,13 @@ export const useLearnerProfile = () => {
     };
   }, [profile]);
 
-  // 空間推理綜合指數 (Spatial Composite Index, SCI)
   const getSpatialCompositeIndex = useCallback((): SpatialCompositeIndex => {
     const history = profile.recentRecords || profile.history || [];
     const masyuRecords = history.filter((a) => a.engineType === 'masyu' && a.isSuccess);
     const nurikabeRecords = history.filter((a) => a.engineType === 'nurikabe' && a.isSuccess);
     const lightupRecords = history.filter((a) => a.engineType === 'lightup' && a.isSuccess);
 
-    const calcControl = (records: AttemptPayload[], baseWeight: number) => {
+    const calcControl = (records: AttemptPayload[], _baseWeight: number) => {
       if (records.length === 0) return 72;
       const avgScore = records.reduce((acc, cur) => {
         const pureBonus = cur.isPureClear ? 100 : 80;
@@ -585,7 +588,7 @@ export const useLearnerProfile = () => {
         conflictCI,
         percentileRank,
         isBootstrap: true,
-        isNewPB: profile.recentRecords[0]?.timeSpentSec <= profile.personalBest.fastestTime,
+        isNewPB: (profile.recentRecords[0]?.timeSpentSec || 999) <= profile.personalBest.fastestTime,
         recommendedFocus: {
           dimension: weakestDim,
           targetGame,
