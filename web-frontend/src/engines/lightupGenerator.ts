@@ -71,6 +71,16 @@ export function mulberry32(a: number) {
   };
 }
 
+export async function generateAkariSignature(payload: string): Promise<string> {
+  if (typeof window !== 'undefined' && window.crypto?.subtle) {
+    const msgBuffer = new TextEncoder().encode(payload);
+    const hashBuffer = await window.crypto.subtle.digest('SHA-256', msgBuffer);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('').slice(0, 16).toUpperCase();
+  }
+  return 'AKARI-' + Math.random().toString(36).substring(2, 10).toUpperCase();
+}
+
 export class WebLightUpGenerator {
   private static inBounds(r: number, c: number, rows: number, cols: number): boolean {
     return r >= 0 && r < rows && c >= 0 && c < cols;
@@ -120,9 +130,6 @@ export class WebLightUpGenerator {
     return Number(((rayEntropy * 0.65) + (blockDensity * 0.35)).toFixed(3));
   }
 
-  /**
-   * 嚴格防止燈泡互相直射的合法解構造演算法
-   */
   private static generateValidGroundTruth(
     rows: number,
     cols: number,
@@ -156,7 +163,6 @@ export class WebLightUpGenerator {
     const isLit: boolean[][] = Array.from({ length: rows }, () => Array(cols).fill(false));
     const bulbs: LightUpCoord[] = [];
 
-    // 收集所有白格隨機打亂嘗試放燈
     const whiteCoords: [number, number][] = [];
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
@@ -171,7 +177,6 @@ export class WebLightUpGenerator {
     for (const [r, c] of whiteCoords) {
       if (isLit[r][c]) continue;
 
-      // 檢查此處放燈是否會直射到既有燈泡
       const ray = this.getIlluminatedCells(r, c, rows, cols, isBlock);
       const clash = ray.some(([ir, ic]) => bulbs.some((b) => b.r === ir && b.c === ic));
       if (!clash) {
@@ -182,7 +187,6 @@ export class WebLightUpGenerator {
       }
     }
 
-    // 驗證是否所有白格均被完全照亮
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         if (!isBlack[r][c] && !isLit[r][c]) return null;
@@ -237,9 +241,6 @@ export class WebLightUpGenerator {
     return { blackBlocks, solutionBulbs: bulbs };
   }
 
-  /**
-   * 狀態定義：0: 未決, 1: 燈泡, 2: 留白防護點 (Dot), 9: 黑塊
-   */
   public static getStrictDeductions(
     rows: number,
     cols: number,
@@ -253,7 +254,6 @@ export class WebLightUpGenerator {
 
     const isBlock = (r: number, c: number) => currentBoard[r][c] === 9;
 
-    // 定式 1: 0 號黑塊十字全排除
     for (const b of blackBlocks) {
       if (b.clue === 0) {
         const orth = [[-1, 0], [1, 0], [0, -1], [0, 1]];
@@ -275,7 +275,6 @@ export class WebLightUpGenerator {
       }
     }
 
-    // 定式 2: 燈泡視線射線覆蓋排除
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         if (currentBoard[r][c] === 1) {
@@ -297,7 +296,6 @@ export class WebLightUpGenerator {
       }
     }
 
-    // 定式 3: 黑塊線索度數飽和與缺額強推
     for (const b of blackBlocks) {
       if (b.clue !== null && b.clue > 0) {
         const orth = [[-1, 0], [1, 0], [0, -1], [0, 1]];
@@ -341,7 +339,6 @@ export class WebLightUpGenerator {
       }
     }
 
-    // 定式 4: 未受照光格的唯一光源定式 (Isolated Illuminance)
     const isCellLit = Array.from({ length: rows }, () => Array(cols).fill(false));
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
@@ -413,7 +410,7 @@ export class WebLightUpGenerator {
         if (!item) break;
         const { r, c, state, type, rationale, humanReadable } = item;
 
-        curBoard[r][c] = state; // 1: 燈泡, 2: 防護點
+        curBoard[r][c] = state;
         stepCount++;
         currentChain++;
         maxChain = Math.max(maxChain, currentChain);
@@ -496,7 +493,6 @@ export class WebLightUpGenerator {
       };
     }
 
-    // 確定性降級 Fallback
     const fallbackBlocks = [
       { r: 1, c: 1, clue: 1 },
       { r: 2, c: 3, clue: 0 },
