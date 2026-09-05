@@ -2,12 +2,34 @@
 name = "sudoku_wasm"
 version = "0.1.0"
 edition = "2021"
+authors = ["Logicore Engineering Team"]
+description = "World-class zero-copy deterministic Sudoku propagation engine"
 
 [lib]
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-wasm-bindgen = "0.2"
+# 鎖定具體修訂版本，避免 CI/CD 環境建置漂移
+wasm-bindgen = "0.2.92"
+
+# 供需要輕量堆配置時使用（若全域零堆配置可省略）
+wee_alloc = { version = "0.4.5", optional = true }
+
+[features]
+default = ["wee_alloc"]
+
+[profile.release]
+# 🌟 全域極限速度優化
+opt-level = 3
+# 🌟 跨 crate 全局連結時優化（大幅提升位元運算查表 PEERS_TABLE 內聯機率）
+lto = "fat"
+# 🌟 單代碼生成單元，最大化編譯器全域暫存器排程與死碼消除
+codegen-units = 1
+# 🌟 移除巨型 unwinding 堆疊展開機制，體積驟降且提升分支預測
+panic = "abort"
+# 🌟 剝離所有符號表與除錯資訊
+strip = "symbols"
 
 [package.metadata.wasm-pack.profile.release]
-wasm-opt = false
+# 🌟 開啟 Binaryen 極限後處理優化（配合 SIMD 與死碼消除）
+wasm-opt = ["-O4", "--converge", "--strip-debug"]
