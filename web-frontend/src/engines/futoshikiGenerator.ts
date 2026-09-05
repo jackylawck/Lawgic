@@ -68,9 +68,6 @@ const TIER_SPECS: Record<ExtendedTierKey, TierConfig> = {
   legendary: { size: 8, givenRatio: 0.18, inequalityCount: 17, minChainLength: 6, baseIrt: 3.3, timeLimitSec: 480 },
 };
 
-/**
- * 輕量確定性偽隨機數生成器 (Mulberry32)
- */
 export function mulberry32(a: number) {
   return function () {
     let t = (a += 0x6d2b79f5);
@@ -135,10 +132,11 @@ export class WebFutoshikiGenerator {
     limit: number = 2
   ): number {
     let solutions = 0;
+    let budget = 4000;
     const board = grid.map((row) => [...row]);
 
     const backtrackMRV = (): void => {
-      if (solutions >= limit) return;
+      if (solutions >= limit || budget-- <= 0) return;
 
       let minCandidatesCount = Infinity;
       let targetRow = -1;
@@ -212,10 +210,10 @@ export class WebFutoshikiGenerator {
       const u = queue.shift()!;
       const curDist = dist.get(u)!;
       for (const v of adj.get(u) || []) {
-        const nextDist = Math.max(dist.get(v)!, curDist + 1);
+        const nextDist = Math.max(dist.get(v) || 1, curDist + 1);
         dist.set(v, nextDist);
         maxLength = Math.max(maxLength, nextDist);
-        inDegree.set(v, inDegree.get(v)! - 1);
+        inDegree.set(v, (inDegree.get(v) || 1) - 1);
         if (inDegree.get(v) === 0) queue.push(v);
       }
     }
@@ -223,11 +221,15 @@ export class WebFutoshikiGenerator {
     return maxLength;
   }
 
+  /**
+   * 強化版因果推導定式 (含廣義極值邊界排除)
+   */
   public static getNextForcedDeduction(
     grid: number[][],
     size: number,
     inequalities: InequalityConstraint[]
   ): FutoshikiHintStep | null {
+    // 1. 唯餘數 (Naked Single)
     for (let r = 0; r < size; r++) {
       for (let c = 0; c < size; c++) {
         if (grid[r][c] !== 0) continue;
@@ -239,46 +241,93 @@ export class WebFutoshikiGenerator {
             c,
             forcedValue: candidates[0],
             technique: 'naked_single',
-            rationale: `在第 ${r + 1} 行第 ${c + 1} 列，排除同行列與不等約束後僅剩候選數 ${candidates[0]}`,
+            rationale: `在 [${r + 1}, ${c + 1}]，排除同行列與不等約束後僅剩唯一候選數 ${candidates[0]}`,
             humanReadable: {
-              zh: `坐標 [${r + 1}, ${c + 1}] 經過行、列與相鄰不等號約束排除後，僅剩唯一候選數字 ${candidates[0]}！`,
-              en: `Cell [${r + 1}, ${c + 1}] has only one valid candidate ${candidates[0]} remaining!`,
+              zh: `單元格 [${r + 1}, ${c + 1}] 經過行、列與相鄰不等約束排除後，僅剩唯一候選數字 ${candidates[0]}！`,
+              en: `Cell [${r + 1}, ${c + 1}] has only one valid candidate ${candidates[0]} remaining after constraint propagation!`,
             },
           };
         }
       }
     }
 
+    // 2. 廣義不等式極值定式 (Generalized Inequality Bound)
     for (const ineq of inequalities) {
       const v1 = grid[ineq.r1][ineq.c1];
       const v2 = grid[ineq.r2][ineq.c2];
-      if (ineq.op === '>' && v2 === size - 1 && v1 === 0) {
-        return {
-          step: 1,
-          r: ineq.r1,
-          c: ineq.c1,
-          forcedValue: size,
-          technique: 'inequality_bound',
-          rationale: `此格大於 ${size - 1}，在 1～${size} 範圍內必為最大值 ${size}`,
-          humanReadable: {
-            zh: `該格嚴格大於相鄰的 ${size - 1}，必然是極限最大值 ${size}！`,
-            en: `Strictly greater than ${size - 1}; it must take the maximum value ${size}!`,
-          },
-        };
-      }
-      if (ineq.op === '<' && v2 === 2 && v1 === 0) {
-        return {
-          step: 1,
-          r: ineq.r1,
-          c: ineq.c1,
-          forcedValue: 1,
-          technique: 'inequality_bound',
-          rationale: `此格小於 2，在正整數範圍內必為最小值 1`,
-          humanReadable: {
-            zh: `該格嚴格小於相鄰的 2，必然是極限最小值 1！`,
-            en: `Strictly less than 2; it must take the minimum value 1!`,
-          },
-        };
+
+      if (ineq.op === '>') {
+        // v1 > v2: 若 v2 確定，v1 候選數可能收斂
+        if (v2 !== 0 && v1 === 0) {
+          const valid = this.getCandidates(grid, size, inequalities, ineq.r1, ineq.c1).filter((x) => x > v2);
+          if (valid.length === 1) {
+            return {
+              step: 1,
+              r: ineq.r1,
+              c: ineq.c1,
+              forcedValue: valid[0],
+              technique: 'inequality_bound',
+              rationale: `此格大於相鄰的 ${v2}，在當前合法候選中僅能取 ${valid[0]}`,
+              humanReadable: {
+                zh: `單元格 [${ineq.r1 + 1}, ${ineq.c1 + 1}] 嚴格大於相鄰的 ${v2}，且只有數字 ${valid[0]} 符合條件！`,
+                en: `Cell [${ineq.r1 + 1}, ${ineq.c1 + 1}] is strictly greater than ${v2}, forcing value ${valid[0]}!`,
+              },
+            };
+          }
+        }
+        if (v1 !== 0 && v2 === 0) {
+          const valid = this.getCandidates(grid, size, inequalities, ineq.r2, ineq.c2).filter((x) => x < v1);
+          if (valid.length === 1) {
+            return {
+              step: 1,
+              r: ineq.r2,
+              c: ineq.c2,
+              forcedValue: valid[0],
+              technique: 'inequality_bound',
+              rationale: `此格小於相鄰的 ${v1}，在當前合法候選中僅能取 ${valid[0]}`,
+              humanReadable: {
+                zh: `單元格 [${ineq.r2 + 1}, ${ineq.c2 + 1}] 嚴格小於相鄰的 ${v1}，且只有數字 ${valid[0]} 符合條件！`,
+                en: `Cell [${ineq.r2 + 1}, ${ineq.c2 + 1}] is strictly less than ${v1}, forcing value ${valid[0]}!`,
+              },
+            };
+          }
+        }
+      } else {
+        // v1 < v2
+        if (v2 !== 0 && v1 === 0) {
+          const valid = this.getCandidates(grid, size, inequalities, ineq.r1, ineq.c1).filter((x) => x < v2);
+          if (valid.length === 1) {
+            return {
+              step: 1,
+              r: ineq.r1,
+              c: ineq.c1,
+              forcedValue: valid[0],
+              technique: 'inequality_bound',
+              rationale: `此格小於相鄰的 ${v2}，在當前合法候選中僅能取 ${valid[0]}`,
+              humanReadable: {
+                zh: `單元格 [${ineq.r1 + 1}, ${ineq.c1 + 1}] 嚴格小於相鄰的 ${v2}，且只有數字 ${valid[0]} 符合條件！`,
+                en: `Cell [${ineq.r1 + 1}, ${ineq.c1 + 1}] is strictly less than ${v2}, forcing value ${valid[0]}!`,
+              },
+            };
+          }
+        }
+        if (v1 !== 0 && v2 === 0) {
+          const valid = this.getCandidates(grid, size, inequalities, ineq.r2, ineq.c2).filter((x) => x > v1);
+          if (valid.length === 1) {
+            return {
+              step: 1,
+              r: ineq.r2,
+              c: ineq.c2,
+              forcedValue: valid[0],
+              technique: 'inequality_bound',
+              rationale: `此格大於相鄰的 ${v1}，在當前合法候選中僅能取 ${valid[0]}`,
+              humanReadable: {
+                zh: `單元格 [${ineq.r2 + 1}, ${ineq.c2 + 1}] 嚴格大於相鄰的 ${v1}，且只有數字 ${valid[0]} 符合條件！`,
+                en: `Cell [${ineq.r2 + 1}, ${ineq.c2 + 1}] is strictly greater than ${v1}, forcing value ${valid[0]}!`,
+              },
+            };
+          }
+        }
       }
     }
 
@@ -386,7 +435,7 @@ export class WebFutoshikiGenerator {
     const rnd = mulberry32(actualSeed);
 
     let attempts = 0;
-    while (attempts < 60) {
+    while (attempts < 50) {
       attempts++;
 
       const solution = this.generateLatinSquare(size, rnd);
@@ -396,7 +445,7 @@ export class WebFutoshikiGenerator {
       const addSymmetricHorizontal = (r: number, c: number) => {
         if (c + 1 >= size) return;
         const symR = size - 1 - r;
-        const symC = size - 1 - (c + 1);
+        const symC = size - 2 - c; // 正確 180° 對稱水準邊索引
 
         const k1 = `H:${r},${c}`;
         const k2 = `H:${symR},${symC}`;
@@ -406,7 +455,7 @@ export class WebFutoshikiGenerator {
         inequalities.push({ r1: r, c1: c, r2: r, c2: c + 1, op: op1 });
         edgeSet.add(k1);
 
-        if (symR !== r || symC !== c) {
+        if (symR >= 0 && symR < size && symC >= 0 && symC + 1 < size && (symR !== r || symC !== c)) {
           const op2: '>' | '<' = solution[symR][symC] > solution[symR][symC + 1] ? '>' : '<';
           inequalities.push({ r1: symR, c1: symC, r2: symR, c2: symC + 1, op: op2 });
           edgeSet.add(k2);
@@ -415,7 +464,7 @@ export class WebFutoshikiGenerator {
 
       const addSymmetricVertical = (r: number, c: number) => {
         if (r + 1 >= size) return;
-        const symR = size - 1 - (r + 1);
+        const symR = size - 2 - r; // 正確 180° 對稱垂直邊索引
         const symC = size - 1 - c;
 
         const k1 = `V:${r},${c}`;
@@ -426,7 +475,7 @@ export class WebFutoshikiGenerator {
         inequalities.push({ r1: r, c1: c, r2: r + 1, c2: c, op: op1 });
         edgeSet.add(k1);
 
-        if (symR !== r || symC !== c) {
+        if (symR >= 0 && symR + 1 < size && symC >= 0 && symC < size && (symR !== r || symC !== c)) {
           const op2: '>' | '<' = solution[symR][symC] > solution[symR + 1][symC] ? '>' : '<';
           inequalities.push({ r1: symR, c1: symC, r2: symR + 1, c2: symC, op: op2 });
           edgeSet.add(k2);
@@ -434,7 +483,7 @@ export class WebFutoshikiGenerator {
       };
 
       let pickAttempts = 0;
-      while (inequalities.length < inequalityCount && pickAttempts < 70) {
+      while (inequalities.length < inequalityCount && pickAttempts < 60) {
         pickAttempts++;
         const isHoriz = rnd() > 0.5;
         const r = Math.floor(rnd() * size);
@@ -468,8 +517,7 @@ export class WebFutoshikiGenerator {
           cellPairs.push([r, c, symR, symC]);
         }
       }
-      
-      // Shuffle pairs with deterministic RNG
+
       for (let i = cellPairs.length - 1; i > 0; i--) {
         const j = Math.floor(rnd() * (i + 1));
         [cellPairs[i], cellPairs[j]] = [cellPairs[j], cellPairs[i]];
@@ -483,6 +531,16 @@ export class WebFutoshikiGenerator {
 
         initialGrid[r1][c1] = 0;
         initialGrid[r2][c2] = 0;
+
+        // 快速先驗：任一格候補數不能為空
+        if (
+          this.getCandidates(initialGrid, size, inequalities, r1, c1).length === 0 ||
+          this.getCandidates(initialGrid, size, inequalities, r2, c2).length === 0
+        ) {
+          initialGrid[r1][c1] = backup1;
+          initialGrid[r2][c2] = backup2;
+          continue;
+        }
 
         if (this.countSolutions(initialGrid, size, inequalities, 2) === 1) {
           dug += r1 === r2 && c1 === c2 ? 1 : 2;
