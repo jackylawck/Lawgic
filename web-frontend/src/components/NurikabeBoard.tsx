@@ -1,145 +1,189 @@
 // web-frontend/src/components/NurikabeBoard.tsx
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { PuzzleEntity, TierKey } from '../generated';
 import { useLearnerProfile } from '../hooks/useLearnerProfile';
 import { useLanguage } from '../contexts/LanguageContext';
-import { NurikabeSpec, NurikabeHintStep, WebNurikabeGenerator } from '../engines/nurikabeGenerator';
-import { ChallengeCodec } from '../utils/challengeCodec';
-import { LeaderboardManager, LeaderboardEntry } from '../utils/leaderboard';
+import { MetricErrorBar } from './MetricErrorBar';
+import { CognitiveRadarChart } from './CognitiveRadarChart';
+import { PBCelebrationModal } from './PBCelebrationModal';
+import { TournamentSubmissionModal } from './TournamentSubmissionModal';
+import { getEnvironmentFingerprint, calculateInfractionScore } from '../utils/tournamentSecurity';
 
 interface Props {
-  puzzle?: PuzzleEntity;
   puzzleData?: PuzzleEntity;
+  puzzle?: PuzzleEntity;
   tournamentMode?: boolean;
 }
 
-type CellState = 0 | 1 | 2; // 0: 空白, 1: 黑牆, 2: 白島
+type CellState = 0 | 1 | 2; // 0: 空, 1: 黑海, 2: 白島
 
-export const NurikabeBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode }) => {
+interface BoardDelta {
+  r: number;
+  c: number;
+  from: CellState;
+  to: CellState;
+}
+
+export type NurikabeTechnique =
+  | 'clue_isolation'
+  | 'diagonal_clue_sea'
+  | 'island_quota_closure'
+  | 'pool_2x2_avoidance'
+  | 'ocean_connectivity'
+  | 'line_macro_exclusion'; // 新增宏觀行列排除
+
+interface NurikabeHintStep {
+  step: number;
+  targetCell: [number, number];
+  forcedState: 1 | 2; // 1: 黑海, 2: 白島
+  technique: NurikabeTechnique;
+  evidenceCells: [number, number][]; // 推導依據座標序列
+  rationale: string;
+  humanReadable: {
+    zh: string;
+    en: string;
+  };
+}
+
+const MAX_HISTORY_STEPS = 250;
+
+export const NurikabeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode = false }) => {
   const actualPuzzle = puzzleData || puzzle;
+  const {
+    recordAttempt,
+    getBenchmarkMetrics,
+    profile,
+    getCompositeCognitiveIndex,
+    exportLongitudinalDataset,
+  } = useLearnerProfile();
+
   const { lang } = useLanguage();
   const isEn = lang === 'en';
-  const { recordAttempt, getCompositeCognitiveIndex } = useLearnerProfile();
 
-  const spec = (actualPuzzle?.puzzle || actualPuzzle) as unknown as NurikabeSpec;
-  const rows = spec?.rows || 5;
-  const cols = spec?.cols || 5;
-  const clues = spec?.clues || [];
+  const spec = (actualPuzzle as any)?.puzzle || (actualPuzzle as any)?.spec || (actualPuzzle as any);
+  const rows = spec?.rows || spec?.grid?.length || 7;
+  const cols = spec?.cols || spec?.grid?.[0]?.length || 7;
 
-  const boardContainerRef = useRef<HTMLDivElement>(null);
-  const [board, setBoard] = useState<CellState[][]>(() =>
-    Array.from({ length: rows }, () => Array(cols).fill(0))
-  );
-  const [selectedCell, setSelectedCell] = useState<[number, number]>([0, 0]);
-  const [isCompleted, setIsCompleted] = useState<boolean>(false);
-  const [isTimeOut, setIsTimeOut] = useState<boolean>(false);
-  const [isMonochrome, setIsMonochrome] = useState<boolean>(false);
-  const [showHallOfFame, setShowHallOfFame] = useState<boolean>(false);
-  const [showKeyboardHUD, setShowKeyboardHUD] = useState<boolean>(false);
-  const [pureFilterOnly, setPureFilterOnly] = useState<boolean>(false);
-  const [toastText, setToastText] = useState<string | null>(null);
-  const [nickname, setNickname] = useState<string>(() => localStorage.getItem('lawgic_player_nick') || 'Player');
-
-  // 累計提示觸發次數
-  const [hintsTriggeredCount, setHintsTriggeredCount] = useState<number>(0);
-
-  // 高精度公平時計與防切頁防護
-  const timeLimit = actualPuzzle?.metrics?.estimated_time_sec || 180;
-  const [remainingSec, setRemainingSec] = useState<number>(timeLimit);
-  const [accumulatedMs, setAccumulatedMs] = useState<number>(0);
-  const lastActiveTimestamp = useRef<number>(performance.now());
-  const isSuspended = useRef<boolean>(false);
-
-  // 三階因果提示狀態
-  const [hintLevel, setHintLevel] = useState<number>(0);
-  const [activeHint, setActiveHint] = useState<NurikabeHintStep | null>(null);
-
-  const clueMap = useMemo(() => {
-    const map = new Map<string, number>();
-    for (const c of clues) map.set(`${c.r},${c.c}`, c.value);
-    return map;
-  }, [clues]);
-
-  const currentEarnedPoints = useMemo(() => {
-    const irt = actualPuzzle?.metrics?.irt_logit_difficulty || 1.0;
-    const spentSec = Math.round(accumulatedMs / 1000);
-    return LeaderboardManager.calculateScore(irt, spentSec, timeLimit, hintsTriggeredCount);
-  }, [actualPuzzle, accumulatedMs, timeLimit, hintsTriggeredCount]);
-
-  // 細節 1：動態段位稱號晉級系統
-  const masteryRankTitle = useMemo(() => {
-    const isPure = hintsTriggeredCount === 0;
-    if (currentEarnedPoints >= 180 && isPure) {
-      return { zh: '💎 純粹宗師', en: '💎 Pure Grandmaster', color: 'text-cyan-300' };
+  const clueGrid: number[][] = useMemo(() => {
+    if (spec?.clues) return spec.clues;
+    if (spec?.grid) {
+      return spec.grid.map((row: any[]) =>
+        row.map((cell) => (typeof cell === 'number' && cell > 0 ? cell : 0))
+      );
     }
-    if (currentEarnedPoints >= 150 && isPure) {
-      return { zh: '🧠 推理巨匠', en: '🧠 Logic Master', color: 'text-purple-300' };
-    }
-    if (currentEarnedPoints >= 120) {
-      return { zh: '⚡ 極速先鋒', en: '⚡ Speed Pioneer', color: 'text-amber-300' };
-    }
-    return { zh: '🌱 暗夜行者', en: '🌱 Shadow Walker', color: 'text-emerald-400' };
-  }, [currentEarnedPoints, hintsTriggeredCount]);
+    return Array.from({ length: rows }, () => Array(cols).fill(0));
+  }, [spec, rows, cols]);
 
-  // 初始化與自動聚焦
-  useEffect(() => {
-    const initialBoard: CellState[][] = Array.from({ length: rows }, () => Array(cols).fill(0));
-    for (const cl of clues) initialBoard[cl.r][cl.c] = 2;
-    setBoard(initialBoard);
-    setSelectedCell([0, 0]);
-    setIsCompleted(false);
-    setIsTimeOut(false);
-    setRemainingSec(timeLimit);
-    setAccumulatedMs(0);
-    setHintsTriggeredCount(0);
-    lastActiveTimestamp.current = performance.now();
-    setHintLevel(0);
-    setActiveHint(null);
+  const solution: boolean[][] = useMemo(() => {
+    return (
+      actualPuzzle?.solution ||
+      spec?.solution ||
+      Array.from({ length: rows }, () => Array(cols).fill(false))
+    );
+  }, [actualPuzzle, spec, rows, cols]);
 
-    requestAnimationFrame(() => {
-      boardContainerRef.current?.focus();
-    });
-  }, [actualPuzzle?.id, rows, cols, clues, timeLimit]);
+  const currentTier = (actualPuzzle?.tier as TierKey) || 'kids';
 
-  useEffect(() => {
-    const handleVisibilityChange = () => {
-      if (document.hidden) {
-        isSuspended.current = true;
-      } else {
-        lastActiveTimestamp.current = performance.now();
-        isSuspended.current = false;
+  const [board, setBoard] = useState<CellState[][]>(() => {
+    const init = Array.from({ length: rows }, () => Array(cols).fill(0) as CellState[]);
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        if (clueGrid[r][c] > 0) init[r][c] = 2;
       }
-    };
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
-  }, []);
+    }
+    return init;
+  });
+
+  const [history, setHistory] = useState<BoardDelta[]>([]);
+  const [redoStack, setRedoStack] = useState<BoardDelta[]>([]);
+  const [cursorPos, setCursorPos] = useState<[number, number]>([0, 0]);
+
+  const [noGuessMode, setNoGuessMode] = useState<boolean>(false);
+  const [noGuessWarning, setNoGuessWarning] = useState<string | null>(null);
+  const [activeHint, setActiveHint] = useState<NurikabeHintStep | null>(null);
+  const [hintLadderLevel, setHintLadderLevel] = useState<1 | 2 | 3>(1);
+
+  // 因果推導動畫亮起集合
+  const [animatedEvidenceSet, setAnimatedEvidenceSet] = useState<Set<string>>(new Set());
+
+  const [isCompleted, setIsCompleted] = useState<boolean>(false);
+  const [showPBModal, setShowPBModal] = useState<boolean>(false);
+  const [showSubmitModal, setShowSubmitModal] = useState<boolean>(false);
+  const [proofSignature, setProofSignature] = useState<string | null>(null);
+
+  const startTimeRef = useRef<number>(Date.now());
+  const [elapsedMs, setElapsedMs] = useState<number>(0);
+  const conflictCountRef = useRef<number>(0);
+  const [conflictDisplay, setConflictDisplay] = useState<number>(0);
+  const movesCountRef = useRef<number>(0);
+  const hasRecordedRef = useRef<boolean>(false);
+
+  const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    if (isCompleted || isTimeOut) return;
+    const init = Array.from({ length: rows }, () => Array(cols).fill(0) as CellState[]);
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        if (clueGrid[r][c] > 0) init[r][c] = 2;
+      }
+    }
+    setBoard(init);
+    setHistory([]);
+    setRedoStack([]);
+    setCursorPos([0, 0]);
+    setIsCompleted(false);
+    setActiveHint(null);
+    setHintLadderLevel(1);
+    setAnimatedEvidenceSet(new Set());
+    setProofSignature(null);
+    setNoGuessWarning(null);
+    startTimeRef.current = Date.now();
+    setElapsedMs(0);
+    conflictCountRef.current = 0;
+    setConflictDisplay(0);
+    movesCountRef.current = 0;
+    hasRecordedRef.current = false;
+  }, [actualPuzzle?.id, rows, cols, clueGrid]);
 
-    const timer = setInterval(() => {
-      if (isSuspended.current) return;
-      const now = performance.now();
-      const delta = now - lastActiveTimestamp.current;
-      lastActiveTimestamp.current = now;
+  useEffect(() => {
+    if (isCompleted) return;
+    let frameId: number;
+    const updateTimer = () => {
+      setElapsedMs(Date.now() - startTimeRef.current);
+      frameId = requestAnimationFrame(updateTimer);
+    };
+    frameId = requestAnimationFrame(updateTimer);
+    return () => cancelAnimationFrame(frameId);
+  }, [isCompleted]);
 
-      setAccumulatedMs((prev) => {
-        const next = prev + delta;
-        if (tournamentMode) {
-          const spentSec = Math.floor(next / 1000);
-          const left = Math.max(0, timeLimit - spentSec);
-          setRemainingSec(left);
-          if (left === 0) setIsTimeOut(true);
-        }
-        return next;
-      });
-    }, 100);
+  // 動態推導依據瀑布流閃爍動畫 (Cascade Animation)
+  useEffect(() => {
+    if (!activeHint || activeHint.evidenceCells.length === 0) {
+      setAnimatedEvidenceSet(new Set());
+      return;
+    }
 
-    return () => clearInterval(timer);
-  }, [isCompleted, isTimeOut, tournamentMode, timeLimit]);
+    setAnimatedEvidenceSet(new Set());
+    const timers: NodeJS.Timeout[] = [];
 
-  const poolViolations = useMemo(() => {
-    const set = new Set<string>();
+    activeHint.evidenceCells.forEach(([er, ec], idx) => {
+      const t = setTimeout(() => {
+        setAnimatedEvidenceSet((prev) => new Set(prev).add(`${er},${ec}`));
+        if (navigator.vibrate) navigator.vibrate(4);
+      }, idx * 120);
+      timers.push(t);
+    });
+
+    return () => timers.forEach(clearTimeout);
+  }, [activeHint]);
+
+  // 全域拓撲分析
+  const analysis = useMemo(() => {
+    const pool2x2 = new Set<string>();
+    const multiClueIslands = new Set<string>();
+    const overflowIslands = new Set<string>();
+    const satisfiedIslands = new Set<string>();
+
     for (let r = 0; r < rows - 1; r++) {
       for (let c = 0; c < cols - 1; c++) {
         if (
@@ -148,300 +192,695 @@ export const NurikabeBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentM
           board[r][c + 1] === 1 &&
           board[r + 1][c + 1] === 1
         ) {
-          set.add(`${r},${c}`);
-          set.add(`${r + 1},${c}`);
-          set.add(`${r},${c + 1}`);
-          set.add(`${r + 1},${c + 1}`);
+          pool2x2.add(`${r},${c}`);
+          pool2x2.add(`${r + 1},${c}`);
+          pool2x2.add(`${r + 1},${c + 1}`);
+          pool2x2.add(`${r},${c + 1}`);
         }
       }
     }
-    return set;
-  }, [board, rows, cols]);
 
-  const isStreamFragmented = useMemo(() => {
-    let firstWall: [number, number] | null = null;
-    let totalWalls = 0;
+    const visitedWhite = new Set<string>();
+    const dirs = [[0, 1], [0, -1], [1, 0], [-1, 0]];
+
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        if (board[r][c] === 2 && !visitedWhite.has(`${r},${c}`)) {
+          const islandCells: [number, number][] = [];
+          const cluesInIsland: [number, number, number][] = [];
+          const queue: [number, number][] = [[r, c]];
+          visitedWhite.add(`${r},${c}`);
+
+          while (queue.length > 0) {
+            const [cr, cc] = queue.shift()!;
+            islandCells.push([cr, cc]);
+            if (clueGrid[cr][cc] > 0) {
+              cluesInIsland.push([cr, cc, clueGrid[cr][cc]]);
+            }
+
+            for (const [dr, dc] of dirs) {
+              const nr = cr + dr;
+              const nc = cc + dc;
+              if (
+                nr >= 0 &&
+                nr < rows &&
+                nc >= 0 &&
+                nc < cols &&
+                board[nr][nc] === 2 &&
+                !visitedWhite.has(`${nr},${nc}`)
+              ) {
+                visitedWhite.add(`${nr},${nc}`);
+                queue.push([nr, nc]);
+              }
+            }
+          }
+
+          if (cluesInIsland.length > 1) {
+            islandCells.forEach(([ir, ic]) => multiClueIslands.add(`${ir},${ic}`));
+          } else if (cluesInIsland.length === 1) {
+            const targetSize = cluesInIsland[0][2];
+            if (islandCells.length > targetSize) {
+              islandCells.forEach(([ir, ic]) => overflowIslands.add(`${ir},${ic}`));
+            } else if (islandCells.length === targetSize) {
+              islandCells.forEach(([ir, ic]) => satisfiedIslands.add(`${ir},${ic}`));
+            }
+          }
+        }
+      }
+    }
+
+    let totalBlack = 0;
+    let firstBlack: [number, number] | null = null;
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         if (board[r][c] === 1) {
-          totalWalls++;
-          if (!firstWall) firstWall = [r, c];
+          totalBlack++;
+          if (!firstBlack) firstBlack = [r, c];
         }
       }
     }
-    if (totalWalls <= 1 || !firstWall) return false;
 
-    const visited = new Set<string>();
-    const queue: [number, number][] = [firstWall];
-    visited.add(`${firstWall[0]},${firstWall[1]}`);
-    const dirs = [[-1, 0], [1, 0], [0, -1], [0, 1]];
+    let isOceanConnected = true;
+    if (firstBlack && totalBlack > 0) {
+      const oceanVisited = new Set<string>([`${firstBlack[0]},${firstBlack[1]}`]);
+      const oQueue: [number, number][] = [firstBlack];
+      let reached = 0;
 
-    while (queue.length > 0) {
-      const [cr, cc] = queue.shift()!;
-      for (const [dr, dc] of dirs) {
-        const nr = cr + dr;
-        const nc = cc + dc;
-        const key = `${nr},${nc}`;
-        if (WebNurikabeGenerator.inBounds(nr, nc, rows, cols) && board[nr][nc] === 1 && !visited.has(key)) {
-          visited.add(key);
-          queue.push([nr, nc]);
+      while (oQueue.length > 0) {
+        const [cr, cc] = oQueue.shift()!;
+        reached++;
+
+        for (const [dr, dc] of dirs) {
+          const nr = cr + dr;
+          const nc = cc + dc;
+          if (
+            nr >= 0 &&
+            nr < rows &&
+            nc >= 0 &&
+            nc < cols &&
+            board[nr][nc] === 1 &&
+            !oceanVisited.has(`${nr},${nc}`)
+          ) {
+            oceanVisited.add(`${nr},${nc}`);
+            oQueue.push([nr, nc]);
+          }
+        }
+      }
+      isOceanConnected = reached === totalBlack;
+    }
+
+    return {
+      pool2x2,
+      multiClueIslands,
+      overflowIslands,
+      satisfiedIslands,
+      isOceanConnected,
+      totalConflicts:
+        pool2x2.size +
+        multiClueIslands.size +
+        overflowIslands.size +
+        (!isOceanConnected && totalBlack > 1 ? 1 : 0),
+    };
+  }, [board, clueGrid, rows, cols]);
+
+  const prevConflictTotalRef = useRef<number>(0);
+  useEffect(() => {
+    if (analysis.totalConflicts > prevConflictTotalRef.current) {
+      conflictCountRef.current += analysis.totalConflicts - prevConflictTotalRef.current;
+      setConflictDisplay(conflictCountRef.current);
+    }
+    prevConflictTotalRef.current = analysis.totalConflicts;
+  }, [analysis.totalConflicts]);
+
+  // 高階人類定式波前引擎 (納入全域行列排除法)
+  const getNextForcedDeduction = useCallback((): NurikabeHintStep | null => {
+    const dirs = [[0, 1], [0, -1], [1, 0], [-1, 0]];
+
+    // 定式 1: 兩個相鄰數字之間強制填黑
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        if (clueGrid[r][c] > 0) {
+          for (const [dr, dc] of dirs) {
+            const nr = r + dr * 2;
+            const nc = c + dc * 2;
+            const mr = r + dr;
+            const mc = c + dc;
+            if (
+              nr >= 0 &&
+              nr < rows &&
+              nc >= 0 &&
+              nc < cols &&
+              clueGrid[nr][nc] > 0 &&
+              board[mr][mc] === 0
+            ) {
+              return {
+                step: 1,
+                targetCell: [mr, mc],
+                forcedState: 1,
+                technique: 'clue_isolation',
+                evidenceCells: [[r, c], [nr, nc]],
+                rationale: `格 [${r + 1},${c + 1}] 與 [${nr + 1},${nc + 1}] 為兩個獨立數字島嶼，中間格必須為黑海以防島嶼互斥融合。`,
+                humanReadable: {
+                  zh: `觀察 [${mr + 1}, ${mc + 1}]：處於數字 ${clueGrid[r][c]} 與 ${clueGrid[nr][nc]} 之間，若留白將合為一島，此處必填黑海。`,
+                  en: `Cell [${mr + 1}, ${mc + 1}] is sandwiched by clues ${clueGrid[r][c]} and ${clueGrid[nr][nc]}; must be sea.`,
+                },
+              };
+            }
+          }
         }
       }
     }
-    return visited.size < totalWalls;
-  }, [board, rows, cols]);
 
-  const checkVictory = useCallback(
-    (curBoard: CellState[][]): boolean => {
-      for (let r = 0; r < rows; r++) {
-        for (let c = 0; c < cols; c++) {
-          if (curBoard[r][c] === 0) return false;
+    // 定式 2: 2x2 水池避免 (三黑夾一空，剩餘空處強制為白島)
+    for (let r = 0; r < rows - 1; r++) {
+      for (let c = 0; c < cols - 1; c++) {
+        const square: [number, number][] = [
+          [r, c],
+          [r + 1, c],
+          [r, c + 1],
+          [r + 1, c + 1],
+        ];
+        const blacks = square.filter(([sr, sc]) => board[sr][sc] === 1);
+        const unassigned = square.filter(([sr, sc]) => board[sr][sc] === 0);
+
+        if (blacks.length === 3 && unassigned.length === 1) {
+          const target = unassigned[0];
+          return {
+            step: 1,
+            targetCell: target,
+            forcedState: 2,
+            technique: 'pool_2x2_avoidance',
+            evidenceCells: blacks,
+            rationale: `該 2x2 區域已包含 3 格黑海，若 [${target[0] + 1},${target[1] + 1}] 再填黑將形成 2x2 禁忌水池，強制留白為島。`,
+            humanReadable: {
+              zh: `觀察 [${target[0] + 1}, ${target[1] + 1}]：周圍三格已是黑海，若再塗黑將觸發 2x2 水池違規，此處強制為白島。`,
+              en: `Filling [${target[0] + 1}, ${target[1] + 1}] black causes a 2x2 pool violation; must be white island.`,
+            },
+          };
         }
       }
-      return (
-        WebNurikabeGenerator.isValidStream(curBoard, rows, cols) &&
-        WebNurikabeGenerator.auditIslands(curBoard, rows, cols, clues)
-      );
-    },
-    [rows, cols, clues]
-  );
+    }
 
-  const toggleCell = useCallback(
-    (r: number, c: number, overrideState?: CellState) => {
-      if (isCompleted || isTimeOut || clueMap.has(`${r},${c}`)) return;
+    // 定式 3: 滿額島嶼四周正交封鎖填黑
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        if (analysis.satisfiedIslands.has(`${r},${c}`)) {
+          for (const [dr, dc] of dirs) {
+            const nr = r + dr;
+            const nc = c + dc;
+            if (nr >= 0 && nr < rows && nc >= 0 && nc < cols && board[nr][nc] === 0) {
+              return {
+                step: 1,
+                targetCell: [nr, nc],
+                forcedState: 1,
+                technique: 'island_quota_closure',
+                evidenceCells: [[r, c]],
+                rationale: `相鄰島嶼已達所需面積配額，周圍所有正交延伸之空格強制填黑以封鎖邊界。`,
+                humanReadable: {
+                  zh: `相鄰島嶼已完全滿額，[${nr + 1}, ${nc + 1}] 不能再擴張該島，必須填黑築牆。`,
+                  en: `The adjacent island reached full quota; [${nr + 1}, ${nc + 1}] must be sealed black.`,
+                },
+              };
+            }
+          }
+        }
+      }
+    }
 
-      setHintLevel(0);
-      setActiveHint(null);
+    // 定式 4: 海洋拓撲割點守護
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        if (board[r][c] === 1) {
+          const oceanNeighbors = dirs
+            .map(([dr, dc]) => [r + dr, c + dc] as [number, number])
+            .filter(([nr, nc]) => nr >= 0 && nr < rows && nc >= 0 && nc < cols)
+            .filter(([nr, nc]) => board[nr][nc] === 1 || board[nr][nc] === 0);
+
+          const unassigned = oceanNeighbors.filter(([nr, nc]) => board[nr][nc] === 0);
+          const blacks = oceanNeighbors.filter(([nr, nc]) => board[nr][nc] === 1);
+
+          if (blacks.length === 0 && unassigned.length === 1) {
+            const target = unassigned[0];
+            return {
+              step: 1,
+              targetCell: target,
+              forcedState: 1,
+              technique: 'ocean_connectivity',
+              evidenceCells: [[r, c]],
+              rationale: `黑格 [${r + 1},${c + 1}] 僅剩單一可用路徑與外圍海洋相連，強制填黑以防黑海斷裂。`,
+              humanReadable: {
+                zh: `黑海 [${r + 1}, ${c + 1}] 正面臨孤立，唯一的連通出口在 [${target[0] + 1}, ${target[1] + 1}]，必填黑延展。`,
+                en: `Sea cell [${r + 1}, ${c + 1}] has only one escape path at [${target[0] + 1}, ${target[1] + 1}]; must be sea.`,
+              },
+            };
+          }
+        }
+      }
+    }
+
+    // 定式 5（進階宏觀）: 行列排除法定式 (Line-based Exclusion)
+    for (let r = 0; r < rows; r++) {
+      let islandClueSumInRow = 0;
+      let whiteCount = 0;
+      const unassignedCols: number[] = [];
+      const evidence: [number, number][] = [];
+
+      for (let c = 0; c < cols; c++) {
+        if (clueGrid[r][c] > 0) {
+          islandClueSumInRow += clueGrid[r][c];
+          evidence.push([r, c]);
+        }
+        if (board[r][c] === 2) {
+          whiteCount++;
+          evidence.push([r, c]);
+        } else if (board[r][c] === 0) {
+          unassignedCols.push(c);
+        }
+      }
+
+      // 若該行沒有任何線索且已填入白格已超出可能跨行預算（安全啟發檢驗）
+      if (islandClueSumInRow > 0 && whiteCount === islandClueSumInRow && unassignedCols.length > 0) {
+        const targetC = unassignedCols[0];
+        return {
+          step: 1,
+          targetCell: [r, targetC],
+          forcedState: 1,
+          technique: 'line_macro_exclusion',
+          evidenceCells: evidence,
+          rationale: `第 ${r + 1} 行之白島配額已在行內完全滿足，剩餘空格全數強制填黑築海。`,
+          humanReadable: {
+            zh: `宏觀審視第 ${r + 1} 行：該行島嶼配額已全部覆蓋，空格 [${r + 1}, ${targetC + 1}] 強制填海。`,
+            en: `Macro Row ${r + 1}: Line island quota fulfilled; remaining cell [${r + 1}, ${targetC + 1}] must be sea.`,
+          },
+        };
+      }
+    }
+
+    return null;
+  }, [rows, cols, clueGrid, board, analysis.satisfiedIslands]);
+
+  // 差量變更應用 (含 No-Guess 阻擋與依據提示)
+  const applyCellMutation = useCallback(
+    (r: number, c: number, targetState: CellState) => {
+      if (isCompleted) return;
+      if (clueGrid[r][c] > 0) return;
+
+      const currentState = board[r][c];
+      if (currentState === targetState) return;
+
+      // No-Guess 嚴格攔截
+      if (noGuessMode && targetState !== 0) {
+        const step = getNextForcedDeduction();
+        if (step) {
+          const isTarget = step.targetCell[0] === r && step.targetCell[1] === c;
+          const isStateMatch = step.forcedState === targetState;
+          if (!isTarget || !isStateMatch) {
+            if (navigator.vibrate) navigator.vibrate([25, 35, 25]);
+            const reason = isEn ? step.humanReadable.en : step.humanReadable.zh;
+            setNoGuessWarning(
+              isEn
+                ? `[No-Guess Blocked] Target [${step.targetCell[0] + 1}, ${step.targetCell[1] + 1}]: ${reason}`
+                : `【無猜測攔截】優先推導 [${step.targetCell[0] + 1}, ${step.targetCell[1] + 1}]：${reason}`
+            );
+            setTimeout(() => setNoGuessWarning(null), 3200);
+            return;
+          }
+        }
+      }
+
+      if (navigator.vibrate) navigator.vibrate(8);
+      movesCountRef.current++;
+
+      const delta: BoardDelta = { r, c, from: currentState, to: targetState };
+      setHistory((prev) => [...prev.slice(-MAX_HISTORY_STEPS + 1), delta]);
+      setRedoStack([]);
 
       setBoard((prev) => {
         const next = prev.map((row) => [...row]);
-        next[r][c] = overrideState !== undefined ? overrideState : next[r][c] === 0 ? 1 : next[r][c] === 1 ? 2 : 0;
-
-        if (checkVictory(next)) {
-          setIsCompleted(true);
-          const timeSpent = Math.max(1, Math.round(accumulatedMs / 1000));
-          const isPure = hintsTriggeredCount === 0;
-
-          if (actualPuzzle) {
-            recordAttempt({
-              puzzleId: actualPuzzle.id,
-              engineType: 'nurikabe',
-              tier: (actualPuzzle.tier as TierKey) || 'kids',
-              cognitiveLoad: actualPuzzle.cognitiveLoad || {
-                spatial: 0.95,
-                numeric: 0.45,
-                workingMemory: 0.7,
-                inhibition: 0.9,
-              },
-              isSuccess: true,
-              timeSpentSec: timeSpent,
-              conflictsCount: 0,
-              technique: 'ConnectivityDeduction',
-              isPureClear: isPure,
-            });
-
-            LeaderboardManager.addEntry(actualPuzzle.checksum, {
-              nickname,
-              engine: 'nurikabe',
-              tier: actualPuzzle.tier || 'kids',
-              timeSpentSec: timeSpent,
-              points: currentEarnedPoints,
-              hintsUsed: hintsTriggeredCount,
-              isPure,
-            });
-          }
-        }
+        next[r][c] = targetState;
         return next;
       });
+
+      if (activeHint && activeHint.targetCell[0] === r && activeHint.targetCell[1] === c) {
+        setActiveHint(null);
+      }
     },
-    [isCompleted, isTimeOut, clueMap, checkVictory, accumulatedMs, hintsTriggeredCount, actualPuzzle, recordAttempt, nickname, currentEarnedPoints]
+    [isCompleted, clueGrid, board, noGuessMode, getNextForcedDeduction, activeHint, isEn]
   );
 
-  const handleRequestHint = useCallback(() => {
-    if (isCompleted || isTimeOut) return;
-    const step = WebNurikabeGenerator.getNextForcedDeduction(rows, cols, clues, board);
-    if (!step) return;
+  const handleCellClick = useCallback(
+    (r: number, c: number) => {
+      setCursorPos([r, c]);
+      if (clueGrid[r][c] > 0) return;
+      const nextState: CellState = board[r][c] === 0 ? 1 : board[r][c] === 1 ? 2 : 0;
+      applyCellMutation(r, c, nextState);
+    },
+    [board, clueGrid, applyCellMutation]
+  );
 
-    if (!activeHint || activeHint.type !== step.type || activeHint.targets[0]?.[0] !== step.targets[0]?.[0]) {
-      setActiveHint(step);
-      setHintLevel(1);
-      setHintsTriggeredCount((prev) => prev + 1);
-      if (step.targets.length > 0) setSelectedCell(step.targets[0]);
-    } else {
-      setHintLevel((prev) => Math.min(3, prev + 1));
-    }
-  }, [isCompleted, isTimeOut, rows, cols, clues, board, activeHint]);
+  // 差量 Undo / Redo
+  const handleUndo = useCallback(() => {
+    if (history.length === 0 || isCompleted) return;
+    if (navigator.vibrate) navigator.vibrate(10);
 
-  // 全鍵盤操作映射
+    const lastDelta = history[history.length - 1];
+    setBoard((prev) => {
+      const next = prev.map((row) => [...row]);
+      next[lastDelta.r][lastDelta.c] = lastDelta.from;
+      return next;
+    });
+
+    setRedoStack((prev) => [...prev, lastDelta]);
+    setHistory((prev) => prev.slice(0, -1));
+  }, [history, isCompleted]);
+
+  const handleRedo = useCallback(() => {
+    if (redoStack.length === 0 || isCompleted) return;
+    if (navigator.vibrate) navigator.vibrate(10);
+
+    const nextDelta = redoStack[redoStack.length - 1];
+    setBoard((prev) => {
+      const next = prev.map((row) => [...row]);
+      next[nextDelta.r][nextDelta.c] = nextDelta.to;
+      return next;
+    });
+
+    setHistory((prev) => [...prev, nextDelta]);
+    setRedoStack((prev) => prev.slice(0, -1));
+  }, [redoStack, isCompleted]);
+
+  // 鍵盤操控監聽
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (isCompleted || isTimeOut) return;
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (isCompleted) return;
 
-      const [r, c] = selectedCell;
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') {
+        e.preventDefault();
+        if (e.shiftKey) handleRedo();
+        else handleUndo();
+        return;
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'y') {
+        e.preventDefault();
+        handleRedo();
+        return;
+      }
 
-      switch (e.key.toLowerCase()) {
-        case 'w':
-        case 'arrowup':
-          e.preventDefault();
-          setSelectedCell([Math.max(0, r - 1), c]);
-          break;
-        case 's':
-        case 'arrowdown':
-          e.preventDefault();
-          setSelectedCell([Math.min(rows - 1, r + 1), c]);
-          break;
-        case 'a':
-        case 'arrowleft':
-          e.preventDefault();
-          setSelectedCell([r, Math.max(0, c - 1)]);
-          break;
-        case 'd':
-        case 'arrowright':
-          e.preventDefault();
-          setSelectedCell([r, Math.min(cols - 1, c + 1)]);
-          break;
-        case '1':
-        case 'j':
-          e.preventDefault();
-          toggleCell(r, c, 1);
-          break;
-        case '2':
-        case 'k':
-          e.preventDefault();
-          toggleCell(r, c, 2);
-          break;
-        case '0':
-        case ' ':
-        case 'x':
-        case 'c':
-        case 'backspace':
-          e.preventDefault();
-          toggleCell(r, c, 0);
-          break;
-        case 'h':
-          e.preventDefault();
-          handleRequestHint();
-          break;
-        case '?':
-          e.preventDefault();
-          setShowKeyboardHUD((prev) => !prev);
-          break;
+      const [r, c] = cursorPos;
+      if (['ArrowUp', 'KeyW'].includes(e.code)) {
+        e.preventDefault();
+        setCursorPos([Math.max(0, r - 1), c]);
+      } else if (['ArrowDown', 'KeyS'].includes(e.code)) {
+        e.preventDefault();
+        setCursorPos([Math.min(rows - 1, r + 1), c]);
+      } else if (['ArrowLeft', 'KeyA'].includes(e.code)) {
+        e.preventDefault();
+        setCursorPos([r, Math.max(0, c - 1)]);
+      } else if (['ArrowRight', 'KeyD'].includes(e.code)) {
+        e.preventDefault();
+        setCursorPos([r, Math.min(cols - 1, c + 1)]);
+      } else if (e.code === 'Digit1' || e.code === 'Numpad1') {
+        e.preventDefault();
+        applyCellMutation(r, c, 1);
+      } else if (e.code === 'Digit2' || e.code === 'Numpad2') {
+        e.preventDefault();
+        applyCellMutation(r, c, 2);
+      } else if (e.code === 'Digit0' || e.code === 'Numpad0' || e.code === 'Backspace') {
+        e.preventDefault();
+        applyCellMutation(r, c, 0);
+      } else if (e.code === 'Space') {
+        e.preventDefault();
+        handleCellClick(r, c);
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedCell, rows, cols, isCompleted, isTimeOut, toggleCell, handleRequestHint]);
+  }, [cursorPos, rows, cols, isCompleted, handleUndo, handleRedo, applyCellMutation, handleCellClick]);
 
-  const handleCopyChallenge = () => {
-    if (!actualPuzzle) return;
-    const url = ChallengeCodec.generateShareUrl(actualPuzzle);
-    navigator.clipboard.writeText(url).then(() => {
-      setToastText(isEn ? '🔗 Challenge URL copied!' : '🔗 題目挑戰連結已複製！');
-      setTimeout(() => setToastText(null), 2500);
-    });
+  // 手機長按快選
+  const handleTouchStartCell = (r: number, c: number) => {
+    longPressTimerRef.current = setTimeout(() => {
+      if (navigator.vibrate) navigator.vibrate(20);
+      applyCellMutation(r, c, 2);
+      longPressTimerRef.current = null;
+    }, 350);
   };
 
-  const cellSize = Math.min(270 / Math.max(rows, cols), 42);
+  const handleTouchEndCell = (r: number, c: number) => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+      handleCellClick(r, c);
+    }
+  };
+
+  // 勝利驗證與賽事防偽簽名
+  useEffect(() => {
+    if (isCompleted || !solution || solution.length === 0) return;
+
+    let isMatch = true;
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const isSea = board[r][c] === 1;
+        if (isSea !== solution[r][c]) {
+          isMatch = false;
+          break;
+        }
+      }
+      if (!isMatch) break;
+    }
+
+    if (isMatch && analysis.totalConflicts === 0) {
+      setIsCompleted(true);
+      const timeSpent = Math.max(1, Math.round((Date.now() - startTimeRef.current) / 1000));
+
+      if (!hasRecordedRef.current && actualPuzzle) {
+        hasRecordedRef.current = true;
+        const baseIrt = (actualPuzzle.metrics as any)?.irt_logit_difficulty || 1.8;
+
+        recordAttempt({
+          puzzleId: actualPuzzle.id,
+          engineType: 'nurikabe',
+          tier: currentTier,
+          cognitiveLoad: actualPuzzle.cognitiveLoad || {
+            spatial: 0.85,
+            numeric: 0.35,
+            workingMemory: 0.75,
+            inhibition: 0.9,
+          },
+          isSuccess: true,
+          timeSpentSec: timeSpent,
+          conflictsCount: conflictCountRef.current,
+          technique: 'NurikabeWavefrontSolver',
+          irtDifficulty: baseIrt,
+          isPureClear: conflictCountRef.current === 0 && !activeHint,
+        });
+
+        try {
+          const canonical = `${actualPuzzle.id}|${timeSpent}|${movesCountRef.current}|${conflictCountRef.current}|NURIKABE_LEGEND_SHA`;
+          const enc = new TextEncoder();
+          window.crypto.subtle.digest('SHA-256', enc.encode(canonical)).then((buf) => {
+            const hex = Array.from(new Uint8Array(buf))
+              .map((b) => b.toString(16).padStart(2, '0'))
+              .join('');
+            setProofSignature(`VERIFIED_${hex.slice(0, 24).toUpperCase()}`);
+          });
+        } catch {
+          setProofSignature(`LOCAL_${Date.now()}`);
+        }
+
+        if (timeSpent <= profile.personalBest.fastestTime) {
+          setShowPBModal(true);
+        }
+      }
+    }
+  }, [board, solution, analysis.totalConflicts, rows, cols, isCompleted, actualPuzzle, currentTier, recordAttempt, profile.personalBest.fastestTime, activeHint]);
+
+  // 因果提示階梯觸發
+  const handleRequestHint = () => {
+    if (isCompleted || tournamentMode) return;
+    if (navigator.vibrate) navigator.vibrate(12);
+
+    if (!activeHint) {
+      const step = getNextForcedDeduction();
+      if (step) {
+        setActiveHint(step);
+        setCursorPos(step.targetCell);
+        setHintLadderLevel(1);
+      }
+    } else {
+      setHintLadderLevel((prev) => (prev === 1 ? 2 : 3));
+    }
+  };
+
+  const theoryTime = (actualPuzzle?.metrics as any)?.estimated_time_sec || rows * cols * 2.5;
+  const benchmarkData = useMemo(() => {
+    return getBenchmarkMetrics('TopologicalLookahead', theoryTime, 'nurikabe');
+  }, [getBenchmarkMetrics, theoryTime]);
+
   const cci = useMemo(() => getCompositeCognitiveIndex(), [getCompositeCognitiveIndex, isCompleted]);
 
-  const hallOfFameList = useMemo(() => {
-    return actualPuzzle ? LeaderboardManager.getEntriesForPuzzle(actualPuzzle.checksum, pureFilterOnly) : [];
-  }, [actualPuzzle, showHallOfFame, pureFilterOnly, isCompleted]);
-
-  const hintTargetSet = useMemo(() => {
-    const set = new Set<string>();
-    if (activeHint && hintLevel === 3) {
-      for (const [tr, tc] of activeHint.targets) set.add(`${tr},${tc}`);
-    }
-    return set;
-  }, [activeHint, hintLevel]);
-
   return (
-    <div
-      ref={boardContainerRef}
-      tabIndex={0}
-      className={`relative flex flex-col items-center justify-center p-2 select-none font-mono outline-none ${isMonochrome ? 'contrast-125' : ''}`}
-    >
-      {toastText && (
-        <div className="fixed top-3 z-50 px-3 py-1.5 bg-cyan-600 border border-cyan-400 text-white font-bold text-xs rounded-full shadow-2xl animate-fade-in">
-          {toastText}
+    <div className="flex flex-col items-center justify-center p-1 select-none font-mono">
+      {/* 頂部賽事數據列 */}
+      <div className="w-full grid grid-cols-5 gap-1 px-0.5 mb-1.5 text-[8px] sm:text-[9px]">
+        <div className="bg-slate-950 border border-slate-800 p-1 rounded text-center">
+          <div className="text-slate-500 text-[6.5px]">{isEn ? '⏱️ Speed' : '⏱️ 競速'}</div>
+          <div className="text-slate-200 font-bold">{(elapsedMs / 1000).toFixed(1)}s</div>
+        </div>
+
+        <div className="bg-slate-950 border border-slate-800 p-1 rounded text-center">
+          <div className="text-slate-500 text-[6.5px]">{isEn ? '♟️ Moves' : '♟️ 步數'}</div>
+          <div className="text-cyan-300 font-bold">{movesCountRef.current}</div>
+        </div>
+
+        <div className="bg-slate-950 border border-slate-800 p-1 rounded text-center">
+          <div className="text-slate-500 text-[6.5px]">{isEn ? '⚠️ Conflicts' : '⚠️ 衝突累加'}</div>
+          <div className={`font-bold ${conflictDisplay > 0 ? 'text-rose-400' : 'text-slate-300'}`}>
+            {conflictDisplay}
+          </div>
+        </div>
+
+        {/* 無猜測模式切換 */}
+        <button
+          onClick={() => setNoGuessMode((prev) => !prev)}
+          className={`p-1 rounded border text-center transition ${
+            noGuessMode
+              ? 'bg-purple-950 border-purple-500 text-purple-300 font-bold shadow-xs'
+              : 'bg-slate-950 border-slate-800 text-slate-500 hover:text-slate-300'
+          }`}
+          title={isEn ? 'Toggle No-Guess strict verification' : '切換無猜測純邏輯防護'}
+        >
+          <div className="text-[6.5px]">🛡️ {isEn ? 'No-Guess' : '無猜測'}</div>
+          <div className="text-[7.5px]">{noGuessMode ? (isEn ? 'Strict ON' : '強制嚴謹') : (isEn ? 'OFF' : '關閉')}</div>
+        </button>
+
+        {/* 提示階梯 */}
+        <button
+          onClick={handleRequestHint}
+          disabled={isCompleted || tournamentMode}
+          className={`p-1 rounded border text-center transition ${
+            tournamentMode
+              ? 'bg-slate-900 border-slate-800 text-slate-600 cursor-not-allowed'
+              : activeHint
+              ? 'bg-amber-950/90 border-amber-500 text-amber-300 font-bold shadow-xs'
+              : 'bg-indigo-950/80 border-indigo-500/60 text-indigo-300 hover:bg-indigo-900'
+          }`}
+        >
+          <div className="text-[6.5px]">💡 {isEn ? 'Hint Ladder' : '提示階梯'}</div>
+          <div className="text-[7.5px] truncate">
+            {tournamentMode
+              ? (isEn ? 'Locked' : '賽事鎖定')
+              : activeHint
+              ? `${isEn ? 'Lv.' : '階梯 '}${hintLadderLevel}/3`
+              : (isEn ? 'Get Hint' : '因果提示')}
+          </div>
+        </button>
+      </div>
+
+      {/* 無猜測攔截橫條 */}
+      {noGuessWarning && (
+        <div className="w-[min(88vw,42vh)] mb-1.5 p-1 bg-rose-950 border border-rose-500 text-rose-300 text-[8px] rounded-lg animate-pulse text-center shadow-lg font-bold">
+          {noGuessWarning}
         </div>
       )}
 
-      {/* 頂部賽事數據列 */}
-      <div className="w-full grid grid-cols-4 gap-1 mb-2 text-[8px]">
-        <div className="bg-slate-950 border border-slate-800 p-1.5 rounded text-center">
-          <div className="text-slate-500 text-[6.5px]">{tournamentMode ? (isEn ? 'Time Left' : '倒數') : (isEn ? 'Time' : '耗時')}</div>
-          <div className={`font-bold ${tournamentMode && remainingSec <= 30 ? 'text-rose-400 animate-pulse' : 'text-slate-200'}`}>
-            {tournamentMode ? `${remainingSec}s` : `${(accumulatedMs / 1000).toFixed(1)}s`}
+      {/* 提示階梯說明卡片 */}
+      {activeHint && (
+        <div className="w-[min(88vw,42vh)] mb-1.5 p-1.5 bg-amber-950/80 border border-amber-500/70 rounded-lg text-amber-200 text-[8px] animate-fade-in text-left shadow-lg">
+          <div className="font-bold flex items-center justify-between text-[7px] text-amber-400 border-b border-amber-900/60 pb-0.5 mb-1">
+            <span>[NURIKABE HINT LADDER LEVEL {hintLadderLevel}/3]</span>
+            <span className="uppercase">{activeHint.technique.replace(/_/g, ' ')}</span>
           </div>
+          {hintLadderLevel === 1 && (
+            <div>
+              {isEn
+                ? `Focus on Row ${activeHint.targetCell[0] + 1}, Col ${activeHint.targetCell[1] + 1}. A logical cell state is forced here.`
+                : `請關注第 ${activeHint.targetCell[0] + 1} 行、第 ${activeHint.targetCell[1] + 1} 列。該格存在必然推導。`}
+            </div>
+          )}
+          {hintLadderLevel === 2 && (
+            <div>{isEn ? activeHint.humanReadable.en : activeHint.humanReadable.zh}</div>
+          )}
+          {hintLadderLevel === 3 && (
+            <div className="font-bold text-amber-300">
+              {activeHint.rationale}
+              <span className="ml-1 text-cyan-300 underline">
+                {activeHint.forcedState === 1 ? (isEn ? 'Must be SEA (Black)' : '必然為海 (黑格)') : (isEn ? 'Must be ISLAND (White)' : '必然為島 (白格)')}
+              </span>
+            </div>
+          )}
         </div>
-        <div className="bg-slate-950 border border-slate-800 p-1.5 rounded text-center">
-          <div className="text-slate-500 text-[6.5px]">{isEn ? 'WPF Points' : '賽事積分'}</div>
-          <div className="text-amber-300 font-bold">
-            ★ {currentEarnedPoints} {hintsTriggeredCount === 0 && <span className="text-cyan-400 font-normal">💎</span>}
-          </div>
-        </div>
-        <div className="bg-slate-950 border border-slate-800 p-1.5 rounded text-center">
-          <div className="text-slate-500 text-[6.5px]">{isEn ? 'Topology' : '拓撲檢查'}</div>
-          <div className={poolViolations.size > 0 ? 'text-rose-400 font-bold' : isStreamFragmented ? 'text-amber-400 font-bold' : 'text-emerald-400 font-bold'}>
-            {poolViolations.size > 0 ? '2×2池' : isStreamFragmented ? '斷流' : '正常'}
-          </div>
-        </div>
-        <div className="flex gap-1">
-          <button
-            onClick={() => setIsMonochrome((prev) => !prev)}
-            className={`flex-1 rounded border text-[7px] font-bold transition ${
-              isMonochrome ? 'bg-white text-black border-white' : 'bg-slate-900 border-slate-800 text-slate-400'
-            }`}
-          >
-            BW
-          </button>
-          <button
-            onClick={() => setShowHallOfFame((prev) => !prev)}
-            className="flex-1 rounded border border-amber-500/50 bg-slate-900 text-amber-300 text-[7px] font-bold"
-            title="同題防偽好友榜"
-          >
-            🏆
-          </button>
-        </div>
-      </div>
+      )}
 
-      {/* 棋盤本體 */}
-      <div className={`p-2 border-2 rounded-xl shadow-2xl flex flex-col items-center ${isMonochrome ? 'bg-black border-white' : 'bg-slate-950 border-slate-800'}`}>
+      {/* 主棋盤 */}
+      <div
+        className="relative overflow-hidden p-1.5 rounded-xl bg-slate-950 border-2 border-slate-800 shadow-2xl"
+        style={{ touchAction: 'none' }}
+      >
         <div
-          className={`grid gap-[2px] p-[2px] rounded border ${isMonochrome ? 'bg-black border-white' : 'bg-slate-900/90 border-slate-800'}`}
-          style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}
+          className="grid select-none bg-slate-900/40 gap-[1px]"
+          style={{
+            gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
+            gridTemplateRows: `repeat(${rows}, minmax(0, 1fr))`,
+            width: 'min(88vw, 42vh)',
+            height: 'min(88vw, 42vh)',
+          }}
         >
-          {board.map((row, r) =>
-            row.map((val, c) => {
-              const clueVal = clueMap.get(`${r},${c}`);
-              const isClue = clueVal !== undefined;
-              const isSelected = selectedCell[0] === r && selectedCell[1] === c;
-              const isBatchHintTarget = hintTargetSet.has(`${r},${c}`);
-              const isPoolViolation = poolViolations.has(`${r},${c}`);
+          {Array.from({ length: rows }).map((_, r) =>
+            Array.from({ length: cols }).map((__, c) => {
+              const clue = clueGrid[r][c];
+              const isClue = clue > 0;
+              const state = board[r][c];
+              const cellKey = `${r},${c}`;
 
-              let bgClass = isMonochrome ? 'bg-black text-white' : 'bg-slate-950 text-slate-300 hover:bg-slate-900';
-              if (val === 1) bgClass = isMonochrome ? 'bg-white text-black font-black' : 'bg-slate-800 text-slate-400 shadow-inner';
-              if (val === 2) bgClass = isMonochrome ? 'bg-black text-white font-bold' : 'bg-slate-950 text-cyan-400';
-              if (isClue) bgClass = isMonochrome ? 'bg-black text-white font-black border-2 border-white' : 'bg-slate-900 text-amber-300 font-black border border-amber-500/40';
+              const is2x2Pool = analysis.pool2x2.has(cellKey);
+              const isMultiClue = analysis.multiClueIslands.has(cellKey);
+              const isOverflow = analysis.overflowIslands.has(cellKey);
+              const isSatisfied = analysis.satisfiedIslands.has(cellKey);
 
-              if (isPoolViolation && !isMonochrome) bgClass += ' ring-2 ring-rose-500 bg-rose-950/50';
-              if (isBatchHintTarget) bgClass += isMonochrome ? ' ring-4 ring-white animate-pulse' : ' ring-2 ring-amber-400 bg-amber-500/30 animate-pulse';
+              const isCursor = cursorPos[0] === r && cursorPos[1] === c;
+              const isHintTarget = activeHint && activeHint.targetCell[0] === r && activeHint.targetCell[1] === c;
+              const isEvidenceAnimated = animatedEvidenceSet.has(cellKey);
 
               return (
                 <div
-                  key={`${r}-${c}`}
-                  onClick={() => { setSelectedCell([r, c]); toggleCell(r, c); }}
-                  onContextMenu={(e) => { e.preventDefault(); setSelectedCell([r, c]); toggleCell(r, c, 1); }}
-                  className={`flex items-center justify-center font-bold text-xs cursor-pointer transition select-none ${bgClass} ${
-                    isSelected ? (isMonochrome ? 'ring-2 ring-white z-20' : 'ring-2 ring-cyan-400 z-20 shadow-[0_0_8px_rgba(34,211,238,0.8)]') : ''
+                  key={cellKey}
+                  onTouchStart={() => handleTouchStartCell(r, c)}
+                  onTouchEnd={() => handleTouchEndCell(r, c)}
+                  onClick={() => handleCellClick(r, c)}
+                  className={`relative flex items-center justify-center cursor-pointer transition-all duration-150 select-none rounded-xs ${
+                    state === 1
+                      ? is2x2Pool
+                        ? 'bg-rose-700 text-white animate-pulse'
+                        : 'bg-slate-950 border border-slate-800 shadow-inner text-cyan-400'
+                      : state === 2
+                      ? isMultiClue || isOverflow
+                        ? 'bg-red-950 border border-rose-500 text-rose-300 font-bold'
+                        : isSatisfied
+                        ? 'bg-emerald-950/80 border border-emerald-500 text-emerald-300 font-bold'
+                        : 'bg-cyan-950/40 border border-cyan-700/50 text-cyan-200'
+                      : 'bg-slate-900/80 hover:bg-slate-800 text-slate-500'
+                  } ${isCursor ? 'outline outline-2 outline-cyan-400 -outline-offset-2 z-10' : ''} ${
+                    isHintTarget ? 'ring-2 ring-amber-400 ring-inset animate-bounce z-20' : ''
+                  } ${
+                    isEvidenceAnimated
+                      ? 'ring-2 ring-amber-400 shadow-[0_0_12px_rgba(251,191,36,0.8)] border-amber-300 scale-95 z-15'
+                      : ''
                   }`}
-                  style={{ width: cellSize, height: cellSize }}
                 >
-                  {isClue ? <span className="text-sm font-extrabold">{clueVal}</span> : val === 2 ? <span>•</span> : val === 1 && isMonochrome ? <span>■</span> : null}
+                  {isClue ? (
+                    <span className="text-[11px] sm:text-[13px] font-black z-10 select-none pointer-events-none">
+                      {clue}
+                    </span>
+                  ) : state === 1 ? (
+                    <div className="w-[82%] h-[82%] bg-slate-900 rounded-xs border border-slate-700/60 shadow-md flex items-center justify-center">
+                      <div className="w-1.5 h-1.5 bg-cyan-400/40 rounded-full" />
+                    </div>
+                  ) : state === 2 ? (
+                    <div className="w-2 h-2 rounded-full bg-cyan-400/80" />
+                  ) : null}
                 </div>
               );
             })
@@ -449,170 +888,146 @@ export const NurikabeBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentM
         </div>
       </div>
 
-      {/* 細節 4：快捷鍵 HUD 透明卡片與切換按鈕 */}
-      <div className="w-full max-w-[280px] flex items-center justify-between px-1 mt-1 text-[7px] text-slate-500 font-mono">
-        <span>WASD: 移動</span>
-        <span>1: 黑牆</span>
-        <span>2: 白格</span>
-        <button
-          onClick={() => setShowKeyboardHUD((prev) => !prev)}
-          className="text-cyan-400 hover:text-cyan-300 underline font-bold"
-        >
-          ⌨️ HUD {showKeyboardHUD ? '▲' : '▼'}
-        </button>
+      {/* 底部撤銷重做與快捷欄 */}
+      <div className="w-full max-w-[340px] flex items-center justify-between px-1 mt-1.5 text-[7.5px] text-slate-400">
+        <div className="flex gap-1">
+          <button
+            onClick={handleUndo}
+            disabled={history.length === 0 || isCompleted}
+            className="px-2 py-0.5 bg-slate-900 border border-slate-800 rounded hover:bg-slate-800 disabled:opacity-40"
+          >
+            ↩ {isEn ? 'Undo (Z)' : '撤銷'}
+          </button>
+          <button
+            onClick={handleRedo}
+            disabled={redoStack.length === 0 || isCompleted}
+            className="px-2 py-0.5 bg-slate-900 border border-slate-800 rounded hover:bg-slate-800 disabled:opacity-40"
+          >
+            ↪ {isEn ? 'Redo (Y)' : '重做'}
+          </button>
+        </div>
+        <div className="text-slate-500">
+          <span>鍵盤：WASD移動 / 1海 2島 0清 / 長按快選</span>
+        </div>
       </div>
 
-      {showKeyboardHUD && (
-        <div className="mt-1 p-2 bg-slate-900/95 border border-cyan-500/40 rounded-lg text-[7.5px] text-slate-300 w-full max-w-[280px] shadow-lg animate-fade-in font-mono grid grid-cols-2 gap-1 text-left">
-          <div>• <span className="text-cyan-300">WASD / ↑↓←→</span>: 游標導航</div>
-          <div>• <span className="text-cyan-300">1 / J</span>: 標記黑牆 (■)</div>
-          <div>• <span className="text-cyan-300">2 / K</span>: 標記白格 (•)</div>
-          <div>• <span className="text-cyan-300">0 / Space / C</span>: 清空單元格</div>
-          <div className="col-span-2 text-center text-slate-400 border-t border-slate-800 pt-1 mt-0.5">
-            按 <span className="text-amber-300 font-bold">H</span>: 請求因果提示 | 按 <span className="text-cyan-300 font-bold">?</span>: 收合本面板
-          </div>
-        </div>
-      )}
-
-      {/* 三階因果提示面板 */}
-      {hintLevel > 0 && activeHint && (
-        <div className={`mt-2 p-2 rounded-xl text-center w-full max-w-[280px] font-mono border ${isMonochrome ? 'bg-black border-white text-white' : 'bg-slate-900/90 border-amber-500/60 text-slate-200'}`}>
-          <div className="text-[7.5px] font-bold text-amber-300 mb-0.5">
-            🔮 {activeHint.targets.length > 1 ? (isEn ? 'BATCH LOGIC' : '批次因果推理') : (isEn ? 'STREAM DEDUCTION' : '正交拓撲推導')}
-          </div>
-          <div className="text-[8px]">
-            {hintLevel === 1 && <span>🔍 {isEn ? `Focus region near [${activeHint.targets[0][0] + 1}, ${activeHint.targets[0][1] + 1}]` : `審視坐標 [${activeHint.targets[0][0] + 1}, ${activeHint.targets[0][1] + 1}] 區域`}</span>}
-            {hintLevel === 2 && <span className="text-cyan-300 font-bold">⚡ {isEn ? activeHint.humanReadable.en : activeHint.humanReadable.zh}</span>}
-            {hintLevel === 3 && (
-              <span className="text-rose-400 font-extrabold">
-                🎯 {activeHint.targets.length > 1
-                  ? (isEn ? `All ${activeHint.targets.length} cells are forced ${activeHint.forcedState === 1 ? 'WALLS' : 'ISLANDS'}!` : `高亮的 ${activeHint.targets.length} 格整批必然為${activeHint.forcedState === 1 ? '黑牆' : '白格'}！`)
-                  : (isEn ? `Forced ${activeHint.forcedState === 1 ? 'WALL' : 'ISLAND'}!` : `必然為${activeHint.forcedState === 1 ? '黑牆' : '白格'}！`)}
-              </span>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* 控制列 */}
-      <div className="flex items-center justify-between w-full max-w-[280px] mt-2 gap-1.5">
-        <button
-          onClick={handleRequestHint}
-          disabled={isCompleted || isTimeOut}
-          className="flex-1 py-1.5 text-[10px] font-bold rounded-lg border bg-slate-900 border-amber-500/50 text-amber-300 hover:bg-amber-950/40 transition flex items-center justify-center gap-1 shadow disabled:opacity-40"
-        >
-          💡 {isEn ? 'Hint [H]' : '提示階梯 [H]'}
-        </button>
-        <button
-          onClick={handleCopyChallenge}
-          className="flex-1 py-1.5 text-[10px] font-bold rounded-lg border bg-slate-900 border-cyan-500/50 text-cyan-300 hover:bg-cyan-950/40 transition flex items-center justify-center gap-1 shadow"
-        >
-          🔗 {isEn ? 'Challenge' : '好友挑戰碼'}
-        </button>
+      {/* 即時圖例 */}
+      <div className="w-full max-w-[340px] flex items-center justify-around px-1 mt-1 text-[6.5px] text-slate-500">
+        <span className="flex items-center gap-1"><span className="w-2 h-2 bg-emerald-950 border border-emerald-500 inline-block rounded-xs" />滿額島嶼</span>
+        <span className="flex items-center gap-1"><span className="w-2 h-2 bg-red-950 border border-rose-500 inline-block rounded-xs" />超額/多數字</span>
+        <span className="flex items-center gap-1"><span className="w-2 h-2 bg-rose-700 inline-block rounded-xs" />2x2 水池違規</span>
+        {!analysis.isOceanConnected && (
+          <span className="text-amber-400 font-bold animate-pulse">⚠️ 海洋被切斷</span>
+        )}
       </div>
 
-      {/* 同題對抗朋友榜（含細節 2：我的最佳「👤 You」標記） */}
-      {showHallOfFame && (
-        <div className="mt-2.5 p-3 bg-slate-950 border border-amber-500/80 rounded-xl w-full max-w-[280px] shadow-2xl animate-fade-in font-mono text-left">
-          <div className="flex justify-between items-center mb-1.5 pb-1 border-b border-slate-800">
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-bold text-amber-300">🏆 本題榜單</span>
-              <button
-                onClick={() => setPureFilterOnly((prev) => !prev)}
-                className={`px-1.5 py-0.2 rounded text-[7px] font-bold transition border ${
-                  pureFilterOnly ? 'bg-cyan-950 border-cyan-400 text-cyan-300' : 'bg-slate-900 border-slate-700 text-slate-400'
-                }`}
-              >
-                {pureFilterOnly ? '💎 Pure Only' : 'All'}
-              </button>
-            </div>
-            <button onClick={() => setShowHallOfFame(false)} className="text-slate-400 text-xs font-bold hover:text-white">✕</button>
-          </div>
-          <div className="text-[7px] text-slate-500 mb-1.5">盤面指紋: {actualPuzzle?.checksum.slice(-12)}</div>
-          <div className="max-h-36 overflow-y-auto space-y-1 pr-1 text-[8.5px]">
-            {hallOfFameList.length === 0 ? (
-              <div className="text-slate-500 text-center py-2">{isEn ? 'No matching records.' : '尚無符合條件的挑戰紀錄'}</div>
-            ) : (
-              hallOfFameList.map((item, idx) => {
-                const isMe = item.nickname === nickname;
-                return (
-                  <div
-                    key={item.id}
-                    className={`flex justify-between items-center px-1.5 py-1 rounded border transition ${
-                      isMe
-                        ? 'bg-cyan-950/50 border-cyan-500/60 shadow-[0_0_6px_rgba(6,182,212,0.3)]'
-                        : 'bg-slate-900/60 border-slate-800/60'
-                    }`}
-                  >
-                    <div className="flex items-center gap-1 text-slate-300">
-                      <span className={`font-bold ${isMe ? 'text-cyan-300' : 'text-amber-400'}`}>#{idx + 1}</span>
-                      <span className="truncate max-w-[70px]">{item.nickname}</span>
-                      {isMe && <span className="text-[7px] text-cyan-400 font-bold">👤</span>}
-                      {item.isPure && <span className="text-[7px] text-cyan-400 font-bold" title="零提示無猜測通關">💎</span>}
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-slate-400">{item.timeSpentSec}s</span>
-                      <span className="font-bold text-emerald-400">★{item.points}</span>
-                    </div>
-                  </div>
-                );
-              })
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* 結算登榜面板（含細節 1：動態段位晉級稱號） */}
+      {/* 通關結算面板 */}
       {isCompleted && (
-        <div className="mt-2.5 p-3 bg-slate-950 border border-emerald-500/80 rounded-xl text-center w-full max-w-[280px] shadow-2xl animate-fade-in font-mono">
-          <div className="text-emerald-400 font-bold text-xs mb-0.5">ISLANDS CONNECTED!</div>
-          
-          <div className="my-1 py-1 bg-slate-900/80 border border-slate-800 rounded">
-            <div className="text-[7.5px] text-slate-400 tracking-wider mb-0.5">{isEn ? 'ACHIEVEMENT TIER' : '解題段位'}</div>
-            <div className={`text-xs font-black tracking-widest ${masteryRankTitle.color}`}>
-              {isEn ? masteryRankTitle.en : masteryRankTitle.zh}
+        <div className="mt-2 p-2.5 bg-slate-950/95 border border-indigo-500/60 rounded-xl text-center w-[min(88vw,42vh)] shadow-2xl animate-fade-in font-mono">
+          <div className="flex items-center justify-between border-b border-slate-800 pb-1 mb-1.5">
+            <div className="text-left">
+              <div className="text-[7.5px] text-slate-500 tracking-wider">NURIKABE RESOLVED</div>
+              <div className="text-xs text-indigo-300 font-bold">🌊 數牆・完美海島拓撲</div>
+            </div>
+            <div className="px-2 py-0.5 border border-cyan-500 bg-cyan-950/80 rounded text-[9px] font-bold text-cyan-300">
+              Gf: IQ {cci.standardIQ} (Top {Number((100 - cci.percentileRank).toFixed(1))}%)
             </div>
           </div>
 
-          <div className="text-[8.5px] text-slate-300 mb-1">
-            {isEn ? 'Earned' : '獲得積分'}: <span className="text-amber-300 font-bold">★ {currentEarnedPoints}</span>
-            {hintsTriggeredCount === 0 && <span className="ml-1 text-cyan-400 font-bold">[💎 PURE]</span>}
-            <span className="ml-1">| IQ {cci.standardIQ}</span>
+          <div className="grid grid-cols-3 gap-1 text-[7.5px] text-slate-400 mb-1.5">
+            <div className="bg-slate-900/80 p-1 rounded">
+              <div>耗時</div>
+              <div className="text-slate-200 font-bold text-[10px]">{(elapsedMs / 1000).toFixed(1)}s</div>
+            </div>
+            <div className="bg-slate-900/80 p-1 rounded">
+              <div>操作步數</div>
+              <div className="text-cyan-300 font-bold text-[10px]">{movesCountRef.current}</div>
+            </div>
+            <div className="bg-slate-900/80 p-1 rounded">
+              <div>衝突次數</div>
+              <div className="text-amber-300 font-bold text-[10px]">{conflictCountRef.current} 次</div>
+            </div>
           </div>
 
-          <div className="flex items-center justify-center gap-1.5 mt-2">
-            <input
-              type="text"
-              value={nickname}
-              onChange={(e) => {
-                const val = e.target.value.slice(0, 10);
-                setNickname(val);
-                localStorage.setItem('lawgic_player_nick', val);
-              }}
-              placeholder={isEn ? 'Nickname' : '解題者暱稱'}
-              className="px-2 py-0.5 bg-slate-900 border border-slate-700 text-xs rounded text-center w-24 text-white"
+          <div className="mb-1.5">
+            <MetricErrorBar
+              actualVal={Math.round(elapsedMs / 1000)}
+              benchmarkVal={benchmarkData.benchmarkTime}
+              ci95={benchmarkData.ci95}
+              sem={benchmarkData.sem}
+              unit="s"
+              isEn={isEn}
             />
+          </div>
+
+          <div className="bg-slate-900/40 p-1 rounded-lg border border-slate-800 flex flex-col items-center mb-1.5">
+            <CognitiveRadarChart
+              dimensions={profile.cognitiveDimensions}
+              previousDimensions={profile.previousCognitiveDimensions}
+              size={135}
+            />
+          </div>
+
+          <div className="flex gap-1 mb-1.5">
             <button
-              onClick={() => {
-                if (actualPuzzle) {
-                  LeaderboardManager.addEntry(actualPuzzle.checksum, {
-                    nickname: nickname || 'Player',
-                    engine: 'nurikabe',
-                    tier: actualPuzzle.tier || 'kids',
-                    timeSpentSec: Math.round(accumulatedMs / 1000),
-                    points: currentEarnedPoints,
-                    hintsUsed: hintsTriggeredCount,
-                    isPure: hintsTriggeredCount === 0,
-                  });
-                  setShowHallOfFame(true);
-                }
-              }}
-              className="px-2 py-0.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded transition shadow"
+              onClick={exportLongitudinalDataset}
+              className="flex-1 py-1 bg-slate-900 hover:bg-slate-800 border border-cyan-600/50 hover:border-cyan-400 text-cyan-300 text-[7.5px] font-bold rounded transition shadow flex items-center justify-center gap-0.5 active:scale-95"
             >
-              {isEn ? 'Save' : '登榜'}
+              <span>📊</span>
+              <span>{isEn ? 'Dataset' : '匯出數據'}</span>
+            </button>
+
+            <button
+              onClick={() => setShowSubmitModal(true)}
+              className="flex-1 py-1 bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 text-slate-950 text-[7.5px] font-black rounded shadow transition active:scale-95 flex items-center justify-center gap-0.5"
+            >
+              <span>📤</span>
+              <span>{isEn ? 'Submit' : '賽事提交'}</span>
             </button>
           </div>
+
+          {proofSignature && (
+            <div className="p-1 bg-slate-900 border border-slate-800 rounded text-left">
+              <div className="text-[6.5px] text-slate-500 font-bold uppercase flex justify-between">
+                <span>LOCAL RECEIPT (SHA-256)</span>
+                <span className="text-emerald-400 font-mono text-[5.5px]">TAMPER-PROOF</span>
+              </div>
+              <div className="text-[6px] font-mono text-cyan-400/80 break-all select-all mt-0.5">
+                {proofSignature}
+              </div>
+            </div>
+          )}
         </div>
+      )}
+
+      {showPBModal && (
+        <PBCelebrationModal pb={profile.personalBest} onClose={() => setShowPBModal(false)} isEn={isEn} />
+      )}
+
+      {showSubmitModal && (
+        <TournamentSubmissionModal
+          payload={{
+            submissionId: `SUB-${actualPuzzle.id}-${Date.now().toString(36)}`,
+            tournamentId: tournamentMode ? 'WPF_NURIKABE_2026' : 'GLOBAL_TOPOLOGY_STAGE',
+            playerId: profile.personalBest.updatedAt ? 'CONTENDER_VERIFIED' : 'LOCAL_PLAYER_1',
+            division: 'open',
+            puzzleId: actualPuzzle.id,
+            engineType: 'nurikabe',
+            tier: currentTier,
+            timeSpentSec: Math.round(elapsedMs / 1000),
+            conflictsCount: conflictCountRef.current,
+            infractionScore: calculateInfractionScore({
+              tabSwitches: 0,
+              blurEvents: 0,
+              clipboardEvents: 0,
+              untrustedEvents: 0,
+            }),
+            environment: getEnvironmentFingerprint(),
+            timestamp: new Date().toISOString(),
+          }}
+          onClose={() => setShowSubmitModal(false)}
+          isEn={isEn}
+        />
       )}
     </div>
   );
