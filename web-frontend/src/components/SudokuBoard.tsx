@@ -129,7 +129,7 @@ export const SudokuBoard: React.FC<Props> = ({
     };
   }, [isAssessmentMode, isCompleted, isTimedOut, isFailedAssessment, isResigned, isEn]);
 
-  // 初始化與書籤恢復（更新為 boardState）
+  // 初始化與書籤恢復
   useEffect(() => {
     const bookmark = profile.bookmarks[actualPuzzle?.id || ''];
     if (bookmark && bookmark.boardState) {
@@ -324,7 +324,6 @@ export const SudokuBoard: React.FC<Props> = ({
     [actualPuzzle, recordAttempt, removeBookmark, currentTier, highestTech, isAssessmentMode, benchmarkData.isNewPB, flatSolution, hintLevel]
   );
 
-  // 暫存此局進度（更新為 boardState）
   const handleBookmarkPuzzle = useCallback(() => {
     if (isCompleted || isTimedOut || isFailedAssessment || isResigned || !actualPuzzle) return;
     saveBookmark({
@@ -340,7 +339,6 @@ export const SudokuBoard: React.FC<Props> = ({
     if (navigator.vibrate) navigator.vibrate([25, 40]);
   }, [isCompleted, isTimedOut, isFailedAssessment, isResigned, actualPuzzle, currentTier, grid, elapsedSec, saveBookmark, isEn]);
 
-  // 優雅投降並覆盤
   const handleGracefulResign = useCallback(() => {
     if (isCompleted || isTimedOut || isFailedAssessment || isResigned || !flatSolution.length) return;
     if (navigator.vibrate) navigator.vibrate([40, 60, 40]);
@@ -371,7 +369,6 @@ export const SudokuBoard: React.FC<Props> = ({
     });
   }, [isCompleted, isTimedOut, isFailedAssessment, isResigned, flatSolution, actualPuzzle, currentTier, conflictCountRef, highestTech, recordAttempt, removeBookmark]);
 
-  // 提示階梯觸發
   const triggerHintLadder = () => {
     if (hints.length === 0 || isCompleted || isTimedOut || isFailedAssessment || isResigned) return;
 
@@ -398,7 +395,6 @@ export const SudokuBoard: React.FC<Props> = ({
   const handleNumberInput = (num: number) => {
     if (selectedCell === null || initialGrid[selectedCell] !== 0 || isCompleted || isTimedOut || isFailedAssessment || isResigned) return;
 
-    // 筆記模式
     if (isNoteMode && num !== 0) {
       setCandidates((prev) => {
         const cellCandidates = new Set(prev[selectedCell] || []);
@@ -413,7 +409,6 @@ export const SudokuBoard: React.FC<Props> = ({
       return;
     }
 
-    // 正式填入數值
     const flatSol = flatSolution;
     const expectedValue = flatSol[selectedCell];
 
@@ -443,7 +438,6 @@ export const SudokuBoard: React.FC<Props> = ({
       });
     }
 
-    // 驗證第三階手動確認
     const r = Math.floor(selectedCell / 9);
     const c = selectedCell % 9;
     const currentHint = hints.find((h) => h.level === 3);
@@ -456,14 +450,32 @@ export const SudokuBoard: React.FC<Props> = ({
     checkVictory(nextGrid);
   };
 
+  // 鍵盤導航增強：支援 WASD / 方向鍵 與數字鍵
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (isCompleted || isTimedOut || isFailedAssessment || isResigned || selectedCell === null) return;
+      if (isCompleted || isTimedOut || isFailedAssessment || isResigned) return;
 
       if (e.key === 'n' || e.key === 'N') {
         setIsNoteMode((prev) => !prev);
         return;
       }
+
+      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'KeyW', 'KeyS', 'KeyA', 'KeyD'].includes(e.code)) {
+        e.preventDefault();
+        setSelectedCell((prev) => {
+          if (prev === null) return 0;
+          const r = Math.floor(prev / 9);
+          const c = prev % 9;
+          if (e.code === 'ArrowUp' || e.code === 'KeyW') return Math.max(0, r - 1) * 9 + c;
+          if (e.code === 'ArrowDown' || e.code === 'KeyS') return Math.min(8, r + 1) * 9 + c;
+          if (e.code === 'ArrowLeft' || e.code === 'KeyA') return r * 9 + Math.max(0, c - 1);
+          if (e.code === 'ArrowRight' || e.code === 'KeyD') return r * 9 + Math.min(8, c + 1);
+          return prev;
+        });
+        return;
+      }
+
+      if (selectedCell === null) return;
 
       const num = parseInt(e.key, 10);
       if (!isNaN(num) && num >= 1 && num <= 9) {
@@ -482,7 +494,6 @@ export const SudokuBoard: React.FC<Props> = ({
   const remainingTime = Math.max(0, standardTimeLimit - elapsedSec);
   const cci = useMemo(() => getCompositeCognitiveIndex(), [getCompositeCognitiveIndex, isCompleted]);
 
-  // 高亮同數值與十字輔助線
   const selectedValue = selectedCell !== null ? grid[selectedCell] : 0;
   const selectedRow = selectedCell !== null ? Math.floor(selectedCell / 9) : -1;
   const selectedCol = selectedCell !== null ? selectedCell % 9 : -1;
@@ -592,7 +603,7 @@ export const SudokuBoard: React.FC<Props> = ({
       {/* 自適應盤面 */}
       <div
         className={`grid grid-cols-9 gap-[1px] border-2 p-1 rounded-xl shadow-2xl w-[min(90vw,46vh)] h-[min(90vw,46vh)] mx-auto transition-colors ${
-          isResigned ? 'bg-rose-950/20 border-rose-900/60' : 'bg-slate-750 border-slate-700'
+          isResigned ? 'bg-rose-950/20 border-rose-900/60' : 'bg-slate-800 border-slate-700'
         }`}
       >
         {grid.map((val, idx) => {
@@ -617,7 +628,7 @@ export const SudokuBoard: React.FC<Props> = ({
             <button
               key={idx}
               onClick={() => handleCellClick(idx)}
-              className={`w-full h-full flex items-center justify-center text-xs sm:text-base font-bold transition-colors rounded-xs relative ${borderRight} ${borderBottom} ${
+              className={`w-full h-full flex items-center justify-center text-xs sm:text-base font-bold transition-colors rounded-sm relative ${borderRight} ${borderBottom} ${
                 isResigned
                   ? 'bg-rose-950/80 border-rose-600 text-rose-200'
                   : isHintTarget
@@ -717,13 +728,13 @@ export const SudokuBoard: React.FC<Props> = ({
             />
           </div>
           <div className="text-[8px] text-slate-300 flex justify-between">
-            <span>Filled: {grid.filter((v) => v !== 0).length} / 81</span>
-            <span>Conflicts: {conflictCountRef.current}</span>
+            <span>{isEn ? 'Filled' : '已填入'}: {grid.filter((v) => v !== 0).length} / 81</span>
+            <span>{isEn ? 'Conflicts' : '衝突次數'}: {conflictCountRef.current}</span>
           </div>
         </div>
       )}
 
-      {/* 臨床測量級心理計量學通關反思面板 */}
+      {/* 心理計量學通關反思面板 */}
       {(isCompleted || isResigned) && (
         <div className="mt-3 p-3 bg-slate-950/95 border border-indigo-500/60 rounded-xl text-center w-[min(90vw,46vh)] shadow-2xl animate-fade-in font-mono">
           <div className="flex items-center justify-between border-b border-slate-800 pb-1.5 mb-2">
@@ -736,10 +747,10 @@ export const SudokuBoard: React.FC<Props> = ({
               </div>
               <div className="text-xs text-indigo-300 font-bold">
                 {isResigned
-                  ? '🕊️ Resigned (Solution Master Analysis)'
+                  ? (isEn ? '🕊️ Resigned (Master Analysis)' : '🕊️ 已投降（解答深度覆盤）')
                   : elapsedSec <= benchmarkData.benchmarkTime
-                  ? '⚡ High-Efficiency Pace'
-                  : '🔍 Deep Exploration'}
+                  ? (isEn ? '⚡ High-Efficiency Pace' : '⚡ 高效推理節奏')
+                  : (isEn ? '🔍 Deep Exploration' : '🔍 深度探索完成')}
               </div>
             </div>
 
@@ -748,7 +759,7 @@ export const SudokuBoard: React.FC<Props> = ({
                 IQ {cci.standardIQ} (95% CI: [{cci.ci95IQ[0]}-{cci.ci95IQ[1]}])
               </div>
               <span className="text-[6.5px] text-slate-400 mt-0.5">
-                年齡層 ({cci.ageNorm.cohort}): {cci.ageNorm.ageAdjustedZ >= 0 ? `+${cci.ageNorm.ageAdjustedZ}` : cci.ageNorm.ageAdjustedZ} SD (Top {Number((100 - cci.ageNorm.agePercentile).toFixed(1))}%)
+                {isEn ? 'Cohort' : '年齡層'} ({cci.ageNorm.cohort}): {cci.ageNorm.ageAdjustedZ >= 0 ? `+${cci.ageNorm.ageAdjustedZ}` : cci.ageNorm.ageAdjustedZ} SD ({isEn ? 'Top' : '前'} {Number((100 - cci.ageNorm.agePercentile).toFixed(1))}%)
               </span>
             </div>
           </div>
@@ -757,23 +768,23 @@ export const SudokuBoard: React.FC<Props> = ({
             <div className="bg-slate-900/80 p-1.5 rounded">
               <div>{isEn ? 'Actual Time' : '實際耗時'}</div>
               <div className="text-slate-200 font-bold text-xs">{elapsedSec}s</div>
-              <div className="text-[7px] text-slate-500">Benchmark: {benchmarkData.benchmarkTime}s</div>
+              <div className="text-[7px] text-slate-500">Target: {benchmarkData.benchmarkTime}s</div>
             </div>
             <div className="bg-slate-900/80 p-1.5 rounded">
-              <div>IRT 難度 (b)</div>
+              <div>{isEn ? 'IRT Difficulty (b)' : 'IRT 難度 (b)'}</div>
               <div className="text-cyan-300 font-bold text-xs">{metrics.irt_logit_difficulty ?? 0.0}</div>
               <div className="text-[7px] text-slate-500">Tech: {highestTech}</div>
             </div>
             <div className="bg-slate-900/80 p-1.5 rounded">
-              <div>約束衝突次數</div>
-              <div className="text-amber-300 font-bold text-xs">{conflictCountRef.current} 次</div>
+              <div>{isEn ? 'Constraint Conflicts' : '約束衝突次數'}</div>
+              <div className="text-amber-300 font-bold text-xs">{conflictCountRef.current} {isEn ? 'times' : '次'}</div>
               <div className="text-[7px] text-slate-500">
-                Acc: {userStat ? `${Math.round(userStat.accuracy * 100)}%` : '100%'}
+                {isEn ? 'Acc' : '正確率'}: {userStat ? `${Math.round(userStat.accuracy * 100)}%` : '100%'}
               </div>
             </div>
           </div>
 
-          {/* 心理計量學信賴區間誤差棒 */}
+          {/* 信賴區間誤差棒 */}
           <div className="mb-2">
             <MetricErrorBar
               actualVal={elapsedSec}
@@ -785,7 +796,7 @@ export const SudokuBoard: React.FC<Props> = ({
             />
           </div>
 
-          {/* 五維認知雙軌雷達圖 */}
+          {/* 認知雙軌雷達圖 */}
           <div className="bg-slate-900/40 p-2 rounded-lg border border-slate-800 flex flex-col items-center mb-2">
             <CognitiveRadarChart
               dimensions={profile.cognitiveDimensions}
@@ -824,7 +835,7 @@ export const SudokuBoard: React.FC<Props> = ({
             </button>
           </div>
 
-          {/* 操作按鈕群：縱向數據匯出 + 賽事提交入口 */}
+          {/* 操作按鈕群 */}
           <div className="flex gap-1.5 mb-2">
             <button
               onClick={exportLongitudinalDataset}
@@ -843,7 +854,7 @@ export const SudokuBoard: React.FC<Props> = ({
             </button>
           </div>
 
-          {/* 本地 Web Crypto SHA-256 存證指紋 */}
+          {/* Web Crypto SHA-256 存證指紋 */}
           {proofSignature && (
             <div className="mt-1 p-1.5 bg-slate-900 border border-slate-800 rounded text-left">
               <div className="text-[7px] text-slate-500 font-bold uppercase tracking-wider flex items-center justify-between">
