@@ -1,15 +1,23 @@
 // web-frontend/src/registry/RendererRegistry.tsx
-import React, { lazy, Suspense } from 'react';
+import React, { lazy, Suspense, useMemo } from 'react';
 import { PuzzleEntity } from '../generated';
 
 export interface BaseBoardProps {
-  puzzleData?: any;
-  puzzle?: any;
-  tournamentMode?: boolean;
+  puzzleData: PuzzleEntity;
+  puzzle: any;
+  clues?: any;
+  grid?: any;
+  solution?: any;
+  rows: number;
+  cols: number;
+  size: number;
+  tier: string;
+  difficulty: string;
+  tournamentMode: boolean;
   [key: string]: any;
 }
 
-// 輔助函式：相容 named export 與 default export，防止 m[name] 為 undefined 導致崩潰
+// 輔助函式：相容 named export 與 default export，防範動態載入失敗
 const safeLazy = (importFn: () => Promise<any>, exportName: string) => {
   return lazy(() =>
     importFn().then((m) => {
@@ -22,7 +30,7 @@ const safeLazy = (importFn: () => Promise<any>, exportName: string) => {
   );
 };
 
-// 動態代碼分割載入 18 款謎題組件
+// 代碼分割載入全套 18 款謎題組件
 const MazeBoard = safeLazy(() => import('../components/MazeBoard'), 'MazeBoard');
 const SudokuBoard = safeLazy(() => import('../components/SudokuBoard'), 'SudokuBoard');
 const NonogramBoard = safeLazy(() => import('../components/NonogramBoard'), 'NonogramBoard');
@@ -42,7 +50,6 @@ const HeyawakeBoard = safeLazy(() => import('../components/HeyawakeBoard'), 'Hey
 const YajilinBoard = safeLazy(() => import('../components/YajilinBoard'), 'YajilinBoard');
 const ShikakuBoard = safeLazy(() => import('../components/ShikakuBoard'), 'ShikakuBoard');
 
-// 認知儀表板
 export const CognitiveDashboard = safeLazy(
   () => import('../components/CognitiveDashboard'),
   'CognitiveDashboard'
@@ -87,11 +94,50 @@ const BoardLoadingFallback: React.FC = () => (
   </div>
 );
 
-export const PuzzleRenderer: React.FC<PuzzleRendererProps> = ({ puzzle, tournamentMode }) => {
-  const normalizedType = puzzle?.engine_type?.toLowerCase().trim();
+export const PuzzleRenderer: React.FC<PuzzleRendererProps> = ({ puzzle, tournamentMode = false }) => {
+  const normalizedType = puzzle?.engine_type?.toLowerCase().trim() || '';
   const Component = RENDERERS[normalizedType];
 
-  if (!Component) {
+  // 全方位規格轉接與資料歸一化 (Normalization)
+  const normalizedProps = useMemo(() => {
+    if (!puzzle) return null;
+
+    const spec = (puzzle.puzzle && typeof puzzle.puzzle === 'object') ? puzzle.puzzle : {};
+    
+    // 萃取維度
+    const rows = Number(spec.rows || spec.height || spec.size || puzzle.size || 6);
+    const cols = Number(spec.cols || spec.width || spec.size || puzzle.size || 6);
+    const size = Math.max(rows, cols);
+
+    // 萃取難度標籤，優先使用最外層確認過的 tier
+    const activeTier = String(puzzle.tier || spec.tier || spec.difficulty || 'kids');
+
+    // 萃取題目數據 (同時相容 clues 與 grid)
+    const clues = spec.clues !== undefined ? spec.clues : (puzzle.clues !== undefined ? puzzle.clues : spec.grid);
+    const grid = spec.grid !== undefined ? spec.grid : (puzzle.grid !== undefined ? puzzle.grid : spec.clues);
+    const solution = puzzle.solution !== undefined ? puzzle.solution : spec.solution;
+
+    return {
+      // 展開原始 spec
+      ...spec,
+      // 確保基礎核心欄位精準覆蓋，不被 spec 內部的 undefined 污染
+      puzzleData: puzzle,
+      puzzle: spec, // 許多 Board 習慣以 props.puzzle 取用內部數據
+      rawEntity: puzzle,
+      clues,
+      grid,
+      solution,
+      rows,
+      cols,
+      size,
+      tier: activeTier,
+      difficulty: activeTier,
+      tournamentMode: !!tournamentMode,
+      seed: spec.seed || (puzzle.metrics as any)?.seed,
+    };
+  }, [puzzle, tournamentMode]);
+
+  if (!Component || !normalizedProps) {
     return (
       <div className="p-4 text-center font-mono text-rose-400 text-xs border border-rose-900/60 bg-rose-950/40 rounded-xl max-w-md mx-auto my-6 shadow-xl">
         <div className="text-base mb-1">⚠️</div>
@@ -103,20 +149,10 @@ export const PuzzleRenderer: React.FC<PuzzleRendererProps> = ({ puzzle, tourname
     );
   }
 
-  // 規格轉接器 (Universal Adapter)：
-  // 1. 保留完整 puzzle 與 puzzleData
-  // 2. 將內部 spec (puzzle.puzzle) 中的屬性展開到 props，相容不同時期的 Board 存取方式
-  const innerSpec = (puzzle?.puzzle && typeof puzzle.puzzle === 'object') ? puzzle.puzzle : {};
-  const mergedProps: BaseBoardProps = {
-    ...innerSpec,
-    puzzle,
-    puzzleData: puzzle,
-    tournamentMode: !!tournamentMode,
-  };
-
   return (
     <Suspense fallback={<BoardLoadingFallback />}>
-      <Component {...mergedProps} />
+      {/* 加上 key 確保盤面在題目 ID 或難度變更時乾淨重置生命週期 */}
+      <Component key={puzzle.id || `${normalizedType}_${normalizedProps.tier}`} {...normalizedProps} />
     </Suspense>
   );
 };
