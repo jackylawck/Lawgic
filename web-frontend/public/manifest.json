@@ -2,39 +2,47 @@
   "$schema": "https://json.schemastore.org/web-manifest-combined.json",
   "name": "Lawgic 羅輯・遊戲",
   "short_name": "Lawgic",
-  "description": "高精度邏輯推理、空間運算與競技解題平台",
+  "description": "高精度邏輯推理、空間拓撲運算與競技解題平台。收錄 18 款經典謎題，具備因果提示階梯與零信任本地存證。",
   "lang": "zh-HK",
   "dir": "ltr",
   "id": "./?source=pwa",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
-  "display_override": ["window-controls-overlay", "standalone", "minimal-ui"],
+  "display_override": [
+    "window-controls-overlay",
+    "standalone",
+    "minimal-ui"
+  ],
   "orientation": "any",
-  "background_color": "#090d14",
-  "theme_color": "#090d14",
-  "categories": ["games", "puzzle", "education"],
+  "background_color": "#070a0f",
+  "theme_color": "#070a0f",
+  "categories": [
+    "games",
+    "puzzle",
+    "education"
+  ],
   "icons": [
     {
-      "src": "./icons/icon-192.png",
+      "src": "./Lawgic192icon.png",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "./icons/icon-192-maskable.png",
+      "src": "./Lawgic192icon.png",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "maskable"
     },
     {
-      "src": "./icons/icon-512.png",
+      "src": "./Lawgic512icon.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "./icons/icon-512-maskable.png",
+      "src": "./Lawgic512icon.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "maskable"
@@ -46,38 +54,72 @@
       "sizes": "1280x720",
       "type": "image/png",
       "form_factor": "wide",
-      "label": "Lawgic 競技級棋盤解題工作台"
+      "label": "Lawgic 競技級棋盤解題工作台與縱向認知量表"
     },
     {
       "src": "./screenshots/mobile-preview.png",
       "sizes": "720x1280",
       "type": "image/png",
       "form_factor": "narrow",
-      "label": "移動端零延遲觸控推理介面"
+      "label": "移動端零延遲手勢推理與虛擬搖桿操作介面"
     }
   ],
   "shortcuts": [
     {
       "name": "空間迷宮 (Maze)",
       "short_name": "迷宮",
-      "description": "空間導航與心智心圖訓練",
-      "url": "./?game=maze",
-      "icons": [{ "src": "./icons/icon-192.png", "sizes": "192x192" }]
+      "description": "空間導航與三維心智心圖訓練",
+      "url": "./#c=bWF6ZTpraWRzOjEwMDA=",
+      "icons": [
+        {
+          "src": "./Lawgic192icon.png",
+          "sizes": "192x192"
+        }
+      ]
     },
     {
       "name": "數獨魔陣 (Sudoku)",
       "short_name": "數獨",
-      "description": "約束傳播與邏輯演繹",
-      "url": "./?game=sudoku",
-      "icons": [{ "src": "./icons/icon-192.png", "sizes": "192x192" }]
+      "description": "精確約束傳播與候選數因果鏈演繹",
+      "url": "./#c=c3Vkb2t1OmtpZHM6MTAwMA==",
+      "icons": [
+        {
+          "src": "./Lawgic192icon.png",
+          "sizes": "192x192"
+        }
+      ]
     },
     {
-      "name": "帳篷露營 (Tents)",
-      "short_name": "帳篷",
-      "description": "雙射配對與抽屜原理挑戰",
-      "url": "./?game=tents",
-      "icons": [{ "src": "./icons/icon-192.png", "sizes": "192x192" }]
+      "name": "摩天透視 (Skyscraper)",
+      "short_name": "摩天樓",
+      "description": "正交視角幾何遮擋與透視推導",
+      "url": "./#c=c2t5c2NyYXBlcjpraWRzOjEwMDA=",
+      "icons": [
+        {
+          "src": "./Lawgic192icon.png",
+          "sizes": "192x192"
+        }
+      ]
+    },
+    {
+      "name": "星際數橋 (Hashi)",
+      "short_name": "數橋",
+      "description": "度數連鎖飽和與圖論全域連通挑戰",
+      "url": "./#c=aGFzaGk6a2lkczoxMDAw",
+      "icons": [
+        {
+          "src": "./Lawgic192icon.png",
+          "sizes": "192x192"
+        }
+      ]
     }
   ],
+  "launch_handler": {
+    "client_mode": "focus-existing"
+  },
+  "handle_links": "preferred",
+  "edge_side_panel": {
+    "preferred_width": 420
+  },
   "prefer_related_applications": false
 }
