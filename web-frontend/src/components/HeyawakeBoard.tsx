@@ -1,4 +1,3 @@
-// web-frontend/src/components/HeyawakeBoard.tsx
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { PuzzleEntity, TierKey } from '../generated';
 import { useLearnerProfile } from '../hooks/useLearnerProfile';
@@ -40,6 +39,15 @@ export const HeyawakeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
   const { lang } = useLanguage();
   const isEn = lang === 'en';
 
+  // 提前返回守衛：保證 actualPuzzle 非空，消除全域 TS18048
+  if (!actualPuzzle) {
+    return (
+      <div className="flex items-center justify-center p-8 text-xs font-mono text-slate-500">
+        {isEn ? 'Loading Heyawake Board...' : '載入黑白分明盤面中...'}
+      </div>
+    );
+  }
+
   const spec: HeyawakeSpec = (actualPuzzle as any)?.puzzle;
   const rows = spec?.rows || 6;
   const cols = spec?.cols || 6;
@@ -47,7 +55,7 @@ export const HeyawakeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
   const gridRooms = useMemo(() => spec?.gridRooms || [], [spec]);
   const solution = useMemo(() => spec?.solution || [], [spec]);
 
-  const currentTier = (actualPuzzle?.tier as TierKey) || 'kids';
+  const currentTier = (actualPuzzle.tier as TierKey) || 'kids';
 
   const [board, setBoard] = useState<CellState[][]>(() =>
     Array.from({ length: rows }, () => Array(cols).fill(0))
@@ -91,7 +99,7 @@ export const HeyawakeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
     setConflictDisplay(0);
     movesCountRef.current = 0;
     hasRecordedRef.current = false;
-  }, [actualPuzzle?.id, rows, cols]);
+  }, [actualPuzzle.id, rows, cols]);
 
   useEffect(() => {
     if (isCompleted) return;
@@ -277,7 +285,6 @@ export const HeyawakeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
     setRedoStack((prev) => prev.slice(0, -1));
   }, [redoStack, isCompleted]);
 
-  // 核心防禦：加入 movesCountRef.current > 0 與非空盤面檢驗，杜絕初始化誤通關
   useEffect(() => {
     if (isCompleted || !solution || solution.length === 0) return;
     
@@ -363,7 +370,7 @@ export const HeyawakeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
     }
   };
 
-  const theoryTime = (actualPuzzle?.metrics as any)?.estimated_time_sec || rows * cols * 3;
+  const theoryTime = (actualPuzzle.metrics as any)?.estimated_time_sec || rows * cols * 3;
   const benchmarkData = useMemo(() => {
     return getBenchmarkMetrics('TopologicalLookahead', theoryTime, 'heyawake');
   }, [getBenchmarkMetrics, theoryTime]);
