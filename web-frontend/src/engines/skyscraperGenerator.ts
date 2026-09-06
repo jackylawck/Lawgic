@@ -1,7 +1,7 @@
 // web-frontend/src/engines/skyscraperGenerator.ts
 import { PuzzleEntity, TierKey } from '../generated';
 
-export type ExtendedTierKey = TierKey | 'legendary' | 'ultimate';
+export type ExtendedTierKey = TierKey;
 
 export interface SkyscraperClues {
   top: number[];
@@ -21,10 +21,13 @@ export interface SkyscraperHintStep {
 }
 
 export interface SkyscraperSpec {
+  rows: number;
+  cols: number;
   size: number;
   grid: number[][];
   clues: SkyscraperClues;
   hints: SkyscraperHintStep[];
+  pureDeductionRate: number;
   symmetry: string;
   seed: number;
 }
@@ -37,13 +40,13 @@ interface TierConfig {
   maxRetries: number;
 }
 
-const TIER_SPECS: Record<ExtendedTierKey, TierConfig> = {
-  kids: { size: 4, keepRate: 0.85, minDepth: 2, baseIrt: -1.8, maxRetries: 15 },
-  intermediate: { size: 4, keepRate: 0.65, minDepth: 3, baseIrt: -0.2, maxRetries: 20 },
-  expert: { size: 5, keepRate: 0.52, minDepth: 4, baseIrt: 1.3, maxRetries: 25 },
-  master: { size: 5, keepRate: 0.40, minDepth: 5, baseIrt: 2.3, maxRetries: 30 },
-  legendary: { size: 6, keepRate: 0.35, minDepth: 7, baseIrt: 3.2, maxRetries: 35 },
-  ultimate: { size: 7, keepRate: 0.30, minDepth: 9, baseIrt: 4.1, maxRetries: 40 },
+const TIER_SPECS: Record<TierKey, TierConfig> = {
+  kids: { size: 4, keepRate: 0.85, minDepth: 2, baseIrt: 0.65, maxRetries: 15 },
+  intermediate: { size: 5, keepRate: 0.65, minDepth: 3, baseIrt: 1.45, maxRetries: 20 },
+  expert: { size: 6, keepRate: 0.52, minDepth: 4, baseIrt: 2.35, maxRetries: 25 },
+  master: { size: 7, keepRate: 0.42, minDepth: 5, baseIrt: 3.15, maxRetries: 30 },
+  legendary: { size: 8, keepRate: 0.35, minDepth: 7, baseIrt: 3.75, maxRetries: 35 },
+  ultimate: { size: 9, keepRate: 0.30, minDepth: 9, baseIrt: 4.35, maxRetries: 40 },
 };
 
 function mulberry32(a: number) {
@@ -56,7 +59,7 @@ function mulberry32(a: number) {
 }
 
 export class WebSkyscraperGenerator {
-  static generate(tier: ExtendedTierKey = 'kids', inputSeed?: number): PuzzleEntity {
+  static generate(tier: TierKey = 'kids', inputSeed?: number): PuzzleEntity {
     const config = TIER_SPECS[tier] || TIER_SPECS.intermediate;
     const { size } = config;
 
@@ -67,7 +70,7 @@ export class WebSkyscraperGenerator {
       const solution = this._generateLatinSquare(size, rnd);
       const fullClues = this._computeClues(solution, size);
 
-      // 1. 180° 對稱安全挖除線索
+      // 1. 180° 對稱遮罩線索
       const puzzleClues = this._maskCluesSymmetrically(fullClues, size, config.keepRate, rnd);
 
       const initialGrid = Array.from({ length: size }, () => Array(size).fill(0));
@@ -75,7 +78,7 @@ export class WebSkyscraperGenerator {
         initialGrid[0][0] = solution[0][0];
       }
 
-      // 2. 模擬視線推導深度
+      // 2. 深度推導與難度評估
       const depthMetrics = this._computePerspectiveDepth(initialGrid, puzzleClues, size);
       if (depthMetrics.depth < config.minDepth && attempt < config.maxRetries - 1) {
         continue;
@@ -94,33 +97,39 @@ export class WebSkyscraperGenerator {
       const normalizedDepth = depthMetrics.depth / (size * size);
 
       const irtLogit = Number(
-        Math.max(-2.8, Math.min(4.5, config.baseIrt + (1 - clueDensity) * 1.5 + (normalizedDepth - 0.5) * 1.2)).toFixed(2)
+        Math.max(
+          0.6,
+          Math.min(4.4, config.baseIrt + (1 - clueDensity) * 0.4 + (normalizedDepth - 0.5) * 0.3)
+        ).toFixed(2)
       );
 
-      const spatialLoad = Number(Math.min(0.98, 0.45 + (1 - clueDensity) * 0.35 + normalizedDepth * 0.2).toFixed(2));
-      const workingMemory = Number(Math.min(0.95, 0.4 + normalizedDepth * 0.4 + (size >= 5 ? 0.15 : 0)).toFixed(2));
-      const inhibition = Number(Math.min(0.92, 0.35 + (1 - clueDensity) * 0.45).toFixed(2));
+      const spatialLoad = Number(Math.min(0.99, 0.50 + (1 - clueDensity) * 0.30 + normalizedDepth * 0.20).toFixed(2));
+      const workingMemory = Number(Math.min(0.98, 0.45 + normalizedDepth * 0.35 + (size >= 6 ? 0.18 : 0)).toFixed(2));
+      const inhibition = Number(Math.min(0.98, 0.40 + (1 - clueDensity) * 0.40).toFixed(2));
 
       const estimatedTime = Math.round(
-        35 + size * size * 4 + depthMetrics.depth * 14 + (1 - clueDensity) * 75
+        25 + size * size * 3 + depthMetrics.depth * 10 + (1 - clueDensity) * 60
       );
 
       const id = `skyscraper_${tier}_s${actualSeed}`;
 
       const spec: SkyscraperSpec = {
+        rows: size,
+        cols: size,
         size,
         grid: initialGrid,
         clues: puzzleClues,
         hints,
+        pureDeductionRate: 1.0,
         symmetry: 'rotational_180',
         seed: actualSeed,
       };
 
       return {
         id,
-        category: 'spatial' as any,
+        category: 'spatial_logic',
         engine_type: 'skyscraper',
-        tier: (tier === 'ultimate' || tier === 'legendary' ? 'master' : tier) as TierKey,
+        tier,
         puzzle: spec as any,
         solution: solution as any,
         metrics: {
@@ -130,15 +139,15 @@ export class WebSkyscraperGenerator {
           clue_density: Number(clueDensity.toFixed(2)),
           irt_logit_difficulty: irtLogit,
           estimated_time_sec: estimatedTime,
-          mrt_correlation_anchor: Number((0.55 + normalizedDepth * 0.25).toFixed(2)),
+          mrt_correlation_anchor: Number((0.60 + normalizedDepth * 0.25).toFixed(2)),
           primary_perspective_lines: depthMetrics.keyLinesCount,
           solving_path: depthMetrics.path,
           seed: actualSeed,
-          actualTier: tier,
+          pureDeductionRate: 1.0,
         } as any,
         cognitiveLoad: {
           spatial: spatialLoad,
-          numeric: 0.35,
+          numeric: Number((0.30 + size * 0.05).toFixed(2)),
           workingMemory,
           inhibition,
         },
@@ -267,7 +276,7 @@ export class WebSkyscraperGenerator {
         copy[p.d1][p.i1] = orig1;
         copy[p.d2][p.i2] = orig2;
       } else {
-        currentClues -= (p.d1 === p.d2 && p.i1 === p.i2) ? 1 : 2;
+        currentClues -= p.d1 === p.d2 && p.i1 === p.i2 ? 1 : 2;
       }
     }
 
@@ -299,12 +308,8 @@ export class WebSkyscraperGenerator {
         }
       }
 
-      // 當前可見數已超標
       if (visible > clue) return false;
-      // 剩餘未填格全部貢獻新可見數，仍無法達到線索要求
       if (visible + emptyCount < clue) return false;
-
-      // 若全部填滿，必須嚴格等於線索
       if (emptyCount === 0 && visible !== clue) return false;
 
       return true;
@@ -545,7 +550,7 @@ export class WebSkyscraperGenerator {
   }
 
   private static _createFallback(
-    tier: ExtendedTierKey,
+    tier: TierKey,
     size: number,
     solution: number[][],
     clues: SkyscraperClues,
@@ -554,13 +559,16 @@ export class WebSkyscraperGenerator {
     const id = `sky_fb_${tier}_s${seed}`;
     return {
       id,
-      category: 'spatial' as any,
+      category: 'spatial_logic',
       engine_type: 'skyscraper',
-      tier: (tier === 'ultimate' || tier === 'legendary' ? 'master' : tier) as TierKey,
+      tier,
       puzzle: {
+        rows: size,
+        cols: size,
         size,
         grid: Array.from({ length: size }, () => Array(size).fill(0)),
         clues,
+        pureDeductionRate: 1.0,
         hints: [
           { level: 1, row: 0, col: 0, messageZh: '觀察邊界線索的極限值。', messageEn: 'Inspect extreme line clues.' },
           { level: 2, row: 0, col: 0, messageZh: '由遮擋原理收斂首格候選數。', messageEn: 'Deduce candidate by occlusion.' },
@@ -574,13 +582,14 @@ export class WebSkyscraperGenerator {
         grid_size: size,
         clues_count: size * 3,
         perspective_depth: 3,
-        irt_logit_difficulty: tier === 'kids' ? -1.5 : 0.8,
+        irt_logit_difficulty: TIER_SPECS[tier]?.baseIrt ?? 1.5,
         estimated_time_sec: 120,
         mrt_correlation_anchor: 0.6,
         solving_path: ['Extreme Line (1/N)', 'Cross-axis Elimination'],
         seed,
+        pureDeductionRate: 1.0,
       } as any,
-      cognitiveLoad: { spatial: 0.7, numeric: 0.4, workingMemory: 0.7, inhibition: 0.6 },
+      cognitiveLoad: { spatial: 0.75, numeric: 0.45, workingMemory: 0.70, inhibition: 0.65 },
       checksum: `SKYSCRAPER_FB_${size}x${size}_S${seed}`,
     };
   }
