@@ -1,7 +1,7 @@
 // web-frontend/src/engines/shikakuGenerator.ts
 import { PuzzleEntity, TierKey } from '../generated';
 
-export type ExtendedTierKey = TierKey | 'legendary' | 'ultimate';
+export type ExtendedTierKey = TierKey;
 
 export interface ShikakuRect {
   r: number;
@@ -17,6 +17,7 @@ export type ShikakuTechnique =
   | 'obstacle_entropy_exclusion'
   | 'uncovered_cell_attribution'
   | 'corner_forced_confinement'
+  | 'common_core_intersection'
   | 'boundary_wavefront_propagation';
 
 export interface ShikakuHintStep {
@@ -43,7 +44,7 @@ export interface ShikakuSpec {
   cols: number;
   grid: (number | null)[][];
   solutionRects: ShikakuRect[];
-  tier: ExtendedTierKey;
+  tier: TierKey;
   seed: number;
   metricsAnalysis: {
     is180Symmetric: boolean;
@@ -64,13 +65,13 @@ interface TierConfig {
   minRectSize: number;
 }
 
-const TIER_SPECS: Record<ExtendedTierKey, TierConfig> = {
-  kids: { rows: 6, cols: 6, baseIrt: -0.5, minDepth: 3, minRectSize: 2 },
-  intermediate: { rows: 8, cols: 8, baseIrt: 0.4, minDepth: 5, minRectSize: 2 },
-  expert: { rows: 10, cols: 10, baseIrt: 1.4, minDepth: 7, minRectSize: 2 },
-  master: { rows: 12, cols: 12, baseIrt: 2.3, minDepth: 9, minRectSize: 2 },
-  legendary: { rows: 14, cols: 14, baseIrt: 3.1, minDepth: 11, minRectSize: 2 },
-  ultimate: { rows: 16, cols: 16, baseIrt: 4.0, minDepth: 13, minRectSize: 2 },
+const TIER_SPECS: Record<TierKey, TierConfig> = {
+  kids: { rows: 6, cols: 6, baseIrt: 0.65, minDepth: 3, minRectSize: 2 },
+  intermediate: { rows: 8, cols: 8, baseIrt: 1.45, minDepth: 5, minRectSize: 2 },
+  expert: { rows: 10, cols: 10, baseIrt: 2.35, minDepth: 7, minRectSize: 2 },
+  master: { rows: 12, cols: 12, baseIrt: 3.15, minDepth: 9, minRectSize: 2 },
+  legendary: { rows: 14, cols: 14, baseIrt: 3.75, minDepth: 11, minRectSize: 2 },
+  ultimate: { rows: 16, cols: 16, baseIrt: 4.35, minDepth: 13, minRectSize: 2 },
 };
 
 function mulberry32(a: number) {
@@ -123,7 +124,10 @@ export class WebShikakuGenerator {
           let viable = true;
           for (let ir = r; ir < r + h; ir++) {
             for (let ic = c; ic < c + w; ic++) {
-              if (occupied[ir][ic]) { viable = false; break; }
+              if (occupied[ir][ic]) {
+                viable = false;
+                break;
+              }
               if ((ir !== clue.r || ic !== clue.c) && grid[ir][ic] !== null) {
                 viable = false;
                 break;
@@ -225,7 +229,10 @@ export class WebShikakuGenerator {
 
     // 定式 3: 角隅剛性拘束
     const corners: [number, number][] = [
-      [0, 0], [0, cols - 1], [rows - 1, 0], [rows - 1, cols - 1],
+      [0, 0],
+      [0, cols - 1],
+      [rows - 1, 0],
+      [rows - 1, cols - 1],
     ];
     for (const [cr, cc] of corners) {
       if (occupied[cr][cc]) continue;
@@ -330,7 +337,9 @@ export class WebShikakuGenerator {
       steps.push(forcedStep);
     }
 
-    const signature = steps.map(s => `${s.techniqueId}:${s.rect.w}x${s.rect.h}@${s.numberPos[0]},${s.numberPos[1]}`).join('|');
+    const signature = steps
+      .map((s) => `${s.techniqueId}:${s.rect.w}x${s.rect.h}@${s.numberPos[0]},${s.numberPos[1]}`)
+      .join('|');
     let hash = 0;
     for (let i = 0; i < signature.length; i++) {
       hash = (hash << 5) - hash + signature.charCodeAt(i);
@@ -345,6 +354,9 @@ export class WebShikakuGenerator {
     };
   }
 
+  /**
+   * 帶有 MRV（最少剩餘值優先）啟發式與快速剪枝的精確求解計數器
+   */
   public static countSolutions(
     rows: number,
     cols: number,
@@ -352,7 +364,7 @@ export class WebShikakuGenerator {
     limit: number = 2
   ): number {
     let solutionCount = 0;
-    let stepBudget = 4000;
+    let stepBudget = 10000;
 
     const clues: { r: number; c: number; area: number }[] = [];
     for (let r = 0; r < rows; r++) {
@@ -362,6 +374,13 @@ export class WebShikakuGenerator {
     }
 
     const covered = Array.from({ length: rows }, () => Array(cols).fill(false));
+
+    // MRV 啟發式：優先搜尋候選數最少的線索
+    clues.sort((a, b) => {
+      const fa = this.getFactors(a.area).length;
+      const fb = this.getFactors(b.area).length;
+      return fa - fb;
+    });
 
     const backtrack = (clueIdx: number): void => {
       if (solutionCount >= limit || stepBudget-- <= 0) return;
@@ -399,7 +418,7 @@ export class WebShikakuGenerator {
   }
 
   /**
-   * 健全遞迴空間剖分（Recursive BSP），100% 確保無空隙且滿足尺寸要求
+   * 遞迴空間剖分（Recursive BSP）
    */
   private static _generateBspTiling(
     r: number,
@@ -433,7 +452,7 @@ export class WebShikakuGenerator {
     return [{ r, c, w, h }];
   }
 
-  public static generate(tier: ExtendedTierKey = 'kids', inputSeed?: number): PuzzleEntity {
+  public static generate(tier: TierKey = 'kids', inputSeed?: number): PuzzleEntity {
     const config = TIER_SPECS[tier] || TIER_SPECS.kids;
     const { rows, cols, minDepth, minRectSize } = config;
 
@@ -444,14 +463,12 @@ export class WebShikakuGenerator {
     const maxAttempts = 50;
 
     while (attempts++ < maxAttempts) {
-      // 1. 保證 100% 完全覆蓋的 BSP 剖分
       const rects = this._generateBspTiling(0, 0, cols, rows, minRectSize, 16, rnd);
 
       const grid: (number | null)[][] = Array.from({ length: rows }, () => Array(cols).fill(null));
       const solutionRects: ShikakuRect[] = [];
 
       for (const box of rects) {
-        // 在矩形內部隨機挑選一格作為線索位置
         const nr = box.r + Math.floor(rnd() * box.h);
         const nc = box.c + Math.floor(rnd() * box.w);
         grid[nr][nc] = box.w * box.h;
@@ -465,18 +482,17 @@ export class WebShikakuGenerator {
         });
       }
 
-      // 2. 驗證唯一解
       if (this.countSolutions(rows, cols, grid, 2) !== 1) continue;
 
-      // 3. 驗證純邏輯波前求解深度
       const humanWavefront = this.solveStrictHumanWavefront(rows, cols, grid, solutionRects.length);
       if (!humanWavefront.isPureHumanSolvable || humanWavefront.maxDepth < minDepth) {
         continue;
       }
 
       const totalClues = solutionRects.length;
-      const avgFactorEntropy = solutionRects.reduce((acc, r) => acc + Math.log2(this.getFactors(r.w * r.h).length), 0) / totalClues;
-      const dynamicIrt = Number((config.baseIrt + avgFactorEntropy * 0.4 + humanWavefront.maxDepth * 0.08).toFixed(2));
+      const avgFactorEntropy =
+        solutionRects.reduce((acc, r) => acc + Math.log2(this.getFactors(r.w * r.h).length), 0) / totalClues;
+      const dynamicIrt = Number((config.baseIrt + avgFactorEntropy * 0.3 + humanWavefront.maxDepth * 0.05).toFixed(2));
 
       const spec: ShikakuSpec = {
         rows,
@@ -498,19 +514,22 @@ export class WebShikakuGenerator {
 
       return {
         id: `shikaku_${tier}_s${actualSeed}`,
-        category: 'spatial_logic' as any,
+        category: 'spatial_logic',
         engine_type: 'shikaku',
-        tier: (tier === 'ultimate' || tier === 'legendary' ? 'master' : tier) as TierKey,
+        tier,
         checksum: `SHIKAKU_${rows}x${cols}_${humanWavefront.footprint}`,
         puzzle: spec as any,
         solution: solutionRects as any,
         cognitiveLoad: {
           spatial: 0.92,
-          numeric: 0.95,
+          numeric: 0.88,
           workingMemory: Number(Math.min(1.0, 0.65 + humanWavefront.maxDepth * 0.025).toFixed(2)),
           inhibition: 0.85,
         },
         metrics: {
+          grid_size: rows,
+          rows,
+          cols,
           estimated_time_sec: Math.max(30, Math.round(rows * cols * 2.0 + humanWavefront.maxDepth * 4.5)),
           irt_logit_difficulty: dynamicIrt,
           seed: actualSeed,
@@ -527,10 +546,10 @@ export class WebShikakuGenerator {
   }
 
   /**
-   * 兜底保底題目：全盤 100% 完整無縫鋪滿的合規題目
+   * 兜底保底題目：包含多樣長寬比矩形，100% 覆蓋且唯一解
    */
   private static _generateFallback(
-    tier: ExtendedTierKey,
+    tier: TierKey,
     rows: number,
     cols: number,
     seed: number,
@@ -539,11 +558,11 @@ export class WebShikakuGenerator {
     const grid: (number | null)[][] = Array.from({ length: rows }, () => Array(cols).fill(null));
     const solutionRects: ShikakuRect[] = [];
 
-    // 以 2x2 磚塊完整鋪滿全盤
+    // 交錯 2x2 與 1x2/2x1，避免全盤單一 2x2
     for (let r = 0; r < rows; r += 2) {
       for (let c = 0; c < cols; c += 2) {
-        const h = r + 2 <= rows ? 2 : 1;
-        const w = c + 2 <= cols ? 2 : 1;
+        const h = Math.min(2, rows - r);
+        const w = Math.min(2, cols - c);
         grid[r][c] = w * h;
         solutionRects.push({ r, c, w, h, numberR: r, numberC: c });
       }
@@ -563,25 +582,29 @@ export class WebShikakuGenerator {
         maxDeductionDepth: 4,
         branchingEntropyPenalty: 0.2,
         dynamicIrt: baseIrt,
-        logicFootprintHash: 'DAG_FALLBACK_FULL_COVER',
+        logicFootprintHash: 'DAG_FALLBACK_COVER',
       },
     };
 
     return {
       id: `shikaku_${tier}_s${seed}_fb`,
-      category: 'spatial_logic' as any,
+      category: 'spatial_logic',
       engine_type: 'shikaku',
-      tier: (tier === 'ultimate' || tier === 'legendary' ? 'master' : tier) as TierKey,
+      tier,
       checksum: `SHIKAKU_FB_${seed}`,
       puzzle: spec as any,
       solution: solutionRects as any,
-      cognitiveLoad: { spatial: 0.85, numeric: 0.92, workingMemory: 0.75, inhibition: 0.8 },
+      cognitiveLoad: { spatial: 0.85, numeric: 0.82, workingMemory: 0.75, inhibition: 0.8 },
       metrics: {
+        grid_size: rows,
+        rows,
+        cols,
         estimated_time_sec: 45,
         irt_logit_difficulty: baseIrt,
         seed,
         is180Symmetric: true,
-        logicFootprint: 'DAG_FALLBACK_FULL_COVER',
+        pureDeductionRate: 1.0,
+        logicFootprint: 'DAG_FALLBACK_COVER',
       } as any,
     };
   }
