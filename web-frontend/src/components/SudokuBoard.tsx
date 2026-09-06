@@ -1,4 +1,3 @@
-// web-frontend/src/components/SudokuBoard.tsx
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { PuzzleEntity, TierKey } from '../generated';
 import { useLearnerProfile } from '../hooks/useLearnerProfile';
@@ -35,13 +34,22 @@ export const SudokuBoard: React.FC<Props> = ({
   const { lang } = useLanguage();
   const isEn = lang === 'en';
 
+  // 提前返回守衛：保證 actualPuzzle 非空，消除全域 TS18048
+  if (!actualPuzzle) {
+    return (
+      <div className="flex items-center justify-center p-8 text-xs font-mono text-slate-500">
+        {isEn ? 'Loading Sudoku Matrix...' : '載入數獨約束矩陣中...'}
+      </div>
+    );
+  }
+
   const [internalAssessment, setInternalAssessment] = useState<boolean>(false);
   const isAssessmentMode = tournamentMode || internalAssessment;
 
-  const metrics = (actualPuzzle?.metrics as any) || {};
+  const metrics = (actualPuzzle.metrics as any) || {};
   const highestTech = metrics.highest_technique || 'NakedSingle';
   const theoryTime = metrics.estimated_time_sec || 120;
-  const currentTier = (actualPuzzle?.tier as TierKey) || 'kids';
+  const currentTier = (actualPuzzle.tier as TierKey) || 'kids';
 
   const timeLimitMap: Record<TierKey, number> = {
     kids: 300,
@@ -57,7 +65,7 @@ export const SudokuBoard: React.FC<Props> = ({
 
   const initialGrid = useMemo(() => {
     const raw =
-      actualPuzzle?.puzzle ||
+      actualPuzzle.puzzle ||
       (actualPuzzle as any)?.spec?.grid ||
       (actualPuzzle as any)?.grid;
 
@@ -69,13 +77,13 @@ export const SudokuBoard: React.FC<Props> = ({
   }, [actualPuzzle]);
 
   const flatSolution = useMemo(() => {
-    const sol = actualPuzzle?.solution;
+    const sol = actualPuzzle.solution;
     if (!sol || !Array.isArray(sol)) return [];
     return Array.isArray(sol[0]) ? sol.flat() : sol;
   }, [actualPuzzle]);
 
   const hints: SudokuHintStep[] = useMemo(() => {
-    return (actualPuzzle?.metrics as any)?.hints || (actualPuzzle?.puzzle as any)?.hints || [];
+    return (actualPuzzle.metrics as any)?.hints || (actualPuzzle.puzzle as any)?.hints || [];
   }, [actualPuzzle]);
 
   const [grid, setGrid] = useState<number[]>(initialGrid);
@@ -131,7 +139,7 @@ export const SudokuBoard: React.FC<Props> = ({
 
   // 初始化與書籤恢復
   useEffect(() => {
-    const bookmark = profile.bookmarks[actualPuzzle?.id || ''];
+    const bookmark = profile.bookmarks[actualPuzzle.id || ''];
     if (bookmark && bookmark.boardState) {
       setGrid(Array.isArray(bookmark.boardState) && bookmark.boardState.length > 0 ? bookmark.boardState : initialGrid);
       setElapsedSec(bookmark.elapsedSec);
@@ -159,7 +167,7 @@ export const SudokuBoard: React.FC<Props> = ({
     startTimeRef.current = Date.now() - (bookmark?.elapsedSec ? bookmark.elapsedSec * 1000 : 0);
     conflictCountRef.current = 0;
     hasRecordedRef.current = false;
-  }, [initialGrid, actualPuzzle?.id, profile.bookmarks, isEn]);
+  }, [initialGrid, actualPuzzle.id, profile.bookmarks, isEn]);
 
   // 計時與超時判定
   useEffect(() => {
@@ -178,10 +186,10 @@ export const SudokuBoard: React.FC<Props> = ({
           const partialRatio = filledCount > 0 ? Number((correctFilled / 81).toFixed(2)) : 0;
 
           recordAttempt({
-            puzzleId: actualPuzzle?.id || 'unknown',
+            puzzleId: actualPuzzle.id,
             engineType: 'sudoku',
             tier: currentTier,
-            cognitiveLoad: actualPuzzle?.cognitiveLoad || {
+            cognitiveLoad: actualPuzzle.cognitiveLoad || {
               spatial: 0.3,
               numeric: 0.7,
               workingMemory: 0.8,
@@ -195,7 +203,7 @@ export const SudokuBoard: React.FC<Props> = ({
           });
 
           try {
-            const canonical = `${actualPuzzle?.id}|${standardTimeLimit}|${conflictCountRef.current}|TIMEOUT_AUDIT`;
+            const canonical = `${actualPuzzle.id}|${standardTimeLimit}|${conflictCountRef.current}|TIMEOUT_AUDIT`;
             const enc = new TextEncoder();
             window.crypto.subtle.digest('SHA-256', enc.encode(canonical)).then((buf) => {
               const hex = Array.from(new Uint8Array(buf))
@@ -235,7 +243,7 @@ export const SudokuBoard: React.FC<Props> = ({
 
       if (isPerfectMatch) {
         setIsCompleted(true);
-        removeBookmark(actualPuzzle?.id || '');
+        removeBookmark(actualPuzzle.id);
 
         if (!hasRecordedRef.current) {
           hasRecordedRef.current = true;
@@ -325,7 +333,7 @@ export const SudokuBoard: React.FC<Props> = ({
   );
 
   const handleBookmarkPuzzle = useCallback(() => {
-    if (isCompleted || isTimedOut || isFailedAssessment || isResigned || !actualPuzzle) return;
+    if (isCompleted || isTimedOut || isFailedAssessment || isResigned) return;
     saveBookmark({
       puzzleId: actualPuzzle.id,
       engineType: 'sudoku',
@@ -345,16 +353,16 @@ export const SudokuBoard: React.FC<Props> = ({
 
     setIsResigned(true);
     hasRecordedRef.current = true;
-    removeBookmark(actualPuzzle?.id || '');
+    removeBookmark(actualPuzzle.id);
 
     setGrid([...flatSolution]);
 
     const timeSpent = Math.max(1, Math.round((Date.now() - startTimeRef.current) / 1000));
     recordAttempt({
-      puzzleId: actualPuzzle?.id || 'sudoku',
+      puzzleId: actualPuzzle.id,
       engineType: 'sudoku',
       tier: currentTier,
-      cognitiveLoad: actualPuzzle?.cognitiveLoad || {
+      cognitiveLoad: actualPuzzle.cognitiveLoad || {
         spatial: 0.3,
         numeric: 0.7,
         workingMemory: 0.8,
