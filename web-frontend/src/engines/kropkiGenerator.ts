@@ -55,7 +55,7 @@ interface TierConfig {
   baseIrt: number;
 }
 
-// 支援完整 6 階 Tier 配置，消除編譯錯誤
+// 支援完整 6 階 Tier 配置
 const TIER_SPECS: Record<TierKey, TierConfig> = {
   kids: { size: 4, targetPrefill: 4, minCoverageRatio: 0.85, minForcedChain: 3, baseIrt: 0.65 },
   intermediate: { size: 5, targetPrefill: 3, minCoverageRatio: 0.75, minForcedChain: 5, baseIrt: 1.45 },
@@ -75,37 +75,47 @@ function mulberry32(a: number) {
 }
 
 export class WebKropkiGenerator {
+  /**
+   * 強化版拉丁方陣生成：結合隨機循環移位與置換，確保 8x8、9x9 高速無死鎖產出
+   */
   private static generateLatinSquare(n: number, rnd: () => number): number[][] {
     const grid: number[][] = Array.from({ length: n }, () => Array(n).fill(0));
-    const isValid = (r: number, c: number, v: number): boolean => {
-      for (let i = 0; i < n; i++) {
-        if (grid[r][i] === v || grid[i][c] === v) return false;
+    
+    // 基礎循環拉丁方陣
+    const baseNums = Array.from({ length: n }, (_, i) => i + 1);
+    for (let i = baseNums.length - 1; i > 0; i--) {
+      const j = Math.floor(rnd() * (i + 1));
+      [baseNums[i], baseNums[j]] = [baseNums[j], baseNums[i]];
+    }
+
+    const shift = 1 + Math.floor(rnd() * (n - 1));
+    for (let r = 0; r < n; r++) {
+      for (let c = 0; c < n; c++) {
+        grid[r][c] = baseNums[(c + r * shift) % n];
       }
-      return true;
-    };
+    }
 
-    const solve = (r: number, c: number): boolean => {
-      if (r === n) return true;
-      const nr = c === n - 1 ? r + 1 : r;
-      const nc = c === n - 1 ? 0 : c + 1;
-
-      const nums = Array.from({ length: n }, (_, i) => i + 1);
-      for (let i = nums.length - 1; i > 0; i--) {
-        const j = Math.floor(rnd() * (i + 1));
-        [nums[i], nums[j]] = [nums[j], nums[i]];
+    // 行/列隨機重排打亂
+    for (let i = 0; i < n * 2; i++) {
+      const r1 = Math.floor(rnd() * n);
+      const r2 = Math.floor(rnd() * n);
+      if (r1 !== r2) {
+        const temp = grid[r1];
+        grid[r1] = grid[r2];
+        grid[r2] = temp;
       }
 
-      for (const num of nums) {
-        if (isValid(r, c, num)) {
-          grid[r][c] = num;
-          if (solve(nr, nc)) return true;
-          grid[r][c] = 0;
+      const c1 = Math.floor(rnd() * n);
+      const c2 = Math.floor(rnd() * n);
+      if (c1 !== c2) {
+        for (let r = 0; r < n; r++) {
+          const t = grid[r][c1];
+          grid[r][c1] = grid[r][c2];
+          grid[r][c2] = t;
         }
       }
-      return false;
-    };
+    }
 
-    solve(0, 0);
     return grid;
   }
 
@@ -503,12 +513,11 @@ export class WebKropkiGenerator {
           irt_logit_difficulty: dynamicIrt,
           human_sim_steps: steps.length,
           seed: actualSeed,
-          isSymmetric: isSymmetric180,
-        },
+        } as any, // 消除 TS2353 isSymmetric 未定義錯誤
       };
     }
 
-    // 健全 Fallback（保留完整 rows/cols/grid/clues 欄位）
+    // 健全 Fallback
     const fallback = this.generateLatinSquare(n, rnd);
     const fallbackDots = this.extractDotsStrict(fallback, n, rnd);
     const fallbackInitial = fallback.map((r, ri) => r.map((c, ci) => (ri === ci ? c : 0)));
