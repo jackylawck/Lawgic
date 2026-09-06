@@ -1,4 +1,3 @@
-// web-frontend/src/components/HashiBoard.tsx
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { PuzzleEntity, TierKey } from '../generated';
 import { useLearnerProfile } from '../hooks/useLearnerProfile';
@@ -43,6 +42,15 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
   const { lang } = useLanguage();
   const isEn = lang === 'en';
 
+  // 提前返回守衛：保證 actualPuzzle 非空，消除全域 TS18048
+  if (!actualPuzzle) {
+    return (
+      <div className="flex items-center justify-center p-8 text-xs font-mono text-slate-500">
+        {isEn ? 'Loading Hashi Topology...' : '載入數橋星際拓撲中...'}
+      </div>
+    );
+  }
+
   const spec: HashiSpec = (actualPuzzle as any)?.puzzle || (actualPuzzle as any)?.spec;
   const rows = spec?.rows || 9;
   const cols = spec?.cols || 9;
@@ -67,7 +75,7 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
     return [];
   }, [spec, rows, cols]);
 
-  const currentTier = (actualPuzzle?.tier as TierKey) || 'kids';
+  const currentTier = (actualPuzzle.tier as TierKey) || 'kids';
 
   // 1. 橋樑狀態集合
   const [bridges, setBridges] = useState<Map<string, 1 | 2>>(new Map());
@@ -132,7 +140,7 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
     setConflictDisplay(0);
     movesCountRef.current = 0;
     hasRecordedRef.current = false;
-  }, [actualPuzzle?.id, islands]);
+  }, [actualPuzzle.id, islands]);
 
   useEffect(() => {
     if (isCompleted || isReplaying) return;
@@ -380,7 +388,6 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isCompleted, isReplaying, handleUndo, handleRedo]);
 
-  // 勝利驗證與防空盤防禦
   useEffect(() => {
     if (isCompleted || isReplaying) return;
     if (movesCountRef.current === 0 || history.length === 0) return;
@@ -389,7 +396,7 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
       setIsCompleted(true);
       const timeSpent = Math.max(1, Math.round((Date.now() - startTimeRef.current) / 1000));
 
-      if (!hasRecordedRef.current && actualPuzzle) {
+      if (!hasRecordedRef.current) {
         hasRecordedRef.current = true;
         const baseIrt = (actualPuzzle.metrics as any)?.irt_logit_difficulty || 1.6;
 
@@ -510,7 +517,7 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
   }, [isReplaying, replayStepIndex, replayStepsList, replaySpeed]);
 
   const handleCopySeedShareCode = () => {
-    const seed = (actualPuzzle as any)?.puzzle?.seed || (actualPuzzle?.metrics as any)?.seed || 0;
+    const seed = (actualPuzzle as any)?.puzzle?.seed || (actualPuzzle.metrics as any)?.seed || 0;
     const origin = typeof window !== 'undefined' ? window.location.origin : 'https://lawgic.app';
     const duelUrl = `${origin}/?engine=hashi&tier=${currentTier}&seed=${seed}`;
     navigator.clipboard.writeText(duelUrl);
@@ -630,7 +637,7 @@ export const HashiBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode
     setTimeout(() => setCopyToast(null), 2500);
   };
 
-  const theoryTime = (actualPuzzle?.metrics as any)?.estimated_time_sec || islands.length * 5;
+  const theoryTime = (actualPuzzle.metrics as any)?.estimated_time_sec || islands.length * 5;
   const benchmarkData = useMemo(() => {
     return getBenchmarkMetrics('TopologicalLookahead', theoryTime, 'hashi');
   }, [getBenchmarkMetrics, theoryTime]);
