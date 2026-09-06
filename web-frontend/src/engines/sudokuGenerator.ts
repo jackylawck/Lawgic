@@ -1,6 +1,7 @@
 // web-frontend/src/engines/sudokuGenerator.ts
 import { PuzzleEntity, TierKey } from '../generated';
 
+export type ExtendedTierKey = TierKey | 'legendary' | 'ultimate';
 export type SymmetryType = 'rotational_180' | 'rotational_90' | 'diagonal';
 export type TechniqueStage = 'NakedSingle' | 'HiddenSingle' | 'IntersectionLock' | 'Chaining';
 
@@ -31,11 +32,14 @@ interface TierConfig {
   baseIrt: number;
 }
 
-const TIER_SPECS: Record<TierKey, TierConfig> = {
-  kids: { targetClues: 46, maxRetries: 10, baseIrt: -1.8 },
-  intermediate: { targetClues: 36, maxRetries: 14, baseIrt: -0.2 },
-  expert: { targetClues: 28, maxRetries: 20, baseIrt: 1.4 },
-  master: { targetClues: 24, maxRetries: 26, baseIrt: 2.5 },
+// 支援完整 6 個難度階梯
+const TIER_SPECS: Record<ExtendedTierKey, TierConfig> = {
+  kids: { targetClues: 46, maxRetries: 8, baseIrt: -1.8 },
+  intermediate: { targetClues: 36, maxRetries: 12, baseIrt: -0.2 },
+  expert: { targetClues: 30, maxRetries: 16, baseIrt: 1.4 },
+  master: { targetClues: 26, maxRetries: 22, baseIrt: 2.5 },
+  legendary: { targetClues: 24, maxRetries: 28, baseIrt: 3.4 },
+  ultimate: { targetClues: 22, maxRetries: 35, baseIrt: 4.2 },
 };
 
 function mulberry32(a: number) {
@@ -48,8 +52,8 @@ function mulberry32(a: number) {
 }
 
 export class WebSudokuGenerator {
-  static generate(tier: TierKey = 'kids', inputSeed?: number): PuzzleEntity {
-    const config = TIER_SPECS[tier] || TIER_SPECS.intermediate;
+  static generate(tier: ExtendedTierKey = 'kids', inputSeed?: number): PuzzleEntity {
+    const config = TIER_SPECS[tier] || TIER_SPECS.kids;
     const allSymmetries: SymmetryType[] = ['rotational_180', 'rotational_90', 'diagonal'];
 
     const actualSeed = inputSeed !== undefined ? inputSeed : Math.floor(Math.random() * 0x7fffffff);
@@ -70,7 +74,7 @@ export class WebSudokuGenerator {
 
       let currentClues = 81;
 
-      // 對稱性安全挖洞
+      // 第一階段：對稱性群組挖洞
       for (const group of cellGroups) {
         if (currentClues <= config.targetClues) break;
 
@@ -93,10 +97,29 @@ export class WebSudokuGenerator {
         }
       }
 
-      // 熱力圖平衡性檢查
-      const uniformity = this._computeClueUniformity(puzzle);
-      if (uniformity < 0.50 && attempt < config.maxRetries - 1) {
-        continue;
+      // 第二階段：若對稱挖洞未達標，進行單格微調挖洞確保命中目標難度提示數
+      if (currentClues > config.targetClues) {
+        const singleCoords: [number, number][] = [];
+        for (let r = 0; r < 9; r++) {
+          for (let c = 0; c < 9; c++) {
+            if (puzzle[r][c] !== 0) singleCoords.push([r, c]);
+          }
+        }
+        for (let i = singleCoords.length - 1; i > 0; i--) {
+          const j = Math.floor(rnd() * (i + 1));
+          [singleCoords[i], singleCoords[j]] = [singleCoords[j], singleCoords[i]];
+        }
+
+        for (const [r, c] of singleCoords) {
+          if (currentClues <= config.targetClues) break;
+          const oldVal = puzzle[r][c];
+          puzzle[r][c] = 0;
+          if (this._countSolutionsMRV(puzzle) !== 1) {
+            puzzle[r][c] = oldVal;
+          } else {
+            currentClues--;
+          }
+        }
       }
 
       // 構建解題技巧鏈與漸進式提示階梯
@@ -106,25 +129,21 @@ export class WebSudokuGenerator {
         currentClues
       );
 
+      const uniformity = this._computeClueUniformity(puzzle);
+      const visualLoad = this._computeVisualClutter(puzzle);
+
       const irtLogit = Number(
-        Math.max(
-          -2.8,
-          Math.min(
-            2.8,
-            config.baseIrt +
-              (1 - currentClues / 81) * 2.0 +
-              (highestTechnique === 'Chaining' ? 0.6 : highestTechnique === 'IntersectionLock' ? 0.3 : 0) -
-              0.2
-          )
+        (
+          config.baseIrt +
+          (1 - currentClues / 81) * 1.6 +
+          (highestTechnique === 'Chaining' ? 0.6 : highestTechnique === 'IntersectionLock' ? 0.3 : 0)
         ).toFixed(2)
       );
 
-      const visualLoad = this._computeVisualClutter(puzzle);
       const estimatedTime = Math.round(
-        30 +
-          (81 - currentClues) * 3.2 +
-          (highestTechnique === 'Chaining' ? 80 : 0) +
-          (symmetry === 'rotational_90' ? 15 : 0)
+        35 +
+          (81 - currentClues) * 3.4 +
+          (highestTechnique === 'Chaining' ? 90 : 0)
       );
 
       const id = `sudoku_${tier}_s${actualSeed}`;
@@ -144,7 +163,7 @@ export class WebSudokuGenerator {
         id,
         category: 'logic' as any,
         engine_type: 'sudoku',
-        tier,
+        tier: (tier === 'ultimate' || tier === 'legendary' ? 'master' : tier) as TierKey,
         puzzle: spec as any,
         solution,
         metrics: {
@@ -157,7 +176,7 @@ export class WebSudokuGenerator {
           irt_logit_difficulty: irtLogit,
           visual_search_load: Number(visualLoad.toFixed(2)),
           estimated_time_sec: estimatedTime,
-          ceiling_level: tier === 'master' && currentClues <= 24 ? 'Ultra' : 'Standard',
+          ceiling_level: tier === 'master' || tier === 'legendary' || tier === 'ultimate' ? 'Ultra' : 'Standard',
           solving_path: path,
           hints,
           seed: actualSeed,
@@ -269,7 +288,6 @@ export class WebSudokuGenerator {
       path.push(highestTechnique === 'IntersectionLock' ? 'Intersection Lock (Claiming)' : `Chaining / Bi-Value Chain (Residual: ${remainingUnsolved})`);
     }
 
-    // 建立提示階梯
     if (firstFoundNaked) {
       const { r, c, val } = firstFoundNaked;
       hints.push({
@@ -279,7 +297,7 @@ export class WebSudokuGenerator {
         targetNum: val,
         technique: 'NakedSingle',
         messageZh: `觀察座標第 ${r + 1} 行、第 ${c + 1} 列的空白格：檢視其所屬行、列與九宮格內已出現的數字。`,
-        messageEn: `Inspect cell at row ${r + 1}, col ${c + 1}: check the existing digits across its row, col, and 3x3 box.`,
+        messageEn: `Inspect cell at row ${r + 1}, col ${c + 1}: check existing digits across its row, col, and 3x3 box.`,
       });
       hints.push({
         level: 2,
@@ -287,7 +305,7 @@ export class WebSudokuGenerator {
         col: c,
         targetNum: val,
         technique: 'NakedSingle',
-        messageZh: `由正交約束排除法：該格在排除其餘 8 個干擾數字後，僅剩唯一的「唯餘數（Naked Single）」。`,
+        messageZh: `由正交約束排除法：該格排除其餘 8 個干擾數字後，僅剩唯一的「唯餘數（Naked Single）」。`,
         messageEn: `By orthogonal elimination: 8 digits are already blocked, leaving only a single valid candidate.`,
       });
       hints.push({
@@ -296,8 +314,8 @@ export class WebSudokuGenerator {
         col: c,
         targetNum: val,
         technique: 'NakedSingle',
-        messageZh: `👉 請親自落子確認：點選座標 (${r + 1}, ${c + 1})，手動填入唯一解 ${val}。`,
-        messageEn: `👉 Action: Tap cell (${r + 1}, ${c + 1}) and manually input the unique digit ${val}.`,
+        messageZh: `👉 請手動填入唯一解：${val}。`,
+        messageEn: `👉 Action: Input the unique digit ${val}.`,
       });
     } else if (firstFoundHidden) {
       const { r, c, val, scope } = firstFoundHidden;
@@ -316,7 +334,7 @@ export class WebSudokuGenerator {
         col: c,
         targetNum: val,
         technique: 'HiddenSingle',
-        messageZh: `在排除其他位置後，數字 ${val} 在${scope}中僅剩座標 (${r + 1}, ${c + 1}) 能夠容納（隱性單數）。`,
+        messageZh: `在排除其他位置後，數字 ${val} 在${scope}中僅剩座標 (${r + 1}, ${c + 1}) 能容納。`,
         messageEn: `Digit ${val} can only legally fit into cell (${r + 1}, ${c + 1}) (Hidden Single).`,
       });
       hints.push({
@@ -325,8 +343,8 @@ export class WebSudokuGenerator {
         col: c,
         targetNum: val,
         technique: 'HiddenSingle',
-        messageZh: `👉 請親自落子確認：點選座標 (${r + 1}, ${c + 1})，手動填入數字 ${val}。`,
-        messageEn: `👉 Action: Tap cell (${r + 1}, ${c + 1}) and place digit ${val}.`,
+        messageZh: `👉 請手動填入數字 ${val}。`,
+        messageEn: `👉 Action: Place digit ${val}.`,
       });
     } else {
       outer: for (let r = 0; r < 9; r++) {
@@ -357,7 +375,7 @@ export class WebSudokuGenerator {
               col: c,
               targetNum: val,
               technique: 'NakedSingle',
-              messageZh: `👉 請親自落子確認：填入 ${val}。`,
+              messageZh: `👉 請填入 ${val}。`,
               messageEn: `👉 Action: Place ${val}.`,
             });
             break outer;
@@ -594,7 +612,7 @@ export class WebSudokuGenerator {
     return true;
   }
 
-  private static _createFallbackPuzzle(tier: TierKey, seed: number): PuzzleEntity {
+  private static _createFallbackPuzzle(tier: ExtendedTierKey, seed: number): PuzzleEntity {
     const basePuzzle = [
       [5, 3, 0, 0, 7, 0, 0, 0, 0],
       [6, 0, 0, 1, 9, 5, 0, 0, 0],
@@ -624,7 +642,7 @@ export class WebSudokuGenerator {
       id,
       category: 'logic' as any,
       engine_type: 'sudoku',
-      tier,
+      tier: (tier === 'ultimate' || tier === 'legendary' ? 'master' : tier) as TierKey,
       puzzle: {
         size: 9,
         grid: basePuzzle,
@@ -651,6 +669,7 @@ export class WebSudokuGenerator {
         ceiling_level: 'Standard',
         solving_path: ['Naked Single ×18', 'Hidden Single ×12', 'Intersection Lock'],
         seed,
+        actualTier: tier,
       } as any,
       cognitiveLoad: { spatial: 0.35, numeric: 0.75, workingMemory: 0.8, inhibition: 0.7 },
       checksum: `SUDOKU_FB_9x9_S${seed}`,
