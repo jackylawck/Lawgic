@@ -1,11 +1,396 @@
 [
   {
-    "id": "hashi_i01",
+    "id": "hashi_kids_01",
+    "category": "spatial_logic",
     "engine_type": "hashi",
-    "difficulty_tier": "intermediate",
-    "puzzle": { "islands": [{"r": 0, "c": 0, "num": 2}, {"r": 0, "c": 4, "num": 2}] },
-    "solution": { "bridges": [] },
-    "metrics": { "decision_depth": 1 },
-    "checksum": "mock_checksum"
+    "tier": "kids",
+    "puzzle": {
+      "rows": 4,
+      "cols": 4,
+      "islands": [
+        { "r": 0, "c": 0, "num": 2 },
+        { "r": 0, "c": 3, "num": 2 },
+        { "r": 3, "c": 0, "num": 2 },
+        { "r": 3, "c": 3, "num": 2 }
+      ],
+      "clues": [
+        { "r": 0, "c": 0, "num": 2 },
+        { "r": 0, "c": 3, "num": 2 },
+        { "r": 3, "c": 0, "num": 2 },
+        { "r": 3, "c": 3, "num": 2 }
+      ],
+      "pureDeductionRate": 1.0
+    },
+    "solution": {
+      "bridges": [
+        { "r1": 0, "c1": 0, "r2": 0, "c2": 3, "count": 1 },
+        { "r1": 0, "c1": 0, "r2": 3, "c2": 0, "count": 1 },
+        { "r1": 0, "c1": 3, "r2": 3, "c2": 3, "count": 1 },
+        { "r1": 3, "c1": 0, "r2": 3, "c2": 3, "count": 1 }
+      ]
+    },
+    "metrics": {
+      "decision_depth": 4,
+      "propagation_steps": 12,
+      "irt_logit_difficulty": 0.65,
+      "estimated_time_sec": 30
+    },
+    "cognitiveLoad": {
+      "spatial": 0.65,
+      "numeric": 0.45,
+      "workingMemory": 0.50,
+      "inhibition": 0.55
+    },
+    "checksum": "HASHI_4x4_KIDS_CERTIFIED_01"
+  },
+  {
+    "id": "hashi_inter_01",
+    "category": "spatial_logic",
+    "engine_type": "hashi",
+    "tier": "intermediate",
+    "puzzle": {
+      "rows": 5,
+      "cols": 5,
+      "islands": [
+        { "r": 0, "c": 0, "num": 3 },
+        { "r": 0, "c": 2, "num": 3 },
+        { "r": 0, "c": 4, "num": 2 },
+        { "r": 2, "c": 0, "num": 2 },
+        { "r": 2, "c": 2, "num": 4 },
+        { "r": 4, "c": 2, "num": 2 },
+        { "r": 4, "c": 4, "num": 2 }
+      ],
+      "clues": [
+        { "r": 0, "c": 0, "num": 3 },
+        { "r": 0, "c": 2, "num": 3 },
+        { "r": 0, "c": 4, "num": 2 },
+        { "r": 2, "c": 0, "num": 2 },
+        { "r": 2, "c": 2, "num": 4 },
+        { "r": 4, "c": 2, "num": 2 },
+        { "r": 4, "c": 4, "num": 2 }
+      ],
+      "pureDeductionRate": 1.0
+    },
+    "solution": {
+      "bridges": [
+        { "r1": 0, "c1": 0, "r2": 0, "c2": 2, "count": 2 },
+        { "r1": 0, "c1": 0, "r2": 2, "c2": 0, "count": 1 },
+        { "r1": 0, "c1": 2, "r2": 0, "c2": 4, "count": 1 },
+        { "r1": 0, "c1": 4, "r2": 4, "c2": 4, "count": 1 },
+        { "r1": 2, "c1": 0, "r2": 2, "c2": 2, "count": 1 },
+        { "r1": 2, "c1": 2, "r2": 4, "c2": 2, "count": 2 },
+        { "r1": 4, "c1": 2, "r2": 4, "c2": 4, "count": 1 }
+      ]
+    },
+    "metrics": {
+      "decision_depth": 7,
+      "propagation_steps": 28,
+      "irt_logit_difficulty": 1.45,
+      "estimated_time_sec": 65
+    },
+    "cognitiveLoad": {
+      "spatial": 0.76,
+      "numeric": 0.58,
+      "workingMemory": 0.65,
+      "inhibition": 0.70
+    },
+    "checksum": "HASHI_5x5_INTER_CERTIFIED_01"
+  },
+  {
+    "id": "hashi_expert_01",
+    "category": "spatial_logic",
+    "engine_type": "hashi",
+    "tier": "expert",
+    "puzzle": {
+      "rows": 7,
+      "cols": 7,
+      "islands": [
+        { "r": 0, "c": 0, "num": 3 },
+        { "r": 0, "c": 3, "num": 4 },
+        { "r": 0, "c": 6, "num": 3 },
+        { "r": 2, "c": 0, "num": 2 },
+        { "r": 2, "c": 3, "num": 2 },
+        { "r": 4, "c": 3, "num": 4 },
+        { "r": 4, "c": 6, "num": 3 },
+        { "r": 6, "c": 0, "num": 3 },
+        { "r": 6, "c": 3, "num": 4 },
+        { "r": 6, "c": 6, "num": 2 }
+      ],
+      "clues": [
+        { "r": 0, "c": 0, "num": 3 },
+        { "r": 0, "c": 3, "num": 4 },
+        { "r": 0, "c": 6, "num": 3 },
+        { "r": 2, "c": 0, "num": 2 },
+        { "r": 2, "c": 3, "num": 2 },
+        { "r": 4, "c": 3, "num": 4 },
+        { "r": 4, "c": 6, "num": 3 },
+        { "r": 6, "c": 0, "num": 3 },
+        { "r": 6, "c": 3, "num": 4 },
+        { "r": 6, "c": 6, "num": 2 }
+      ],
+      "pureDeductionRate": 1.0
+    },
+    "solution": {
+      "bridges": [
+        { "r1": 0, "c1": 0, "r2": 0, "c2": 3, "count": 2 },
+        { "r1": 0, "c1": 0, "r2": 2, "c2": 0, "count": 1 },
+        { "r1": 0, "c1": 3, "r2": 0, "c2": 6, "count": 2 },
+        { "r1": 0, "c1": 6, "r2": 4, "c2": 6, "count": 1 },
+        { "r1": 2, "c1": 0, "r2": 6, "c2": 0, "count": 1 },
+        { "r1": 2, "c1": 0, "r2": 2, "c2": 3, "count": 1 },
+        { "r1": 2, "c1": 3, "r2": 4, "c2": 3, "count": 1 },
+        { "r1": 4, "c1": 3, "r2": 4, "c2": 6, "count": 2 },
+        { "r1": 4, "c1": 3, "r2": 6, "c2": 3, "count": 1 },
+        { "r1": 6, "c1": 0, "r2": 6, "c2": 3, "count": 2 },
+        { "r1": 6, "c1": 3, "r2": 6, "c2": 6, "count": 1 },
+        { "r1": 4, "c1": 6, "r2": 6, "c2": 6, "count": 1 }
+      ]
+    },
+    "metrics": {
+      "decision_depth": 10,
+      "propagation_steps": 54,
+      "irt_logit_difficulty": 2.35,
+      "estimated_time_sec": 130
+    },
+    "cognitiveLoad": {
+      "spatial": 0.84,
+      "numeric": 0.65,
+      "workingMemory": 0.75,
+      "inhibition": 0.82
+    },
+    "checksum": "HASHI_7x7_EXPERT_CERTIFIED_01"
+  },
+  {
+    "id": "hashi_master_01",
+    "category": "spatial_logic",
+    "engine_type": "hashi",
+    "tier": "master",
+    "puzzle": {
+      "rows": 8,
+      "cols": 8,
+      "islands": [
+        { "r": 0, "c": 1, "num": 4 },
+        { "r": 0, "c": 4, "num": 3 },
+        { "r": 0, "c": 7, "num": 2 },
+        { "r": 2, "c": 1, "num": 4 },
+        { "r": 2, "c": 4, "num": 4 },
+        { "r": 2, "c": 7, "num": 3 },
+        { "r": 5, "c": 1, "num": 3 },
+        { "r": 5, "c": 4, "num": 5 },
+        { "r": 5, "c": 7, "num": 3 },
+        { "r": 7, "c": 1, "num": 2 },
+        { "r": 7, "c": 4, "num": 3 },
+        { "r": 7, "c": 7, "num": 2 }
+      ],
+      "clues": [
+        { "r": 0, "c": 1, "num": 4 },
+        { "r": 0, "c": 4, "num": 3 },
+        { "r": 0, "c": 7, "num": 2 },
+        { "r": 2, "c": 1, "num": 4 },
+        { "r": 2, "c": 4, "num": 4 },
+        { "r": 2, "c": 7, "num": 3 },
+        { "r": 5, "c": 1, "num": 3 },
+        { "r": 5, "c": 4, "num": 5 },
+        { "r": 5, "c": 7, "num": 3 },
+        { "r": 7, "c": 1, "num": 2 },
+        { "r": 7, "c": 4, "num": 3 },
+        { "r": 7, "c": 7, "num": 2 }
+      ],
+      "pureDeductionRate": 1.0
+    },
+    "solution": {
+      "bridges": [
+        { "r1": 0, "c1": 1, "r2": 0, "c2": 4, "count": 2 },
+        { "r1": 0, "c1": 1, "r2": 2, "c2": 1, "count": 2 },
+        { "r1": 0, "c1": 4, "r2": 0, "c2": 7, "count": 1 },
+        { "r1": 0, "c1": 7, "r2": 2, "c2": 7, "count": 1 },
+        { "r1": 2, "c1": 1, "r2": 2, "c2": 4, "count": 1 },
+        { "r1": 2, "c1": 1, "r2": 5, "c2": 1, "count": 1 },
+        { "r1": 2, "c1": 4, "r2": 2, "c2": 7, "count": 2 },
+        { "r1": 2, "c1": 4, "r2": 5, "c2": 4, "count": 1 },
+        { "r1": 5, "c1": 1, "r2": 5, "c2": 4, "count": 1 },
+        { "r1": 5, "c1": 1, "r2": 7, "c2": 1, "count": 1 },
+        { "r1": 5, "c1": 4, "r2": 5, "c2": 7, "count": 2 },
+        { "r1": 5, "c1": 4, "r2": 7, "c2": 4, "count": 1 },
+        { "r1": 5, "c1": 7, "r2": 7, "c2": 7, "count": 1 },
+        { "r1": 7, "c1": 1, "r2": 7, "c2": 4, "count": 1 },
+        { "r1": 7, "c1": 4, "r2": 7, "c2": 7, "count": 1 }
+      ]
+    },
+    "metrics": {
+      "decision_depth": 15,
+      "propagation_steps": 85,
+      "irt_logit_difficulty": 3.15,
+      "estimated_time_sec": 200
+    },
+    "cognitiveLoad": {
+      "spatial": 0.90,
+      "numeric": 0.72,
+      "workingMemory": 0.82,
+      "inhibition": 0.88
+    },
+    "checksum": "HASHI_8x8_MASTER_CERTIFIED_01"
+  },
+  {
+    "id": "hashi_legendary_01",
+    "category": "spatial_logic",
+    "engine_type": "hashi",
+    "tier": "legendary",
+    "puzzle": {
+      "rows": 9,
+      "cols": 9,
+      "islands": [
+        { "r": 0, "c": 0, "num": 3 },
+        { "r": 0, "c": 4, "num": 4 },
+        { "r": 0, "c": 8, "num": 3 },
+        { "r": 2, "c": 2, "num": 3 },
+        { "r": 2, "c": 6, "num": 3 },
+        { "r": 4, "c": 0, "num": 4 },
+        { "r": 4, "c": 4, "num": 6 },
+        { "r": 4, "c": 8, "num": 4 },
+        { "r": 6, "c": 2, "num": 3 },
+        { "r": 6, "c": 6, "num": 3 },
+        { "r": 8, "c": 0, "num": 3 },
+        { "r": 8, "c": 4, "num": 4 },
+        { "r": 8, "c": 8, "num": 3 }
+      ],
+      "clues": [
+        { "r": 0, "c": 0, "num": 3 },
+        { "r": 0, "c": 4, "num": 4 },
+        { "r": 0, "c": 8, "num": 3 },
+        { "r": 2, "c": 2, "num": 3 },
+        { "r": 2, "c": 6, "num": 3 },
+        { "r": 4, "c": 0, "num": 4 },
+        { "r": 4, "c": 4, "num": 6 },
+        { "r": 4, "c": 8, "num": 4 },
+        { "r": 6, "c": 2, "num": 3 },
+        { "r": 6, "c": 6, "num": 3 },
+        { "r": 8, "c": 0, "num": 3 },
+        { "r": 8, "c": 4, "num": 4 },
+        { "r": 8, "c": 8, "num": 3 }
+      ],
+      "pureDeductionRate": 1.0
+    },
+    "solution": {
+      "bridges": [
+        { "r1": 0, "c1": 0, "r2": 0, "c2": 4, "count": 2 },
+        { "r1": 0, "c1": 0, "r2": 4, "c2": 0, "count": 1 },
+        { "r1": 0, "c1": 4, "r2": 0, "c2": 8, "count": 2 },
+        { "r1": 0, "c1": 8, "r2": 4, "c2": 8, "count": 1 },
+        { "r1": 2, "c1": 2, "r2": 2, "c2": 6, "count": 1 },
+        { "r1": 2, "c1": 2, "r2": 6, "c2": 2, "count": 2 },
+        { "r1": 2, "c1": 6, "r2": 6, "c2": 6, "count": 2 },
+        { "r1": 4, "c1": 0, "r2": 4, "c2": 4, "count": 2 },
+        { "r1": 4, "c1": 0, "r2": 8, "c2": 0, "count": 1 },
+        { "r1": 4, "c1": 4, "r2": 4, "c2": 8, "count": 2 },
+        { "r1": 4, "c1": 4, "r2": 8, "c2": 4, "count": 1 },
+        { "r1": 0, "c1": 4, "r2": 4, "c2": 4, "count": 1 },
+        { "r1": 4, "c1": 8, "r2": 8, "c2": 8, "count": 1 },
+        { "r1": 6, "c1": 2, "r2": 6, "c2": 6, "count": 1 },
+        { "r1": 8, "c1": 0, "r2": 8, "c2": 4, "count": 2 },
+        { "r1": 8, "c1": 4, "r2": 8, "c2": 8, "count": 2 }
+      ]
+    },
+    "metrics": {
+      "decision_depth": 18,
+      "propagation_steps": 120,
+      "irt_logit_difficulty": 3.75,
+      "estimated_time_sec": 280
+    },
+    "cognitiveLoad": {
+      "spatial": 0.94,
+      "numeric": 0.78,
+      "workingMemory": 0.88,
+      "inhibition": 0.92
+    },
+    "checksum": "HASHI_9x9_LEGENDARY_CERTIFIED_01"
+  },
+  {
+    "id": "hashi_ultimate_01",
+    "category": "spatial_logic",
+    "engine_type": "hashi",
+    "tier": "ultimate",
+    "puzzle": {
+      "rows": 10,
+      "cols": 10,
+      "islands": [
+        { "r": 0, "c": 0, "num": 3 },
+        { "r": 0, "c": 3, "num": 4 },
+        { "r": 0, "c": 6, "num": 4 },
+        { "r": 0, "c": 9, "num": 3 },
+        { "r": 3, "c": 0, "num": 4 },
+        { "r": 3, "c": 3, "num": 6 },
+        { "r": 3, "c": 6, "num": 6 },
+        { "r": 3, "c": 9, "num": 4 },
+        { "r": 6, "c": 0, "num": 4 },
+        { "r": 6, "c": 3, "num": 6 },
+        { "r": 6, "c": 6, "num": 6 },
+        { "r": 6, "c": 9, "num": 4 },
+        { "r": 9, "c": 0, "num": 3 },
+        { "r": 9, "c": 3, "num": 4 },
+        { "r": 9, "c": 6, "num": 4 },
+        { "r": 9, "c": 9, "num": 3 }
+      ],
+      "clues": [
+        { "r": 0, "c": 0, "num": 3 },
+        { "r": 0, "c": 3, "num": 4 },
+        { "r": 0, "c": 6, "num": 4 },
+        { "r": 0, "c": 9, "num": 3 },
+        { "r": 3, "c": 0, "num": 4 },
+        { "r": 3, "c": 3, "num": 6 },
+        { "r": 3, "c": 6, "num": 6 },
+        { "r": 3, "c": 9, "num": 4 },
+        { "r": 6, "c": 0, "num": 4 },
+        { "r": 6, "c": 3, "num": 6 },
+        { "r": 6, "c": 6, "num": 6 },
+        { "r": 6, "c": 9, "num": 4 },
+        { "r": 9, "c": 0, "num": 3 },
+        { "r": 9, "c": 3, "num": 4 },
+        { "r": 9, "c": 6, "num": 4 },
+        { "r": 9, "c": 9, "num": 3 }
+      ],
+      "pureDeductionRate": 1.0
+    },
+    "solution": {
+      "bridges": [
+        { "r1": 0, "c1": 0, "r2": 0, "c2": 3, "count": 2 },
+        { "r1": 0, "c1": 0, "r2": 3, "c2": 0, "count": 1 },
+        { "r1": 0, "c1": 3, "r2": 0, "c2": 6, "count": 1 },
+        { "r1": 0, "c1": 3, "r2": 3, "c2": 3, "count": 1 },
+        { "r1": 0, "c1": 6, "r2": 0, "c2": 9, "count": 2 },
+        { "r1": 0, "c1": 6, "r2": 3, "c2": 6, "count": 1 },
+        { "r1": 0, "c1": 9, "r2": 3, "c2": 9, "count": 1 },
+        { "r1": 3, "c1": 0, "r2": 3, "c2": 3, "count": 2 },
+        { "r1": 3, "c1": 0, "r2": 6, "c2": 0, "count": 1 },
+        { "r1": 3, "c1": 3, "r2": 3, "c2": 6, "count": 1 },
+        { "r1": 3, "c1": 3, "r2": 6, "c2": 3, "count": 2 },
+        { "r1": 3, "c1": 6, "r2": 3, "c2": 9, "count": 2 },
+        { "r1": 3, "c1": 6, "r2": 6, "c2": 6, "count": 2 },
+        { "r1": 3, "c1": 9, "r2": 6, "c2": 9, "count": 1 },
+        { "r1": 6, "c1": 0, "r2": 6, "c2": 3, "count": 2 },
+        { "r1": 6, "c1": 0, "r2": 9, "c2": 0, "count": 1 },
+        { "r1": 6, "c1": 3, "r2": 6, "c2": 6, "count": 1 },
+        { "r1": 6, "c1": 3, "r2": 9, "c2": 3, "count": 1 },
+        { "r1": 6, "c1": 6, "r2": 6, "c2": 9, "count": 2 },
+        { "r1": 6, "c1": 6, "r2": 9, "c2": 6, "count": 1 },
+        { "r1": 6, "c1": 9, "r2": 9, "c2": 9, "count": 1 },
+        { "r1": 9, "c1": 0, "r2": 9, "c2": 3, "count": 2 },
+        { "r1": 9, "c1": 3, "r2": 9, "c2": 6, "count": 1 },
+        { "r1": 9, "c1": 6, "r2": 9, "c2": 9, "count": 2 }
+      ]
+    },
+    "metrics": {
+      "decision_depth": 24,
+      "propagation_steps": 180,
+      "irt_logit_difficulty": 4.35,
+      "estimated_time_sec": 380
+    },
+    "cognitiveLoad": {
+      "spatial": 0.98,
+      "numeric": 0.85,
+      "workingMemory": 0.95,
+      "inhibition": 0.95
+    },
+    "checksum": "HASHI_10x10_ULTIMATE_CERTIFIED_01"
   }
 ]
