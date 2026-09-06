@@ -11,12 +11,12 @@ export interface CHCConstructBreakdown {
 
 export interface LongitudinalPoint {
   timestamp: string;
-  rawTheta: number; // 原始單題 Theta 估計
-  smoothedTheta: number; // EMA 統計平滑 Theta
-  se: number; // 標準誤 SE(theta)
+  rawTheta: number;
+  smoothedTheta: number;
+  se: number;
   ci95Lower: number;
   ci95Upper: number;
-  standardIQ: number; // Wechsler 量表 IQ (均值 100, SD 15)
+  standardIQ: number;
   engineType: string;
   purityIndex: number;
 }
@@ -67,36 +67,71 @@ const BASE_ENGINE_CONSTRUCTS: Record<string, CHCConstructBreakdown> = {
   heyawake: { gf: 0.8, gv: 0.85, gsm: 0.75, inhibition: 0.85, gq: 0.4 },
   dominoes: { gf: 0.85, gv: 0.75, gsm: 0.85, inhibition: 0.88, gq: 0.5 },
   yajilin: { gf: 0.85, gv: 0.92, gsm: 0.8, inhibition: 0.92, gq: 0.5 },
+  shikaku: { gf: 0.88, gv: 0.92, gsm: 0.75, inhibition: 0.85, gq: 0.75 },
+  futoshiki: { gf: 0.85, gv: 0.45, gsm: 0.75, inhibition: 0.8, gq: 0.7 },
+  hitori: { gf: 0.8, gv: 0.6, gsm: 0.8, inhibition: 0.9, gq: 0.3 },
 };
 
 export class PsychometricsEngine {
+  /**
+   * 安全萃取各題型與不同版本紀錄中的真實 IRT 難度值
+   */
+  private static _extractDifficulty(rec: any): number {
+    const directVal = rec.irtDifficulty ?? rec.b ?? rec.metrics?.irt_logit_difficulty;
+    if (typeof directVal === 'number' && !isNaN(directVal)) {
+      return directVal;
+    }
+
+    // 若未直接標註數值，根據難度階層給予標準 IRT 梯度
+    const tier = String(rec.tier || rec.difficultyTier || rec.difficulty || '').toLowerCase();
+    switch (tier) {
+      case 'kids': return 0.65;
+      case 'intermediate': return 1.45;
+      case 'expert': return 2.35;
+      case 'master': return 3.15;
+      case 'legendary': return 3.75;
+      case 'ultimate': return 4.35;
+      default: return 1.5;
+    }
+  }
+
+  /**
+   * 具備狀態噪聲（Process Noise）的卡爾曼-貝氏動態 IRT 特徵更新
+   */
   private static _estimateStepTheta(
     rec: AttemptRecord,
     prevTheta: number = 0.0,
-    prevSE: number = 0.6
+    prevSE: number = 0.65
   ): { theta: number; se: number } {
-    const b = rec.irtDifficulty || 0.5;
-    const a = 1.25;
+    const b = this._extractDifficulty(rec);
+    const a = 1.35; // 項目區別度 (Discrimination parameter)
 
+    // 引入動態學習狀態方差 (Process Noise Q)，防止 SE 過度萎縮導致能力更新僵死
+    const processNoiseQ = 0.04;
+    const priorVariance = prevSE * prevSE + processNoiseQ;
+    const priorPrecision = 1 / priorVariance;
+
+    // 2PL 模型機率預測
     const p = 1 / (1 + Math.exp(-a * (prevTheta - b)));
     const gradient = rec.isSuccess ? 1 - p : -p;
-    const info = Math.max(0.05, a * a * p * (1 - p));
+    const fisherInfo = Math.max(0.08, a * a * p * (1 - p));
 
-    // 反應時間正規化效率加權
-    const baselineSec = Math.max(15, b * 45 + 30);
-    const logActual = Math.log(Math.max(1, rec.timeSpentSec) + 1);
-    const logExpected = Math.log(baselineSec + 1);
-    const rtRatio = logActual / logExpected;
-    const rtWeight = Math.max(0.75, Math.min(1.25, 1.0 - (rtRatio - 1.0) * 0.4));
+    // 反應時間與認知負載權重調整（加入 Sigmoid 夾取避免掛機失真）
+    const baselineSec = Math.max(15, b * 40 + 25);
+    const actualSec = Math.max(2, Math.min(600, rec.timeSpentSec || baselineSec));
+    const rtRatio = Math.log(actualSec + 1) / Math.log(baselineSec + 1);
+    const rtWeight = Math.max(0.65, Math.min(1.35, 1.0 - (rtRatio - 1.0) * 0.45));
 
-    const conflictPenalty = rec.conflictsCount > 0 ? Math.min(0.4, rec.conflictsCount * 0.08) : 0;
+    // 試錯與衝突懲罰
+    const conflicts = rec.conflictsCount || 0;
+    const conflictPenalty = conflicts > 0 ? Math.min(0.35, conflicts * 0.06) : 0;
 
-    const priorPrecision = 1 / (prevSE * prevSE);
-    const updatedPrecision = priorPrecision + info;
+    // 資訊更新
+    const updatedPrecision = priorPrecision + fisherInfo;
     const delta = (gradient * rtWeight - conflictPenalty) / updatedPrecision;
 
-    const newTheta = Math.max(-3.0, Math.min(3.0, prevTheta + delta));
-    const newSE = Math.max(0.18, Math.min(0.75, Math.sqrt(1 / updatedPrecision)));
+    const newTheta = Math.max(-3.5, Math.min(4.5, prevTheta + delta));
+    const newSE = Math.max(0.20, Math.min(0.85, Math.sqrt(1 / updatedPrecision)));
 
     return { theta: Number(newTheta.toFixed(3)), se: Number(newSE.toFixed(3)) };
   }
@@ -106,18 +141,18 @@ export class PsychometricsEngine {
     history: AttemptRecord[]
   ): CHCConstructBreakdown {
     const base = BASE_ENGINE_CONSTRUCTS[engineType] || {
-      gf: 0.6, gv: 0.6, gsm: 0.6, inhibition: 0.6, gq: 0.4,
+      gf: 0.65, gv: 0.65, gsm: 0.65, inhibition: 0.65, gq: 0.5,
     };
 
     const engineHistory = history.filter((r) => r.engineType === engineType);
-    if (engineHistory.length < 3) return base;
+    if (engineHistory.length < 2) return base;
 
     const pureClearCount = engineHistory.filter((r) => r.isPureClear).length;
     const pureRatio = pureClearCount / engineHistory.length;
     const successRatio = engineHistory.filter((r) => r.isSuccess).length / engineHistory.length;
 
-    const deductiveBoost = Math.max(0.85, Math.min(1.2, 0.85 + pureRatio * 0.35));
-    const stabilityBoost = Math.max(0.9, Math.min(1.15, 0.9 + successRatio * 0.25));
+    const deductiveBoost = Math.max(0.85, Math.min(1.25, 0.85 + pureRatio * 0.4));
+    const stabilityBoost = Math.max(0.85, Math.min(1.20, 0.85 + successRatio * 0.35));
 
     return {
       gf: Math.min(1.0, Number((base.gf * deductiveBoost).toFixed(2))),
@@ -135,8 +170,8 @@ export class PsychometricsEngine {
 
     const trajectory: LongitudinalPoint[] = [];
     let curTheta = 0.0;
-    let curSE = 0.65;
-    const emaAlpha = 0.35;
+    let curSE = 0.70;
+    const emaAlpha = 0.30;
     let smoothedTheta = 0.0;
 
     let successfulPureCount = 0;
@@ -152,7 +187,7 @@ export class PsychometricsEngine {
       if (rec.isPureClear) successfulPureCount++;
 
       const pWeights = this._getPersonalizedWeights(rec.engineType, history.slice(0, idx + 1));
-      const qualityFactor = rec.isSuccess ? (rec.isPureClear ? 1.15 : 0.95) : 0.45;
+      const qualityFactor = rec.isSuccess ? (rec.isPureClear ? 1.2 : 1.0) : 0.4;
 
       gfAcc += pWeights.gf * qualityFactor;
       gvAcc += pWeights.gv * qualityFactor;
@@ -161,12 +196,11 @@ export class PsychometricsEngine {
       gqAcc += pWeights.gq * qualityFactor;
       weightSum += qualityFactor;
 
-      const ptIQ = Math.round(100 + smoothedTheta * 15);
+      const ptIQ = Math.max(40, Math.min(160, Math.round(100 + smoothedTheta * 15)));
       const ciLower = Number((smoothedTheta - 1.96 * curSE).toFixed(2));
       const ciUpper = Number((smoothedTheta + 1.96 * curSE).toFixed(2));
 
-      // 若記錄自身有 timestamp 則優先採用，無則退回相對時間
-      const recordTime = (rec as any).timestamp 
+      const recordTime = (rec as any).timestamp
         ? new Date((rec as any).timestamp).toISOString().slice(5, 16)
         : new Date(Date.now() - (history.length - idx) * 1800000).toISOString().slice(5, 16);
 
@@ -192,9 +226,10 @@ export class PsychometricsEngine {
       gq: Number(Math.min(1.0, gqAcc / normW).toFixed(2)),
     };
 
-    // 依據前 25% 數據真實計算歷史基準，無數據才給予初始常模基準
     const baselineRecords = history.slice(0, Math.max(2, Math.floor(history.length * 0.25)));
-    const baselineWeights = baselineRecords.map(r => BASE_ENGINE_CONSTRUCTS[r.engineType] || constructs);
+    const baselineWeights = baselineRecords.map(
+      (r) => BASE_ENGINE_CONSTRUCTS[r.engineType] || constructs
+    );
     const baselineConstructs: CHCConstructBreakdown = {
       gf: Number((baselineWeights.reduce((a, b) => a + b.gf, 0) / baselineWeights.length).toFixed(2)),
       gv: Number((baselineWeights.reduce((a, b) => a + b.gv, 0) / baselineWeights.length).toFixed(2)),
@@ -204,13 +239,13 @@ export class PsychometricsEngine {
     };
 
     const finalSmoothedTheta = trajectory[trajectory.length - 1].smoothedTheta;
-    const overallIQ = Math.round(100 + finalSmoothedTheta * 15);
+    const overallIQ = Math.max(40, Math.min(160, Math.round(100 + finalSmoothedTheta * 15)));
     const percentileRank = Number((this._normalCdf((overallIQ - 100) / 15) * 100).toFixed(1));
 
     const sem = Number((15 * curSE).toFixed(1));
     const ci95: [number, number] = [
-      Math.round(overallIQ - 1.96 * sem),
-      Math.round(overallIQ + 1.96 * sem),
+      Math.max(40, Math.round(overallIQ - 1.96 * sem)),
+      Math.min(160, Math.round(overallIQ + 1.96 * sem)),
     ];
 
     let dominantConstruct: 'Gf' | 'Gv' | 'Gsm' | 'Balanced' = 'Balanced';
@@ -257,11 +292,8 @@ export class PsychometricsEngine {
     };
   }
 
-  /**
-   * 修復雙樣本差值標準誤公式：Var(mean) = (sum SE_i^2) / N^2
-   */
   private static _calculateProgressSignificance(trajectory: LongitudinalPoint[]): ProgressSignificance {
-    if (trajectory.length < 8) {
+    if (trajectory.length < 6) {
       return {
         hasSufficientData: false,
         deltaTheta: 0,
@@ -269,8 +301,8 @@ export class PsychometricsEngine {
         pValue: 1.0,
         isSignificant: false,
         interpretation: {
-          zh: '需累積至少 8 筆測驗數據方可進行顯著進步分析。',
-          en: 'Requires at least 8 completed assessments to compute progress significance.',
+          zh: '需累積至少 6 筆評測紀錄以啟動認知軌跡成長檢定。',
+          en: 'Requires at least 6 assessment points to evaluate cognitive growth.',
         },
       };
     }
@@ -285,7 +317,6 @@ export class PsychometricsEngine {
     const m1 = firstHalf.reduce((a, b) => a + b.rawTheta, 0) / n1;
     const m2 = secondHalf.reduce((a, b) => a + b.rawTheta, 0) / n2;
 
-    // 嚴格統計學修正：Var(\bar{\theta}) = \sum (SE_i^2) / N^2
     const varMean1 = firstHalf.reduce((a, b) => a + b.se * b.se, 0) / (n1 * n1);
     const varMean2 = secondHalf.reduce((a, b) => a + b.se * b.se, 0) / (n2 * n2);
 
@@ -304,7 +335,7 @@ export class PsychometricsEngine {
       interpretation: {
         zh: isSignificant
           ? `統計檢定顯著（Z = ${zScore}, p = ${pValue}）：能力增長具有統計學顯著性（超越隨機測量誤差）。`
-          : `能力表現穩定（Z = ${zScore}）：目前數據處於學習平原期或隨機波動範圍內。`,
+          : `能力表現平穩（Z = ${zScore}）：目前處於能力盤整期或常態測量波動範圍內。`,
         en: isSignificant
           ? `Significant progress verified (Z = ${zScore}, p = ${pValue}): growth reliably exceeds measurement error.`
           : `Stable performance (Z = ${zScore}): currently within standard error plateau.`,
