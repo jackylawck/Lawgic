@@ -109,8 +109,9 @@ export class WebMasyuGenerator {
 
     while (curr) {
       visited.add(curr);
-      const nexts = adj.get(curr)!;
-      const nextNode = nexts[0] === prev ? nexts[1] : nexts[0];
+      // 🌟 明確型別標註，消除 TS7022
+      const nexts: string[] = adj.get(curr)!;
+      const nextNode: string | undefined = nexts[0] === prev ? nexts[1] : nexts[0];
       if (!nextNode) return false;
       if (nextNode === startNode) break;
       if (visited.has(nextNode)) return false;
@@ -480,7 +481,7 @@ export class WebMasyuGenerator {
     return this._generateFallback(tier, size, actualSeed, config.baseIrt);
   }
 
-  private static _generateFallback(tier: ExtendedTierKey, size: number, seed: number, baseIrt: number): PuzzleEntity {
+  private static _generateFallback(tier: ExtendedTierKey, _size: number, seed: number, baseIrt: number): PuzzleEntity {
     const fallbackGrid: PearlType[][] = Array.from({ length: 5 }, () => Array(5).fill('none'));
     fallbackGrid[0][0] = 'black';
     fallbackGrid[0][4] = 'black';
