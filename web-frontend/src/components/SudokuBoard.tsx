@@ -1,3 +1,4 @@
+// web-frontend/src/components/SudokuBoard.tsx
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { PuzzleEntity, TierKey } from '../generated';
 import { useLearnerProfile } from '../hooks/useLearnerProfile';
@@ -34,7 +35,6 @@ export const SudokuBoard: React.FC<Props> = ({
   const { lang } = useLanguage();
   const isEn = lang === 'en';
 
-  // 提前返回守衛：保證 actualPuzzle 非空，消除全域 TS18048
   if (!actualPuzzle) {
     return (
       <div className="flex items-center justify-center p-8 text-xs font-mono text-slate-500">
@@ -51,11 +51,14 @@ export const SudokuBoard: React.FC<Props> = ({
   const theoryTime = metrics.estimated_time_sec || 120;
   const currentTier = (actualPuzzle.tier as TierKey) || 'kids';
 
+  // 補齊 6 階 TierKey，徹底解決 TS2739 錯誤
   const timeLimitMap: Record<TierKey, number> = {
     kids: 300,
     intermediate: 420,
     expert: 540,
     master: 600,
+    legendary: 720,
+    ultimate: 900,
   };
   const standardTimeLimit = timeLimitMap[currentTier] || 480;
 
@@ -63,11 +66,16 @@ export const SudokuBoard: React.FC<Props> = ({
     return getBenchmarkMetrics(highestTech, theoryTime, 'sudoku');
   }, [getBenchmarkMetrics, highestTech, theoryTime]);
 
+  // 強固化初始盤面擷取，防止各類結構落差造成空盤退化
   const initialGrid = useMemo(() => {
+    const spec = (actualPuzzle.puzzle && typeof actualPuzzle.puzzle === 'object') ? (actualPuzzle.puzzle as any) : {};
     const raw =
-      actualPuzzle.puzzle ||
-      (actualPuzzle as any)?.spec?.grid ||
-      (actualPuzzle as any)?.grid;
+      spec.grid ||
+      spec.clues ||
+      spec.initialGrid ||
+      (actualPuzzle as any)?.grid ||
+      (actualPuzzle as any)?.clues ||
+      actualPuzzle.puzzle;
 
     if (!raw) return Array(81).fill(0);
     if (Array.isArray(raw)) {
@@ -77,7 +85,8 @@ export const SudokuBoard: React.FC<Props> = ({
   }, [actualPuzzle]);
 
   const flatSolution = useMemo(() => {
-    const sol = actualPuzzle.solution;
+    const spec = (actualPuzzle.puzzle && typeof actualPuzzle.puzzle === 'object') ? (actualPuzzle.puzzle as any) : {};
+    const sol = actualPuzzle.solution || spec.solution || (actualPuzzle as any)?.solution;
     if (!sol || !Array.isArray(sol)) return [];
     return Array.isArray(sol[0]) ? sol.flat() : sol;
   }, [actualPuzzle]);
@@ -102,7 +111,6 @@ export const SudokuBoard: React.FC<Props> = ({
   const [violationAlert, setViolationAlert] = useState<string | null>(null);
   const [bookmarkToast, setBookmarkToast] = useState<string | null>(null);
 
-  // 提示狀態
   const [hintLevel, setHintLevel] = useState<number>(0);
   const [activeHintText, setActiveHintText] = useState<string | null>(null);
 
@@ -137,7 +145,7 @@ export const SudokuBoard: React.FC<Props> = ({
     };
   }, [isAssessmentMode, isCompleted, isTimedOut, isFailedAssessment, isResigned, isEn]);
 
-  // 初始化與書籤恢復
+  // 初始化與書籤狀態同步
   useEffect(() => {
     const bookmark = profile.bookmarks[actualPuzzle.id || ''];
     if (bookmark && bookmark.boardState) {
@@ -233,7 +241,7 @@ export const SudokuBoard: React.FC<Props> = ({
     flatSolution,
   ]);
 
-  // 勝利判定
+  // 勝利驗證判定
   const checkVictory = useCallback(
     async (currentGrid: number[]) => {
       const flatSol = flatSolution;
@@ -375,7 +383,7 @@ export const SudokuBoard: React.FC<Props> = ({
       partialCompletionRatio: 0.5,
       isPureClear: false,
     });
-  }, [isCompleted, isTimedOut, isFailedAssessment, isResigned, flatSolution, actualPuzzle, currentTier, conflictCountRef, highestTech, recordAttempt, removeBookmark]);
+  }, [isCompleted, isTimedOut, isFailedAssessment, isResigned, flatSolution, actualPuzzle, currentTier, highestTech, recordAttempt, removeBookmark]);
 
   const triggerHintLadder = () => {
     if (hints.length === 0 || isCompleted || isTimedOut || isFailedAssessment || isResigned) return;
@@ -458,7 +466,6 @@ export const SudokuBoard: React.FC<Props> = ({
     checkVictory(nextGrid);
   };
 
-  // 鍵盤導航增強：支援 WASD / 方向鍵 與數字鍵
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (isCompleted || isTimedOut || isFailedAssessment || isResigned) return;
@@ -513,21 +520,18 @@ export const SudokuBoard: React.FC<Props> = ({
 
   return (
     <div className="flex flex-col items-center w-full select-none py-1 font-mono">
-      {/* 違規警告 */}
       {violationAlert && (
         <div className="fixed top-2 z-50 px-3 py-1.5 bg-rose-600 border border-rose-400 text-white font-bold text-xs rounded-full shadow-2xl animate-bounce">
           {violationAlert}
         </div>
       )}
 
-      {/* 暫存提示 */}
       {bookmarkToast && (
         <div className="fixed top-2 z-50 px-3 py-1.5 bg-indigo-600 border border-indigo-400 text-white font-bold text-xs rounded-full shadow-2xl animate-bounce">
           {bookmarkToast}
         </div>
       )}
 
-      {/* 頂部施測模式切換與指標列 */}
       <div className="w-[min(90vw,46vh)] flex items-center justify-between text-[8px] text-slate-500 mb-1 px-1">
         <div className="flex items-center gap-1.5">
           <button
@@ -552,7 +556,7 @@ export const SudokuBoard: React.FC<Props> = ({
           {!isCompleted && !isTimedOut && !isFailedAssessment && !isResigned && (
             <button
               onClick={handleBookmarkPuzzle}
-              className="px-1.5 py-0.5 bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-400 text-[7px] rounded transition"
+              className="px-1.5 py-0.5 bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-400 text-[7px] rounded transition cursor-pointer"
               title={isEn ? 'Bookmark progress' : '暫存此局進度'}
             >
               📌 {isEn ? 'Save' : '暫存'}
@@ -562,7 +566,7 @@ export const SudokuBoard: React.FC<Props> = ({
           {!isCompleted && !isTimedOut && !isFailedAssessment && !isResigned && (
             <button
               onClick={handleGracefulResign}
-              className="px-1.5 py-0.5 bg-slate-900 hover:bg-rose-950/60 border border-slate-700 hover:border-rose-700 text-slate-400 hover:text-rose-300 text-[7px] rounded transition"
+              className="px-1.5 py-0.5 bg-slate-900 hover:bg-rose-950/60 border border-slate-700 hover:border-rose-700 text-slate-400 hover:text-rose-300 text-[7px] rounded transition cursor-pointer"
               title={isEn ? 'Resign & Reveal Solution' : '優雅投降並覆盤官方解答'}
             >
               🕊️ {isEn ? 'Resign' : '投降'}
@@ -572,7 +576,7 @@ export const SudokuBoard: React.FC<Props> = ({
           {!isCompleted && !isTimedOut && !isFailedAssessment && !isResigned && hints.length > 0 && (
             <button
               onClick={triggerHintLadder}
-              className="px-2 py-0.5 bg-amber-950 hover:bg-amber-900 border border-amber-500 text-amber-300 text-[7px] font-bold rounded flex items-center gap-1 transition shadow active:scale-95"
+              className="px-2 py-0.5 bg-amber-950 hover:bg-amber-900 border border-amber-500 text-amber-300 text-[7px] font-bold rounded flex items-center gap-1 transition shadow active:scale-95 cursor-pointer"
             >
               <span>💡</span>
               <span>{hintLevel === 0 ? (isEn ? 'Hint 1' : '提示一') : hintLevel === 1 ? (isEn ? 'Hint 2' : '提示二') : (isEn ? 'Hint 3' : '提示三')}</span>
@@ -597,18 +601,16 @@ export const SudokuBoard: React.FC<Props> = ({
         </div>
       </div>
 
-      {/* 提示訊息橫條 */}
       {activeHintText && (
         <div className="w-[min(90vw,46vh)] bg-amber-950/90 border border-amber-500 text-amber-200 text-[7.5px] px-2 py-1.5 rounded-lg mb-1 animate-fade-in flex items-start justify-between gap-1 shadow-lg">
           <div className="flex items-start gap-1">
             <span className="text-amber-400 font-bold">L{hintLevel}</span>
             <span className="leading-snug">{activeHintText}</span>
           </div>
-          <button onClick={() => setActiveHintText(null)} className="text-amber-400 shrink-0 font-bold ml-1">✕</button>
+          <button onClick={() => setActiveHintText(null)} className="text-amber-400 shrink-0 font-bold ml-1 cursor-pointer">✕</button>
         </div>
       )}
 
-      {/* 自適應盤面 */}
       <div
         className={`grid grid-cols-9 gap-[1px] border-2 p-1 rounded-xl shadow-2xl w-[min(90vw,46vh)] h-[min(90vw,46vh)] mx-auto transition-colors ${
           isResigned ? 'bg-rose-950/20 border-rose-900/60' : 'bg-slate-800 border-slate-700'
@@ -636,7 +638,7 @@ export const SudokuBoard: React.FC<Props> = ({
             <button
               key={idx}
               onClick={() => handleCellClick(idx)}
-              className={`w-full h-full flex items-center justify-center text-xs sm:text-base font-bold transition-colors rounded-sm relative ${borderRight} ${borderBottom} ${
+              className={`w-full h-full flex items-center justify-center text-xs sm:text-base font-bold transition-colors rounded-sm relative cursor-pointer ${borderRight} ${borderBottom} ${
                 isResigned
                   ? 'bg-rose-950/80 border-rose-600 text-rose-200'
                   : isHintTarget
@@ -679,7 +681,6 @@ export const SudokuBoard: React.FC<Props> = ({
         })}
       </div>
 
-      {/* 數字鍵盤 + 筆記模式切換 */}
       {!isCompleted && !isTimedOut && !isFailedAssessment && !isResigned && (
         <div className="flex flex-col gap-1.5 mt-2.5 w-[min(90vw,46vh)]">
           <div className="grid grid-cols-10 gap-1">
@@ -688,7 +689,7 @@ export const SudokuBoard: React.FC<Props> = ({
                 key={num}
                 onClick={() => handleNumberInput(num)}
                 disabled={selectedCell === null}
-                className="py-2 bg-slate-900 hover:bg-slate-800 disabled:opacity-30 active:scale-95 text-slate-200 border border-slate-700 rounded-lg text-xs font-mono font-bold transition shadow"
+                className="py-2 bg-slate-900 hover:bg-slate-800 disabled:opacity-30 active:scale-95 text-slate-200 border border-slate-700 rounded-lg text-xs font-mono font-bold transition shadow cursor-pointer"
               >
                 {num}
               </button>
@@ -696,7 +697,7 @@ export const SudokuBoard: React.FC<Props> = ({
             <button
               onClick={() => handleNumberInput(0)}
               disabled={selectedCell === null}
-              className="py-2 bg-rose-950/60 hover:bg-rose-900/60 disabled:opacity-30 active:scale-95 text-rose-300 border border-rose-800 rounded-lg text-xs font-mono font-bold transition shadow"
+              className="py-2 bg-rose-950/60 hover:bg-rose-900/60 disabled:opacity-30 active:scale-95 text-rose-300 border border-rose-800 rounded-lg text-xs font-mono font-bold transition shadow cursor-pointer"
             >
               ⌫
             </button>
@@ -705,7 +706,7 @@ export const SudokuBoard: React.FC<Props> = ({
           <div className="flex justify-between items-center px-1 text-[8px] text-slate-400">
             <button
               onClick={() => setIsNoteMode((prev) => !prev)}
-              className={`px-2.5 py-1 rounded-lg border text-[8px] font-bold transition flex items-center gap-1 active:scale-95 ${
+              className={`px-2.5 py-1 rounded-lg border text-[8px] font-bold transition flex items-center gap-1 active:scale-95 cursor-pointer ${
                 isNoteMode
                   ? 'bg-amber-950 border-amber-500 text-amber-300 shadow-sm shadow-amber-500/40'
                   : 'bg-slate-900 border-slate-700 text-slate-400 hover:text-slate-200'
@@ -723,7 +724,6 @@ export const SudokuBoard: React.FC<Props> = ({
         </div>
       )}
 
-      {/* 超時或失誤面板 */}
       {(isTimedOut || isFailedAssessment) && (
         <div className="mt-3 p-3 bg-rose-950/90 border border-rose-600 rounded-xl text-center w-[min(90vw,46vh)] shadow-2xl animate-fade-in">
           <div className="text-xs text-rose-200 font-bold mb-1">
@@ -742,7 +742,6 @@ export const SudokuBoard: React.FC<Props> = ({
         </div>
       )}
 
-      {/* 心理計量學通關反思面板 */}
       {(isCompleted || isResigned) && (
         <div className="mt-3 p-3 bg-slate-950/95 border border-indigo-500/60 rounded-xl text-center w-[min(90vw,46vh)] shadow-2xl animate-fade-in font-mono">
           <div className="flex items-center justify-between border-b border-slate-800 pb-1.5 mb-2">
@@ -792,7 +791,6 @@ export const SudokuBoard: React.FC<Props> = ({
             </div>
           </div>
 
-          {/* 信賴區間誤差棒 */}
           <div className="mb-2">
             <MetricErrorBar
               actualVal={elapsedSec}
@@ -804,7 +802,6 @@ export const SudokuBoard: React.FC<Props> = ({
             />
           </div>
 
-          {/* 認知雙軌雷達圖 */}
           <div className="bg-slate-900/40 p-2 rounded-lg border border-slate-800 flex flex-col items-center mb-2">
             <CognitiveRadarChart
               dimensions={profile.cognitiveDimensions}
@@ -813,7 +810,6 @@ export const SudokuBoard: React.FC<Props> = ({
             />
           </div>
 
-          {/* 推理技巧鏈條 */}
           <div className="bg-slate-900/60 p-2 rounded text-left border border-slate-800/80 mb-2">
             <div className="text-[7px] text-slate-500 mb-1 font-bold uppercase tracking-wider">
               {isEn ? 'Deduction Chain (Solving Path)' : '推導技巧鏈條 (Solving Path)'}
@@ -830,24 +826,22 @@ export const SudokuBoard: React.FC<Props> = ({
             </div>
           </div>
 
-          {/* 弱點導引與一鍵跳轉 */}
           <div className="bg-indigo-950/40 p-2 rounded-lg border border-indigo-800/60 text-left mb-2 flex items-center justify-between gap-2">
             <div className="flex-1 text-[8px] text-slate-300">
               {isEn ? benchmarkData.recommendedFocus.reasonEn : benchmarkData.recommendedFocus.reasonZh}
             </div>
             <button
               onClick={() => handleNavigateTargetGame(benchmarkData.recommendedFocus.targetGame)}
-              className="shrink-0 px-2 py-1 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[8px] rounded transition active:scale-95"
+              className="shrink-0 px-2 py-1 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[8px] rounded transition active:scale-95 cursor-pointer"
             >
               ➜ {isEn ? 'Train' : '立即訓練'}
             </button>
           </div>
 
-          {/* 操作按鈕群 */}
           <div className="flex gap-1.5 mb-2">
             <button
               onClick={exportLongitudinalDataset}
-              className="flex-1 py-1.5 bg-slate-900 hover:bg-slate-800 border border-cyan-600/50 hover:border-cyan-400 text-cyan-300 text-[8px] font-bold rounded-lg transition shadow flex items-center justify-center gap-1 active:scale-95"
+              className="flex-1 py-1.5 bg-slate-900 hover:bg-slate-800 border border-cyan-600/50 hover:border-cyan-400 text-cyan-300 text-[8px] font-bold rounded-lg transition shadow flex items-center justify-center gap-1 active:scale-95 cursor-pointer"
             >
               <span>📊</span>
               <span>{isEn ? 'Export Dataset' : '匯出縱向數據'}</span>
@@ -855,14 +849,13 @@ export const SudokuBoard: React.FC<Props> = ({
 
             <button
               onClick={() => setShowSubmitModal(true)}
-              className="flex-1 py-1.5 bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 text-slate-950 text-[8px] font-black rounded-lg shadow transition active:scale-95 flex items-center justify-center gap-1"
+              className="flex-1 py-1.5 bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 text-slate-950 text-[8px] font-black rounded-lg shadow transition active:scale-95 flex items-center justify-center gap-1 cursor-pointer"
             >
               <span>📤</span>
               <span>{isEn ? 'Submit Result' : '官方賽事提交'}</span>
             </button>
           </div>
 
-          {/* Web Crypto SHA-256 存證指紋 */}
           {proofSignature && (
             <div className="mt-1 p-1.5 bg-slate-900 border border-slate-800 rounded text-left">
               <div className="text-[7px] text-slate-500 font-bold uppercase tracking-wider flex items-center justify-between">
