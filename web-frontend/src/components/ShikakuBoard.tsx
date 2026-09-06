@@ -1,4 +1,3 @@
-// web-frontend/src/components/ShikakuBoard.tsx
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { PuzzleEntity, TierKey } from '../generated';
 import { useLearnerProfile } from '../hooks/useLearnerProfile';
@@ -37,12 +36,21 @@ export const ShikakuBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
   const { lang } = useLanguage();
   const isEn = lang === 'en';
 
+  // 提前返回守衛：保證 actualPuzzle 非空，消除全域 TS18048
+  if (!actualPuzzle) {
+    return (
+      <div className="flex items-center justify-center p-8 text-xs font-mono text-slate-500">
+        {isEn ? 'Loading Shikaku Board...' : '載入四角分割盤面中...'}
+      </div>
+    );
+  }
+
   const spec: ShikakuSpec = (actualPuzzle as any)?.puzzle || (actualPuzzle as any)?.spec;
   const rows = spec?.rows || 8;
   const cols = spec?.cols || 8;
   const grid = useMemo(() => spec?.grid || [], [spec]);
 
-  const currentTier = (actualPuzzle?.tier as TierKey) || 'kids';
+  const currentTier = (actualPuzzle.tier as TierKey) || 'kids';
 
   const [placedRects, setPlacedRects] = useState<ShikakuRect[]>([]);
   const [dragStart, setDragStart] = useState<[number, number] | null>(null);
@@ -106,7 +114,7 @@ export const ShikakuBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
     setConflictDisplay(0);
     movesCountRef.current = 0;
     hasRecordedRef.current = false;
-  }, [actualPuzzle?.id, rows, cols]);
+  }, [actualPuzzle.id, rows, cols]);
 
   useEffect(() => {
     if (isCompleted || isReplaying) return;
@@ -327,7 +335,7 @@ export const ShikakuBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
     if (analysis.isPerfectPartition) {
       setIsCompleted(true);
       const timeSpent = Math.max(1, Math.round((Date.now() - startTimeRef.current) / 1000));
-      const telemetry = proctoringTracker.current?.finalizeTelemetry(actualPuzzle?.id || 'shikaku');
+      const telemetry = proctoringTracker.current?.finalizeTelemetry(actualPuzzle.id);
 
       if (!hasRecordedRef.current && actualPuzzle) {
         hasRecordedRef.current = true;
@@ -434,7 +442,7 @@ export const ShikakuBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
   }, [isReplaying, replayStepIndex, replayStepsList, replaySpeed]);
 
   const handleCopySeedShareCode = () => {
-    const seed = (actualPuzzle as any)?.puzzle?.seed || (actualPuzzle?.metrics as any)?.seed || 0;
+    const seed = (actualPuzzle as any)?.puzzle?.seed || (actualPuzzle.metrics as any)?.seed || 0;
     const origin = typeof window !== 'undefined' ? window.location.origin : 'https://lawgic.app';
     const duelUrl = `${origin}/?engine=shikaku&tier=${currentTier}&seed=${seed}`;
     navigator.clipboard.writeText(duelUrl);
@@ -522,7 +530,7 @@ export const ShikakuBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
     setTimeout(() => setCopyToast(null), 2500);
   };
 
-  const theoryTime = (actualPuzzle?.metrics as any)?.estimated_time_sec || rows * cols * 2.2;
+  const theoryTime = (actualPuzzle.metrics as any)?.estimated_time_sec || rows * cols * 2.2;
   const benchmarkData = useMemo(() => {
     return getBenchmarkMetrics('TopologicalLookahead', theoryTime, 'shikaku');
   }, [getBenchmarkMetrics, theoryTime]);
@@ -530,7 +538,6 @@ export const ShikakuBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
   const cci = useMemo(() => getCompositeCognitiveIndex(), [getCompositeCognitiveIndex, isCompleted]);
   const currentReplayStep = replayStepsList[replayStepIndex - 1];
 
-  // 預覽矩形與即時因數分解長寬比提示
   const previewRect = useMemo(() => {
     if (!dragStart || !dragCurrent) return null;
     const minR = Math.min(dragStart[0], dragCurrent[0]);
