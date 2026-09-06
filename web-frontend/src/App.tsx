@@ -2,12 +2,15 @@
 import React, { useState, useMemo, useRef, useEffect, useCallback, memo } from 'react';
 import { ErrorBoundary } from 'react-error-boundary';
 import { LanguageProvider, useLanguage } from './contexts/LanguageContext';
+import { AccessibilityProvider, useAccessibility } from './contexts/AccessibilityContext';
 import { PuzzleRenderer, CognitiveDashboard } from './registry/RendererRegistry';
 import { PUZZLE_CATALOG, PuzzleEntity, TierKey } from './generated';
 import { LangSwitcher } from './components/LangSwitcher';
 import { VirtualGamepad } from './components/VirtualGamepad';
 import { useLearnerProfile, ExtendedTierKey } from './hooks/useLearnerProfile';
+import { useLongTermScheduler } from './hooks/useLongTermScheduler';
 import { ChallengeCodec } from './utils/challengeCodec';
+import { VaultManager } from './utils/vaultStorage';
 
 // 匯入全套 18 款謎題生成器
 import { WebMazeGenerator } from './engines/mazeGenerator';
@@ -70,31 +73,12 @@ const TIER_NAMES: Record<ExtendedTierKey, { zh: string; en: string }> = {
 
 const TIER_IRT_BASELINE: Record<ExtendedTierKey, number> = {
   kids: 0.65,
-  intermediate: 1.35,
-  expert: 2.15,
-  master: 2.85,
-  legendary: 3.55,
+  intermediate: 1.45,
+  expert: 2.35,
+  master: 3.15,
+  legendary: 3.75,
   ultimate: 4.35,
 };
-
-/**
- * 難度降級映射：
- * 當底層 Generator 僅原生支援 3-Tier 時，保證高難度對接至底層 'expert' 規格，
- * 杜絕因傳入未定義字串直接掉入 default 分支而退化回 kids 的致命錯誤。
- */
-function resolveEngineTier(tier: ExtendedTierKey): TierKey {
-  switch (tier) {
-    case 'kids':
-      return 'kids';
-    case 'intermediate':
-      return 'intermediate';
-    case 'expert':
-    case 'master':
-    case 'legendary':
-    case 'ultimate':
-      return 'expert';
-  }
-}
 
 const EngineFallbackUI: React.FC<{ resetErrorBoundary: () => void; error?: Error }> = ({ resetErrorBoundary, error }) => {
   const isChunkError =
@@ -160,16 +144,7 @@ PuzzleTimer.displayName = 'PuzzleTimer';
 function generateEnginePuzzle(gameId: string, tier: ExtendedTierKey): PuzzleEntity | null {
   try {
     let puzzle: any = null;
-    const baseTier = resolveEngineTier(tier);
-
-    // 依序嘗試呼叫 ExtendedTier 或安全降級之 Native Tier
-    const invokeGen = (genClass: any) => {
-      try {
-        return genClass.generate(tier as any) || genClass.generate(baseTier);
-      } catch {
-        return genClass.generate(baseTier);
-      }
-    };
+    const invokeGen = (genClass: any) => genClass.generate(tier as TierKey);
 
     switch (gameId) {
       case 'maze': puzzle = invokeGen(WebMazeGenerator); break;
@@ -194,10 +169,8 @@ function generateEnginePuzzle(gameId: string, tier: ExtendedTierKey): PuzzleEnti
     }
 
     if (!puzzle) return null;
-
     if (!puzzle.engine_type) puzzle.engine_type = gameId;
 
-    // 保證 spec 結構完整性，避免 clues / grid 混淆
     if (!puzzle.puzzle) {
       puzzle.puzzle = {
         rows: puzzle.rows || puzzle.size || 6,
@@ -210,7 +183,6 @@ function generateEnginePuzzle(gameId: string, tier: ExtendedTierKey): PuzzleEnti
       };
     }
 
-    // 明確綁定當前請求的 Tier，防止被靜態 catalog 的 tag 污染
     puzzle.tier = tier;
 
     if (!puzzle.metrics) {
@@ -229,12 +201,14 @@ function generateEnginePuzzle(gameId: string, tier: ExtendedTierKey): PuzzleEnti
   }
 }
 
-const MAX_CACHED_PER_TIER = 20;
+const MAX_CACHED_PER_TIER = 25;
 
 const MainDashboard: React.FC = () => {
-  const { lang } = useLanguage();
+  const { lang, t: tDict } = useLanguage();
   const isEn = lang === 'en';
+  const { playSound } = useAccessibility();
   const { profile, getCompositeCognitiveIndex } = useLearnerProfile();
+  const { getRecommendedSchedulePuzzle } = useLongTermScheduler(profile, PUZZLE_CATALOG);
 
   const t = useMemo(() => ({
     synthesizing: isEn ? 'Synthesizing Topology...' : '神經網絡拓撲生成中...',
@@ -251,6 +225,8 @@ const MainDashboard: React.FC = () => {
     mark: isEn ? 'MARK' : '標記',
     close: isEn ? 'Close' : '關閉',
     dashboardTooltip: isEn ? 'Open Longitudinal Cognitive Dashboard' : '開啟全域縱向認知儀表板',
+    smartDrill: isEn ? 'AI Drill' : '智能靶向',
+    vaultCard: isEn ? 'Vault' : '金庫',
   }), [isEn]);
 
   const [selectedType, setSelectedType] = useState<string>('maze');
@@ -264,7 +240,7 @@ const MainDashboard: React.FC = () => {
   const isGeneratingRef = useRef<boolean>(false);
   const boardContainerRef = useRef<HTMLDivElement>(null);
 
-  // 二維快取池：dynamicPuzzles[gameId][tier] 徹底隔離各階題目，防止難度擠壓退化
+  // 二維動態題目池：徹底隔離 6 階難度，防止互相覆蓋
   const [dynamicPool, setDynamicPool] = useState<Record<string, Record<ExtendedTierKey, PuzzleEntity[]>>>(() => {
     const pool: Record<string, Record<ExtendedTierKey, PuzzleEntity[]>> = {};
     ALL_GAMES.forEach((g) => {
@@ -352,14 +328,14 @@ const MainDashboard: React.FC = () => {
     []
   );
 
-  // 門檻防護：若當前題數小於 2，自動非同步補充
+  // 補充題庫防空機制
   useEffect(() => {
     if (activeList.length < 2 && !isGeneratingRef.current) {
       appendBatchPuzzles(selectedType, currentLevel, 3);
     }
   }, [selectedType, currentLevel, activeList.length, appendBatchPuzzles]);
 
-  // 抵達隊尾時預載下一批
+  // 隊尾預載
   useEffect(() => {
     if (activeList.length > 0 && puzzleIndex >= activeList.length - 1 && !isGeneratingRef.current) {
       appendBatchPuzzles(selectedType, currentLevel, 3);
@@ -369,9 +345,12 @@ const MainDashboard: React.FC = () => {
   // 全域導航監聽
   useEffect(() => {
     const handleNav = (e: Event) => {
-      const customEvent = e as CustomEvent<{ gameId?: string }>;
+      const customEvent = e as CustomEvent<{ gameId?: string; tier?: ExtendedTierKey }>;
       if (customEvent.detail?.gameId) {
         setSelectedType(customEvent.detail.gameId);
+        if (customEvent.detail.tier) {
+          setCurrentLevel(customEvent.detail.tier);
+        }
         setPuzzleIndex(0);
       }
     };
@@ -443,18 +422,21 @@ const MainDashboard: React.FC = () => {
   const isSpatialExplorationType = selectedType === 'maze';
 
   const handlePrevPuzzle = useCallback(() => {
+    playSound('step');
     if (navigator.vibrate) navigator.vibrate(8);
     setPuzzleIndex((prev) => (prev > 0 ? prev - 1 : Math.max(0, activeList.length - 1)));
     boardContainerRef.current?.focus();
-  }, [activeList.length]);
+  }, [activeList.length, playSound]);
 
   const handleNextPuzzle = useCallback(() => {
+    playSound('step');
     if (navigator.vibrate) navigator.vibrate(10);
     setPuzzleIndex((prev) => (prev + 1) % (activeList.length || 1));
     boardContainerRef.current?.focus();
-  }, [activeList.length]);
+  }, [activeList.length, playSound]);
 
   const handleLiveGenerate = useCallback(async () => {
+    playSound('click');
     if (navigator.vibrate) navigator.vibrate(20);
     setIsGenerating(true);
 
@@ -483,10 +465,11 @@ const MainDashboard: React.FC = () => {
       setIsGenerating(false);
       boardContainerRef.current?.focus();
     }
-  }, [selectedType, currentLevel, isEn]);
+  }, [selectedType, currentLevel, isEn, playSound]);
 
   const handleTierJump = useCallback(
     (steps: number = 1) => {
+      playSound('hint');
       if (navigator.vibrate) navigator.vibrate([20, 30, 20]);
       const currentIdx = LEVEL_KEYS.indexOf(currentLevel);
       const targetIdx = Math.min(LEVEL_KEYS.length - 1, currentIdx + steps);
@@ -495,19 +478,37 @@ const MainDashboard: React.FC = () => {
         setPuzzleIndex(0);
       }
     },
-    [currentLevel]
+    [currentLevel, playSound]
   );
 
-  // 快捷鍵 [ 與 ] 快速切題
+  // 艾賓浩斯靶向智能推薦
+  const handleSmartDrill = useCallback(() => {
+    const recommendation = getRecommendedSchedulePuzzle();
+    if (recommendation) {
+      playSound('hint');
+      setSelectedType(recommendation.type);
+      setCurrentLevel(recommendation.tier);
+      setPuzzleIndex(0);
+      setToastMsg(`🎯 ${recommendation.reason}`);
+      setTimeout(() => setToastMsg(null), 3500);
+    }
+  }, [getRecommendedSchedulePuzzle, playSound]);
+
+  // 全局快捷鍵支援 ([ / ] 切題, R 現場生成, T 賽事模式)
   useEffect(() => {
     const handleGlobalKey = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
       if (e.key === '[' || e.key === 'PageUp') { e.preventDefault(); handlePrevPuzzle(); }
       if (e.key === ']' || e.key === 'PageDown') { e.preventDefault(); handleNextPuzzle(); }
+      if ((e.key === 'r' || e.key === 'R') && !e.ctrlKey && !e.metaKey) { e.preventDefault(); handleLiveGenerate(); }
+      if ((e.key === 't' || e.key === 'T') && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault();
+        setTournamentMode((prev) => !prev);
+      }
     };
     window.addEventListener('keydown', handleGlobalKey);
     return () => window.removeEventListener('keydown', handleGlobalKey);
-  }, [handlePrevPuzzle, handleNextPuzzle]);
+  }, [handlePrevPuzzle, handleNextPuzzle, handleLiveGenerate]);
 
   const lastMoveTimeRef = useRef<number>(0);
   const handleJoystickMove = useCallback((x: number, y: number) => {
@@ -539,7 +540,7 @@ const MainDashboard: React.FC = () => {
   const cci = useMemo(() => getCompositeCognitiveIndex(), [getCompositeCognitiveIndex]);
 
   return (
-    <main className="min-h-screen bg-[#090d14] text-slate-200 flex flex-col items-center py-2 px-2 font-mono selection:bg-indigo-600">
+    <main className="min-h-screen bg-[#070a0f] text-slate-200 flex flex-col items-center py-2 px-2 font-mono selection:bg-indigo-600 safe-padding-top safe-padding-bottom">
       {toastMsg && (
         <div className="fixed top-2 z-50 px-3 py-1.5 bg-cyan-600 border border-cyan-400 text-white font-bold text-xs rounded-full shadow-2xl animate-fade-in pointer-events-none">
           {toastMsg}
@@ -568,6 +569,7 @@ const MainDashboard: React.FC = () => {
         </div>
       )}
 
+      {/* 頂部狀態列 */}
       <div className="w-full max-w-sm sm:max-w-md flex items-center justify-between px-1 mb-1 text-[8px] text-slate-500">
         <div className="flex items-center gap-1.5">
           <button
@@ -582,9 +584,20 @@ const MainDashboard: React.FC = () => {
           {profile.pureStreak >= 2 && (
             <span className="text-amber-300 font-bold">💎 ×{profile.pureStreak}</span>
           )}
+          <button
+            onClick={handleSmartDrill}
+            className="px-1.5 py-0.5 rounded bg-purple-950/60 border border-purple-700/60 text-purple-300 font-bold hover:bg-purple-900 transition cursor-pointer"
+            title="AI Spaced Repetition Drill"
+          >
+            ⚡ {t.smartDrill}
+          </button>
         </div>
+
         <button
-          onClick={() => setTournamentMode((prev) => !prev)}
+          onClick={() => {
+            playSound('alert');
+            setTournamentMode((prev) => !prev);
+          }}
           className={`px-1.5 py-0.5 rounded border transition text-[7px] font-bold cursor-pointer ${
             tournamentMode
               ? 'bg-amber-950 border-amber-500 text-amber-300 shadow-xs'
@@ -595,9 +608,10 @@ const MainDashboard: React.FC = () => {
         </button>
       </div>
 
+      {/* 主選單標頭 */}
       <header className="w-full max-w-sm sm:max-w-md flex items-center justify-between gap-1.5 mb-2 pb-1.5 border-b border-slate-800">
         <div className="flex flex-col shrink-0 leading-tight">
-          <span className="text-xs font-black tracking-widest text-indigo-400">LAWGIC</span>
+          <span className="text-xs font-black tracking-widest text-indigo-400">LOGICORE</span>
           <span className="text-[6.5px] font-bold text-slate-500 tracking-wider">{t.titleSuffix}</span>
         </div>
 
@@ -636,6 +650,7 @@ const MainDashboard: React.FC = () => {
         <LangSwitcher />
       </header>
 
+      {/* 核心謎題舞台 */}
       {activePuzzle ? (
         <section
           ref={boardContainerRef}
@@ -664,7 +679,7 @@ const MainDashboard: React.FC = () => {
             </button>
           </div>
 
-          <div className="w-full p-1 bg-slate-900/60 border border-slate-800 rounded-xl shadow-2xl">
+          <div className="w-full p-1 bg-slate-900/60 border border-slate-800 rounded-xl shadow-2xl puzzle-board">
             <ErrorBoundary
               FallbackComponent={EngineFallbackUI}
               resetKeys={[selectedType, currentLevel, puzzleIndex, activePuzzle.id]}
@@ -728,7 +743,9 @@ const MainDashboard: React.FC = () => {
 export default function App() {
   return (
     <LanguageProvider>
-      <MainDashboard />
+      <AccessibilityProvider>
+        <MainDashboard />
+      </AccessibilityProvider>
     </LanguageProvider>
   );
 }
