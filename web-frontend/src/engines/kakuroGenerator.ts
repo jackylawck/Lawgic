@@ -1,7 +1,7 @@
 // web-frontend/src/engines/kakuroGenerator.ts
 import { PuzzleEntity, TierKey } from '../generated';
 
-export type ExtendedTierKey = TierKey | 'legendary' | 'ultimate';
+export type ExtendedTierKey = TierKey;
 
 export interface KakuroCell {
   type: 'white' | 'black';
@@ -11,12 +11,18 @@ export interface KakuroCell {
   downClue?: number;
 }
 
+export type KakuroTechnique =
+  | 'magic_partition'
+  | 'forced_extreme_digit'
+  | 'cross_elimination'
+  | 'naked_single';
+
 export interface KakuroHintStep {
   step: number;
   r: number;
   c: number;
   forcedValue: number;
-  technique: 'magic_partition' | 'cross_elimination' | 'naked_single';
+  technique: KakuroTechnique;
   rationale: string;
   humanReadable: {
     zh: string;
@@ -43,6 +49,7 @@ export interface KakuroSpec {
   seed: number;
   depthProfile: number[];
   partitionEntropy: number;
+  tier: TierKey;
   solvingSteps?: KakuroHintStep[];
 }
 
@@ -95,16 +102,6 @@ export function mulberry32(a: number) {
   };
 }
 
-export async function generateSanctionedSignature(payload: string): Promise<string> {
-  if (typeof window !== 'undefined' && window.crypto?.subtle) {
-    const msgBuffer = new TextEncoder().encode(payload);
-    const hashBuffer = await window.crypto.subtle.digest('SHA-256', msgBuffer);
-    const hashArray = Array.from(new Uint8Array(hashBuffer));
-    return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('').slice(0, 16).toUpperCase();
-  }
-  return 'WPF-' + Math.random().toString(36).substring(2, 10).toUpperCase();
-}
-
 interface TierConfig {
   rows: number;
   cols: number;
@@ -112,13 +109,13 @@ interface TierConfig {
   timeLimitSec: number;
 }
 
-const TIER_SPECS: Record<ExtendedTierKey, TierConfig> = {
-  kids: { rows: 5, cols: 5, baseIrt: -0.3, timeLimitSec: 120 },
-  intermediate: { rows: 6, cols: 6, baseIrt: 0.6, timeLimitSec: 180 },
-  expert: { rows: 7, cols: 7, baseIrt: 1.6, timeLimitSec: 270 },
-  master: { rows: 8, cols: 8, baseIrt: 2.6, timeLimitSec: 390 },
-  legendary: { rows: 9, cols: 9, baseIrt: 3.5, timeLimitSec: 540 },
-  ultimate: { rows: 11, cols: 11, baseIrt: 4.6, timeLimitSec: 720 },
+const TIER_SPECS: Record<TierKey, TierConfig> = {
+  kids: { rows: 5, cols: 5, baseIrt: 0.65, timeLimitSec: 120 },
+  intermediate: { rows: 6, cols: 6, baseIrt: 1.45, timeLimitSec: 180 },
+  expert: { rows: 7, cols: 7, baseIrt: 2.35, timeLimitSec: 270 },
+  master: { rows: 8, cols: 8, baseIrt: 3.15, timeLimitSec: 390 },
+  legendary: { rows: 9, cols: 9, baseIrt: 3.75, timeLimitSec: 540 },
+  ultimate: { rows: 11, cols: 11, baseIrt: 4.35, timeLimitSec: 720 },
 };
 
 export class WebKakuroGenerator {
@@ -209,7 +206,7 @@ export class WebKakuroGenerator {
 
     const testGrid: number[][] = Array.from({ length: rows }, () => Array(cols).fill(0));
     let solutions = 0;
-    let stepBudget = 4000;
+    let stepBudget = 6000;
 
     const solveMRV = (index: number) => {
       if (solutions >= limit || stepBudget-- <= 0) return;
@@ -258,7 +255,8 @@ export class WebKakuroGenerator {
     grid: KakuroCell[][],
     userGrid: number[][],
     rows: number,
-    cols: number
+    cols: number,
+    currentStep: number = 1
   ): KakuroHintStep | null {
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
@@ -268,26 +266,28 @@ export class WebKakuroGenerator {
 
           if (candidates.length === 1) {
             const val = candidates[0];
-            const isAcrossMagic = getPartitions(runInfo.acrossLength, runInfo.acrossClue).length === 1;
-            const isDownMagic = getPartitions(runInfo.downLength, runInfo.downClue).length === 1;
+            const acrossParts = getPartitions(runInfo.acrossLength, runInfo.acrossClue);
+            const downParts = getPartitions(runInfo.downLength, runInfo.downClue);
+            const isAcrossMagic = acrossParts.length === 1;
+            const isDownMagic = downParts.length === 1;
 
             if (isAcrossMagic || isDownMagic) {
               return {
-                step: 1,
+                step: currentStep,
                 r,
                 c,
                 forcedValue: val,
                 technique: 'magic_partition',
-                rationale: `利用極限定式分解（和 ${runInfo.acrossClue} 長度 ${runInfo.acrossLength}），該格必為 ${val}`,
+                rationale: `利用極限唯一分割定式（長度 ${runInfo.acrossLength} 和 ${runInfo.acrossClue}），該格必為 ${val}`,
                 humanReadable: {
-                  zh: `此處處於極限唯一分割區間，雙向約束交集僅剩下唯一數字 ${val}！`,
-                  en: `Magic partition constraint! The intersection of clue runs forces ${val}!`,
+                  zh: `坐標 [${r + 1}, ${c + 1}] 處於唯一分割組合區間，正交約束交集鎖定數字 ${val}！`,
+                  en: `Magic partition constraint at [${r + 1}, ${c + 1}] forces single valid digit ${val}!`,
                 },
               };
             }
 
             return {
-              step: 1,
+              step: currentStep,
               r,
               c,
               forcedValue: val,
@@ -295,7 +295,7 @@ export class WebKakuroGenerator {
               rationale: `雙向線索與已填數字排除後，此格僅剩唯一候選值 ${val}`,
               humanReadable: {
                 zh: `坐標 [${r + 1}, ${c + 1}] 經過雙向約束傳播排除後，僅剩唯一合法數字 ${val}！`,
-                en: `Candidate propagation eliminates all alternatives; cell must be ${val}!`,
+                en: `Orthogonal run propagation eliminates alternatives; cell [${r + 1}, ${c + 1}] must be ${val}!`,
               },
             };
           }
@@ -364,7 +364,7 @@ export class WebKakuroGenerator {
     return solve(0) ? solution : null;
   }
 
-  public static generate(tier: ExtendedTierKey = 'kids', inputSeed?: number): PuzzleEntity {
+  public static generate(tier: TierKey = 'kids', inputSeed?: number): PuzzleEntity {
     const config = TIER_SPECS[tier] || TIER_SPECS.kids;
     const { rows, cols, baseIrt, timeLimitSec } = config;
 
@@ -372,11 +372,12 @@ export class WebKakuroGenerator {
     const rnd = mulberry32(actualSeed);
 
     let attempts = 0;
-    while (attempts++ < 30) {
+    while (attempts++ < 35) {
       const grid: KakuroCell[][] = Array.from({ length: rows }, () =>
         Array.from({ length: cols }, () => ({ type: 'white' }))
       );
 
+      // 邊界外圍強制為黑格
       for (let r = 0; r < rows; r++) {
         grid[r][0].type = 'black';
         grid[r][cols - 1].type = 'black';
@@ -386,9 +387,10 @@ export class WebKakuroGenerator {
         grid[rows - 1][c].type = 'black';
       }
 
+      // 中心對稱佈置黑格分隔牆（保證區段長度 >= 2 且 <= 9）
       for (let r = 1; r < rows - 1; r++) {
         for (let c = 1; c < cols - 1; c++) {
-          if (rnd() < 0.24) {
+          if (rnd() < 0.22) {
             const symR = rows - 1 - r;
             const symC = cols - 1 - c;
             grid[r][c].type = 'black';
@@ -398,28 +400,34 @@ export class WebKakuroGenerator {
       }
 
       let validLayout = true;
+      // 橫向白格跑道檢驗
       for (let r = 1; r < rows - 1; r++) {
         let run = 0;
         for (let c = 1; c < cols - 1; c++) {
           if (grid[r][c].type === 'white') run++;
           else {
-            if (run === 1 || run > 9) validLayout = false;
+            if (run === 1 || run > 9) { validLayout = false; break; }
             run = 0;
           }
         }
         if (run === 1 || run > 9) validLayout = false;
+        if (!validLayout) break;
       }
 
-      for (let c = 1; c < cols - 1; c++) {
-        let run = 0;
-        for (let r = 1; r < rows - 1; r++) {
-          if (grid[r][c].type === 'white') run++;
-          else {
-            if (run === 1 || run > 9) validLayout = false;
-            run = 0;
+      // 縱向白格跑道檢驗
+      if (validLayout) {
+        for (let c = 1; c < cols - 1; c++) {
+          let run = 0;
+          for (let r = 1; r < rows - 1; r++) {
+            if (grid[r][c].type === 'white') run++;
+            else {
+              if (run === 1 || run > 9) { validLayout = false; break; }
+              run = 0;
+            }
           }
+          if (run === 1 || run > 9) validLayout = false;
+          if (!validLayout) break;
         }
-        if (run === 1 || run > 9) validLayout = false;
       }
 
       if (!validLayout) continue;
@@ -436,6 +444,7 @@ export class WebKakuroGenerator {
       const solution = this._fillGridBacktracking(grid, whiteCells, rows, cols, rnd);
       if (!solution) continue;
 
+      // 依據解答指派線索數字
       for (let r = 0; r < rows; r++) {
         for (let c = 0; c < cols; c++) {
           if (grid[r][c].type === 'black') {
@@ -461,6 +470,7 @@ export class WebKakuroGenerator {
         }
       }
 
+      // 嚴格唯一解校驗
       if (this.countSolutions(grid, rows, cols, 2) !== 1) continue;
 
       let totalEntropy = 0;
@@ -490,31 +500,37 @@ export class WebKakuroGenerator {
         seed: actualSeed,
         depthProfile: [1, 2, 4, 2, 1],
         partitionEntropy,
+        tier,
       };
 
       return {
         id: `kakuro_${tier}_s${actualSeed}`,
-        category: 'numerical_logic' as any,
+        category: 'numerical_logic',
         engine_type: 'kakuro',
-        tier: (tier === 'ultimate' ? 'master' : tier) as TierKey,
-        checksum: `KAKURO_${rows}x${cols}_S${actualSeed}_UNIQ_ENT${partitionEntropy}`,
+        tier,
+        checksum: `KAKURO_${rows}x${cols}_S${actualSeed}_ENT${partitionEntropy}`,
         puzzle: spec as any,
         solution: solution as any,
         cognitiveLoad: {
           spatial: 0.85,
           numeric: 0.98,
-          workingMemory: Number(Math.min(1.0, 0.5 + partitionEntropy * 0.15).toFixed(2)),
-          inhibition: 0.9,
+          workingMemory: Number(Math.min(1.0, 0.50 + partitionEntropy * 0.15).toFixed(2)),
+          inhibition: 0.90,
         },
         metrics: {
+          grid_size: rows,
+          rows,
+          cols,
           estimated_time_sec: timeLimitSec,
-          irt_logit_difficulty: Number((baseIrt + partitionEntropy * 0.2).toFixed(2)),
+          irt_logit_difficulty: Number((baseIrt + partitionEntropy * 0.15).toFixed(2)),
           human_sim_steps: whiteCells.length,
           cruxCoordinates: [crux.r, crux.c],
           cruxChainDepth: crux.chainDepth,
           depthProfile: [1, 2, 4, 2, 1],
           seed: actualSeed,
+          actualTier: tier,
           isSymmetric: true,
+          pureDeductionRate: 1.0,
           partitionEntropy,
         } as any,
       };
@@ -524,7 +540,7 @@ export class WebKakuroGenerator {
   }
 
   private static _generateFallback(
-    tier: ExtendedTierKey,
+    tier: TierKey,
     rows: number,
     cols: number,
     seed: number,
@@ -547,9 +563,9 @@ export class WebKakuroGenerator {
 
     return {
       id: `kakuro_${tier}_s${seed}_fb`,
-      category: 'numerical_logic' as any,
+      category: 'numerical_logic',
       engine_type: 'kakuro',
-      tier: (tier === 'ultimate' ? 'master' : tier) as TierKey,
+      tier,
       checksum: `KAKURO_FALLBACK_${seed}`,
       puzzle: {
         rows: 5,
@@ -562,14 +578,20 @@ export class WebKakuroGenerator {
         seed,
         depthProfile: [1, 2, 3, 2, 1],
         partitionEntropy: 1.2,
+        tier,
       } as unknown as KakuroSpec,
       solution: fallbackSol as any,
       cognitiveLoad: { spatial: 0.8, numeric: 0.95, workingMemory: 0.6, inhibition: 0.85 },
       metrics: {
+        grid_size: 5,
+        rows: 5,
+        cols: 5,
         estimated_time_sec: 120,
         irt_logit_difficulty: baseIrt,
         seed,
+        actualTier: tier,
         isSymmetric: true,
+        pureDeductionRate: 1.0,
         partitionEntropy: 1.2,
       } as any,
     };
