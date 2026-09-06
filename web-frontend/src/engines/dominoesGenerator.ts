@@ -94,7 +94,7 @@ export class WebDominoesGenerator {
     rows: number,
     cols: number,
     grid: number[][],
-    dominoSet: DominoPiece[],
+    _dominoSet?: DominoPiece[], // 🌟 加上前綴底線，避免 TS6133 報錯
     limit: number = 2
   ): number {
     let solutionCount = 0;
@@ -342,7 +342,6 @@ export class WebDominoesGenerator {
     while (attempts < maxAttempts) {
       attempts++;
 
-      // 帶回溯的完美多米諾鋪砌生成器
       const solutionBorders = this._generateBacktrackingTiling(rows, cols, rnd);
       if (!solutionBorders) continue;
 
@@ -414,9 +413,6 @@ export class WebDominoesGenerator {
     return this._generateFallback(tier, maxPip, actualSeed, baseIrt);
   }
 
-  /**
-   * 深度優先回溯多米諾骨牌鋪砌（100% 杜絕死角孤島產生）
-   */
   private static _generateBacktrackingTiling(
     rows: number,
     cols: number,
@@ -446,7 +442,6 @@ export class WebDominoesGenerator {
       if (c < cols - 1 && !covered[r][c + 1]) options.push('H');
       if (r < rows - 1 && !covered[r + 1][c]) options.push('V');
 
-      // 隨機打亂候選以保持題目多樣性
       if (options.length === 2 && rnd() < 0.5) {
         options.reverse();
       }
@@ -485,7 +480,7 @@ export class WebDominoesGenerator {
 
   private static _generateFallback(
     tier: ExtendedTierKey,
-    maxPip: number,
+    _maxPip: number, // 🌟 加上前綴底線，避免 TS6133
     seed: number,
     baseIrt: number
   ): PuzzleEntity {
