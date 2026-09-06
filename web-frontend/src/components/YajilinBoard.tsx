@@ -1,4 +1,3 @@
-// web-frontend/src/components/YajilinBoard.tsx
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { PuzzleEntity, TierKey } from '../generated';
 import { useLearnerProfile } from '../hooks/useLearnerProfile';
@@ -48,6 +47,15 @@ export const YajilinBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
   const { lang } = useLanguage();
   const isEn = lang === 'en';
 
+  // 提前返回守衛：保證 actualPuzzle 非空，徹底消除 TS18048
+  if (!actualPuzzle) {
+    return (
+      <div className="flex items-center justify-center p-8 text-xs font-mono text-slate-500">
+        {isEn ? 'Loading Yajilin Board...' : '載入矢印迴路盤面中...'}
+      </div>
+    );
+  }
+
   const t = useMemo(() => ({
     speed: isEn ? 'Speed' : '競速',
     moves: isEn ? 'Moves' : '步數',
@@ -92,7 +100,7 @@ export const YajilinBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
   const rows = spec?.rows || 7;
   const cols = spec?.cols || 7;
   const clues: ArrowClue[] = useMemo(() => spec?.clues || [], [spec]);
-  const currentTier = (actualPuzzle?.tier as TierKey) || 'kids';
+  const currentTier = (actualPuzzle.tier as TierKey) || 'kids';
 
   const clueMap = useMemo(() => {
     const map = new Map<string, ArrowClue>();
@@ -164,7 +172,7 @@ export const YajilinBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
     setConflictDisplay(0);
     movesCountRef.current = 0;
     hasRecordedRef.current = false;
-  }, [actualPuzzle?.id, rows, cols, tournamentMode]);
+  }, [actualPuzzle.id, rows, cols, tournamentMode]);
 
   useEffect(() => {
     if (isCompleted || isReplaying) return;
@@ -605,7 +613,7 @@ export const YajilinBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
     setTimeout(() => setCopyToast(false), 2400);
   };
 
-  const theoryTime = (actualPuzzle?.metrics as any)?.estimated_time_sec || rows * cols * 3;
+  const theoryTime = (actualPuzzle.metrics as any)?.estimated_time_sec || rows * cols * 3;
   const benchmarkData = useMemo(() => {
     return getBenchmarkMetrics('TopologicalLookahead', theoryTime, 'yajilin');
   }, [getBenchmarkMetrics, theoryTime]);
@@ -641,8 +649,8 @@ export const YajilinBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
     }
   };
 
-  const gfPurity = (actualPuzzle?.metrics as any)?.gfPurityIndex ?? 0.5;
-  const dominant = (actualPuzzle?.metrics as any)?.dominantConstruct ?? 'Balanced';
+  const gfPurity = (actualPuzzle.metrics as any)?.gfPurityIndex ?? 0.5;
+  const dominant = (actualPuzzle.metrics as any)?.dominantConstruct ?? 'Balanced';
 
   return (
     <div className="flex flex-col items-center justify-center p-1 select-none font-mono">
@@ -760,7 +768,6 @@ export const YajilinBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
         </div>
       )}
 
-      {/* 主棋盤 */}
       <div
         className="relative overflow-hidden p-2 rounded-xl bg-slate-950 border-2 border-slate-800 shadow-2xl"
         style={{ width: 'min(88vw, 42vh)', height: 'min(88vw, 42vh)', touchAction: 'none' }}
@@ -769,7 +776,6 @@ export const YajilinBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
           ☯ 180° SYM
         </div>
 
-        {/* SVG 連線軌道 */}
         <svg className="absolute inset-2 w-[calc(100%-16px)] h-[calc(100%-16px)] pointer-events-none z-15">
           {Array.from({ length: rows }).map((_, r) =>
             Array.from({ length: cols }).map((__, c) => {
@@ -829,7 +835,6 @@ export const YajilinBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
           )}
         </svg>
 
-        {/* 格子陣列 */}
         <div
           className="relative w-full h-full"
           style={{
@@ -879,7 +884,7 @@ export const YajilinBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
                     </div>
                   ) : state === 1 ? (
                     <div className="w-[80%] h-[80%] bg-slate-950 rounded-sm border border-slate-700 shadow-md flex items-center justify-center">
-                      <div className="w-1.5 h-1.5 bg-slate-500/40 rounded-full" />
+                      <div className="w-1.5 h-1.5 bg-slate-400/40 rounded-full" />
                     </div>
                   ) : state === 2 ? (
                     <div className="w-2 h-2 rounded-full bg-emerald-400/80 shadow-[0_0_6px_rgba(52,211,153,0.8)]" />
@@ -891,7 +896,6 @@ export const YajilinBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
         </div>
       </div>
 
-      {/* 底部撤銷重做與快捷欄 */}
       <div className="w-full max-w-[340px] flex items-center justify-between px-1 mt-1.5 text-[7.5px] text-slate-400">
         <div className="flex gap-1">
           <button
@@ -923,7 +927,6 @@ export const YajilinBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
         </div>
       </div>
 
-      {/* 通關成就與覆盤面板 */}
       {isCompleted && (
         <div className="mt-2 p-2.5 bg-slate-950/95 border border-indigo-500/60 rounded-xl text-center w-[min(88vw,42vh)] shadow-2xl animate-fade-in font-mono">
           <div className="flex items-center justify-between border-b border-slate-800 pb-1 mb-1.5">
@@ -936,7 +939,6 @@ export const YajilinBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
             </div>
           </div>
 
-          {/* 構念效度分離指標卡片 */}
           <div className="bg-slate-900/90 border border-indigo-950 p-1.5 rounded mb-1.5 text-left">
             <div className="flex justify-between items-center text-[7px] mb-1">
               <span className="text-slate-400 uppercase font-bold">{t.constructTitle}</span>
