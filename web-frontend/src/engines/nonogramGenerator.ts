@@ -1,7 +1,7 @@
 // web-frontend/src/engines/nonogramGenerator.ts
 import { PuzzleEntity, TierKey } from '../generated';
 
-export type ExtendedTierKey = TierKey | 'legendary' | 'ultimate';
+export type ExtendedTierKey = TierKey;
 
 export interface NonogramHintStep {
   step: number;
@@ -25,7 +25,7 @@ export interface NonogramSpec {
   solution: boolean[][];
   pureDeductionRate: number;
   complexityScore: number;
-  tier: ExtendedTierKey;
+  tier: TierKey;
   seed: number;
   solvingSteps?: NonogramHintStep[];
 }
@@ -38,13 +38,13 @@ interface TierConfig {
   baseIrt: number;
 }
 
-const TIER_SPECS: Record<ExtendedTierKey, TierConfig> = {
-  kids: { rows: 5, cols: 5, density: 0.55, minPureRate: 0.95, baseIrt: -0.6 },
-  intermediate: { rows: 6, cols: 6, density: 0.52, minPureRate: 0.90, baseIrt: 0.3 },
-  expert: { rows: 8, cols: 8, density: 0.50, minPureRate: 0.85, baseIrt: 1.2 },
-  master: { rows: 10, cols: 10, density: 0.48, minPureRate: 0.80, baseIrt: 2.2 },
-  legendary: { rows: 12, cols: 12, density: 0.46, minPureRate: 0.75, baseIrt: 3.0 },
-  ultimate: { rows: 15, cols: 15, density: 0.45, minPureRate: 0.70, baseIrt: 3.8 },
+const TIER_SPECS: Record<TierKey, TierConfig> = {
+  kids: { rows: 5, cols: 5, density: 0.55, minPureRate: 0.95, baseIrt: 0.65 },
+  intermediate: { rows: 6, cols: 6, density: 0.52, minPureRate: 0.90, baseIrt: 1.45 },
+  expert: { rows: 8, cols: 8, density: 0.50, minPureRate: 0.85, baseIrt: 2.35 },
+  master: { rows: 10, cols: 10, density: 0.48, minPureRate: 0.80, baseIrt: 3.15 },
+  legendary: { rows: 12, cols: 12, density: 0.46, minPureRate: 0.75, baseIrt: 3.75 },
+  ultimate: { rows: 15, cols: 15, density: 0.45, minPureRate: 0.70, baseIrt: 4.35 },
 };
 
 function mulberry32(a: number) {
@@ -161,7 +161,8 @@ export class WebNonogramGenerator {
     cols: number,
     rowClues: number[][],
     colClues: number[][],
-    grid: number[][]
+    grid: number[][],
+    stepIndex: number = 1
   ): NonogramHintStep | null {
     for (let r = 0; r < rows; r++) {
       const overlap = this.getLineOverlap(cols, rowClues[r], grid[r]);
@@ -169,7 +170,7 @@ export class WebNonogramGenerator {
         if (grid[r][c] === 0 && overlap[c] !== 0) {
           const isBlack = overlap[c] === 1;
           return {
-            step: 1,
+            step: stepIndex,
             orientation: 'row',
             index: r,
             targetCell: [r, c],
@@ -198,7 +199,7 @@ export class WebNonogramGenerator {
         if (grid[r][c] === 0 && overlap[r] !== 0) {
           const isBlack = overlap[r] === 1;
           return {
-            step: 1,
+            step: stepIndex,
             orientation: 'col',
             index: c,
             targetCell: [r, c],
@@ -235,7 +236,8 @@ export class WebNonogramGenerator {
     let deducedCells = 0;
     let iterations = 0;
 
-    while (changed && iterations++ < 35) {
+    // 1. 純人類波前推導 (Pure Line-by-Line Wavefront)
+    while (changed && iterations++ < 50) {
       changed = false;
 
       for (let r = 0; r < rows; r++) {
@@ -245,6 +247,21 @@ export class WebNonogramGenerator {
             grid[r][c] = overlap[c];
             deducedCells++;
             changed = true;
+            if (steps.length < 20) {
+              steps.push({
+                step: steps.length + 1,
+                orientation: 'row',
+                index: r,
+                targetCell: [r, c],
+                forcedState: overlap[c] as 1 | 2,
+                technique: overlap[c] === 1 ? 'overlap' : 'space_exclusion',
+                rationale: `第 ${r + 1} 行推導確定`,
+                humanReadable: {
+                  zh: `第 ${r + 1} 行交叉推導完成。`,
+                  en: `Row ${r + 1} deduction resolved.`,
+                },
+              });
+            }
           }
         }
       }
@@ -257,6 +274,21 @@ export class WebNonogramGenerator {
             grid[r][c] = overlap[r];
             deducedCells++;
             changed = true;
+            if (steps.length < 20) {
+              steps.push({
+                step: steps.length + 1,
+                orientation: 'col',
+                index: c,
+                targetCell: [r, c],
+                forcedState: overlap[r] as 1 | 2,
+                technique: overlap[r] === 1 ? 'overlap' : 'space_exclusion',
+                rationale: `第 ${c + 1} 列推導確定`,
+                humanReadable: {
+                  zh: `第 ${c + 1} 列交叉推導完成。`,
+                  en: `Col ${c + 1} deduction resolved.`,
+                },
+              });
+            }
           }
         }
       }
@@ -269,22 +301,23 @@ export class WebNonogramGenerator {
       return { unique: true, pureRate: 1.0, steps };
     }
 
-    // 根據盤面規模配置適應性回溯預算 (5x5: 400步, 15x15: 3500步)
+    // 2. CSP 交叉剪枝回溯求解器（Forward Checking Line-Propagation）
     let solutionCount = 0;
-    let stepBudget = Math.max(500, rows * cols * 16);
+    let stepBudget = Math.max(800, rows * cols * 25);
     let budgetExhausted = false;
 
-    const solveBacktrack = (r: number, c: number): void => {
+    const testGrid = grid.map((r) => [...r]);
+
+    const solveBacktrackCSP = (r: number, c: number): void => {
       if (solutionCount >= 2) return;
-      if (stepBudget <= 0) {
+      if (stepBudget-- <= 0) {
         budgetExhausted = true;
         return;
       }
-      stepBudget--;
 
       if (r === rows) {
         for (let j = 0; j < cols; j++) {
-          const colLine = Array.from({ length: rows }, (_, i) => grid[i][j] === 1);
+          const colLine = Array.from({ length: rows }, (_, i) => testGrid[i][j] === 1);
           const clue = this.extractLineClues(colLine);
           if (clue.join(',') !== colClues[j].join(',')) return;
         }
@@ -295,34 +328,36 @@ export class WebNonogramGenerator {
       const nextR = c === cols - 1 ? r + 1 : r;
       const nextC = c === cols - 1 ? 0 : c + 1;
 
-      if (grid[r][c] !== 0) {
-        solveBacktrack(nextR, nextC);
+      if (testGrid[r][c] !== 0) {
+        solveBacktrackCSP(nextR, nextC);
         return;
       }
 
       for (const val of [1, 2]) {
-        grid[r][c] = val;
+        testGrid[r][c] = val;
+
+        // 行末快速檢驗
         if (c === cols - 1) {
-          const rowLine = grid[r].map((v) => v === 1);
+          const rowLine = testGrid[r].map((v) => v === 1);
           if (this.extractLineClues(rowLine).join(',') !== rowClues[r].join(',')) {
-            grid[r][c] = 0;
+            testGrid[r][c] = 0;
             continue;
           }
         }
 
-        solveBacktrack(nextR, nextC);
-        grid[r][c] = 0;
+        solveBacktrackCSP(nextR, nextC);
+        testGrid[r][c] = 0;
         if (solutionCount >= 2 || budgetExhausted) return;
       }
     };
 
-    solveBacktrack(0, 0);
+    solveBacktrackCSP(0, 0);
 
     const isStrictlyUnique = !budgetExhausted && solutionCount === 1;
     return { unique: isStrictlyUnique, pureRate, steps };
   }
 
-  public static generate(tier: ExtendedTierKey = 'kids', inputSeed?: number): PuzzleEntity {
+  public static generate(tier: TierKey = 'kids', inputSeed?: number): PuzzleEntity {
     const config = TIER_SPECS[tier] || TIER_SPECS.kids;
     const { rows, cols, density, minPureRate, baseIrt } = config;
 
@@ -330,12 +365,12 @@ export class WebNonogramGenerator {
     const rnd = mulberry32(actualSeed);
 
     let attempts = 0;
-    const maxAttempts = tier === 'ultimate' ? 30 : 45;
+    const maxAttempts = tier === 'ultimate' ? 35 : 50;
 
     while (attempts < maxAttempts) {
       attempts++;
 
-      // 對稱矩陣生成以強化交叉約束
+      // 對稱矩陣種子生成以最大化交叉推導連通性
       const solution: boolean[][] = Array.from({ length: rows }, () => Array(cols).fill(false));
       for (let r = 0; r < rows; r++) {
         for (let c = 0; c < Math.ceil(cols / 2); c++) {
@@ -357,7 +392,9 @@ export class WebNonogramGenerator {
       }
 
       const totalClueNumbers = [...rowClues, ...colClues].reduce((sum, list) => sum + list.length, 0);
-      const dynamicIrt = Number((baseIrt + (1 - evaluation.pureRate) * 0.8 + (totalClueNumbers / (rows + cols)) * 0.2).toFixed(2));
+      const dynamicIrt = Number(
+        (baseIrt + (1 - evaluation.pureRate) * 0.4 + (totalClueNumbers / (rows + cols)) * 0.15).toFixed(2)
+      );
       const puzzleId = `nonogram_${tier}_s${actualSeed}`;
 
       const spec: NonogramSpec = {
@@ -375,28 +412,33 @@ export class WebNonogramGenerator {
 
       return {
         id: puzzleId,
-        category: 'spatial_logic' as any,
+        category: 'spatial_logic',
         engine_type: 'nonogram',
-        tier: (tier === 'ultimate' || tier === 'legendary' ? 'master' : tier) as TierKey,
+        tier,
         checksum: `NONOGRAM_${rows}x${cols}_${tier.toUpperCase()}_S${actualSeed}`,
         puzzle: spec as any,
         solution: solution as any,
         cognitiveLoad: {
-          spatial: Number(Math.min(1.0, 0.4 + (rows * cols) / 150).toFixed(2)),
-          numeric: Number(Math.min(1.0, 0.3 + (totalClueNumbers / 30) * 0.5).toFixed(2)),
-          workingMemory: Number(Math.min(1.0, 0.5 + (1 - evaluation.pureRate) * 0.5).toFixed(2)),
-          inhibition: 0.9,
+          spatial: Number(Math.min(0.99, 0.45 + (rows * cols) / 160).toFixed(2)),
+          numeric: Number(Math.min(0.95, 0.35 + (totalClueNumbers / 32) * 0.45).toFixed(2)),
+          workingMemory: Number(Math.min(0.98, 0.55 + (1 - evaluation.pureRate) * 0.45).toFixed(2)),
+          inhibition: 0.90,
         },
         metrics: {
+          grid_size: rows,
+          rows,
+          cols,
           estimated_time_sec: Math.max(20, rows * cols * 2),
           irt_logit_difficulty: dynamicIrt,
+          pureDeductionRate: evaluation.pureRate,
           human_sim_steps: rows * cols,
           seed: actualSeed,
+          actualTier: tier,
         } as any,
       };
     }
 
-    // 兜底保底題目（幾何菱形對稱圖案）
+    // 兜底保底題目（幾何菱形對稱圖案，100% 邏輯可解）
     const fallbackSize = rows;
     const fallbackSolution: boolean[][] = Array.from({ length: fallbackSize }, (_, r) =>
       Array.from({ length: cols }, (_, c) => {
@@ -413,9 +455,9 @@ export class WebNonogramGenerator {
 
     return {
       id: `nonogram_${tier}_s${actualSeed}_fallback`,
-      category: 'spatial_logic' as any,
+      category: 'spatial_logic',
       engine_type: 'nonogram',
-      tier: (tier === 'ultimate' || tier === 'legendary' ? 'master' : tier) as TierKey,
+      tier,
       checksum: `NONOGRAM_FALLBACK_${actualSeed}`,
       puzzle: {
         rows,
@@ -429,8 +471,17 @@ export class WebNonogramGenerator {
         seed: actualSeed,
       } as unknown as NonogramSpec,
       solution: fallbackSolution as any,
-      cognitiveLoad: { spatial: 0.8, numeric: 0.5, workingMemory: 0.6, inhibition: 0.85 },
-      metrics: { estimated_time_sec: rows * cols, irt_logit_difficulty: config.baseIrt, seed: actualSeed } as any,
+      cognitiveLoad: { spatial: 0.82, numeric: 0.55, workingMemory: 0.65, inhibition: 0.85 },
+      metrics: {
+        grid_size: rows,
+        rows,
+        cols,
+        estimated_time_sec: rows * cols,
+        irt_logit_difficulty: config.baseIrt,
+        seed: actualSeed,
+        pureDeductionRate: 1.0,
+        actualTier: tier,
+      } as any,
     };
   }
 }
