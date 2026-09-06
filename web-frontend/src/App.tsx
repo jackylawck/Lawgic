@@ -3,13 +3,13 @@ import React, { useState, useMemo, useRef, useEffect, useCallback, memo } from '
 import { ErrorBoundary } from 'react-error-boundary';
 import { LanguageProvider, useLanguage } from './contexts/LanguageContext';
 import { PuzzleRenderer, CognitiveDashboard } from './registry/RendererRegistry';
-import { PUZZLE_CATALOG, PuzzleEntity } from './generated';
+import { PUZZLE_CATALOG, PuzzleEntity, TierKey } from './generated';
 import { LangSwitcher } from './components/LangSwitcher';
 import { VirtualGamepad } from './components/VirtualGamepad';
 import { useLearnerProfile, ExtendedTierKey } from './hooks/useLearnerProfile';
 import { ChallengeCodec } from './utils/challengeCodec';
 
-// 匯入所有演算法生成器 (涵蓋全套 18 款謎題引擎)
+// 匯入全套 18 款謎題生成器
 import { WebMazeGenerator } from './engines/mazeGenerator';
 import { WebSudokuGenerator } from './engines/sudokuGenerator';
 import { WebNonogramGenerator } from './engines/nonogramGenerator';
@@ -68,10 +68,38 @@ const TIER_NAMES: Record<ExtendedTierKey, { zh: string; en: string }> = {
   ultimate: { zh: '終極', en: 'Ultimate' },
 };
 
-// 🌟 強化版 Fallback：偵測到動態 Chunk 遺失時，自動重新載入最新部署
+const TIER_IRT_BASELINE: Record<ExtendedTierKey, number> = {
+  kids: 0.65,
+  intermediate: 1.35,
+  expert: 2.15,
+  master: 2.85,
+  legendary: 3.55,
+  ultimate: 4.35,
+};
+
+/**
+ * 難度降級映射：
+ * 當底層 Generator 僅原生支援 3-Tier 時，保證高難度對接至底層 'expert' 規格，
+ * 杜絕因傳入未定義字串直接掉入 default 分支而退化回 kids 的致命錯誤。
+ */
+function resolveEngineTier(tier: ExtendedTierKey): TierKey {
+  switch (tier) {
+    case 'kids':
+      return 'kids';
+    case 'intermediate':
+      return 'intermediate';
+    case 'expert':
+    case 'master':
+    case 'legendary':
+    case 'ultimate':
+      return 'expert';
+  }
+}
+
 const EngineFallbackUI: React.FC<{ resetErrorBoundary: () => void; error?: Error }> = ({ resetErrorBoundary, error }) => {
-  const isChunkError = error?.message?.includes('Failed to fetch dynamically imported module') ||
-                       error?.message?.includes('Loading chunk');
+  const isChunkError =
+    error?.message?.includes('Failed to fetch dynamically imported module') ||
+    error?.message?.includes('Loading chunk');
 
   const handleReload = () => {
     if ('caches' in window) {
@@ -132,54 +160,76 @@ PuzzleTimer.displayName = 'PuzzleTimer';
 function generateEnginePuzzle(gameId: string, tier: ExtendedTierKey): PuzzleEntity | null {
   try {
     let puzzle: any = null;
+    const baseTier = resolveEngineTier(tier);
 
-    // 🌟 直接傳入 ExtendedTierKey，確保終極、傳奇能正確觸發各自生成器的原生大尺寸矩陣規格
+    // 依序嘗試呼叫 ExtendedTier 或安全降級之 Native Tier
+    const invokeGen = (genClass: any) => {
+      try {
+        return genClass.generate(tier as any) || genClass.generate(baseTier);
+      } catch {
+        return genClass.generate(baseTier);
+      }
+    };
+
     switch (gameId) {
-      case 'maze': puzzle = WebMazeGenerator.generate(tier as any); break;
-      case 'sudoku': puzzle = WebSudokuGenerator.generate(tier as any); break;
-      case 'nonogram': puzzle = WebNonogramGenerator.generate(tier as any); break;
-      case 'nurikabe': puzzle = WebNurikabeGenerator.generate(tier as any); break;
-      case 'skyscraper': puzzle = WebSkyscraperGenerator.generate(tier as any); break;
-      case 'hashi': puzzle = WebHashiGenerator.generate(tier as any); break;
-      case 'kropki': puzzle = WebKropkiGenerator.generate(tier as any); break;
-      case 'slitherlink': puzzle = WebSlitherlinkGenerator.generate(tier as any); break;
-      case 'tents': puzzle = WebTentsGenerator.generate(tier as any); break;
-      case 'lightup': puzzle = WebLightUpGenerator.generate(tier as any); break;
-      case 'futoshiki': puzzle = WebFutoshikiGenerator.generate(tier as any); break;
-      case 'hitori': puzzle = WebHitoriGenerator.generate(tier as any); break;
-      case 'kakuro': puzzle = WebKakuroGenerator.generate(tier as any); break;
-      case 'masyu': puzzle = WebMasyuGenerator.generate(tier as any); break;
-      case 'dominoes': puzzle = WebDominoesGenerator.generate(tier as any); break;
-      case 'heyawake': puzzle = WebHeyawakeGenerator.generate(tier as any); break;
-      case 'yajilin': puzzle = WebYajilinGenerator.generate(tier as any); break;
-      case 'shikaku': puzzle = WebShikakuGenerator.generate(tier as any); break;
+      case 'maze': puzzle = invokeGen(WebMazeGenerator); break;
+      case 'sudoku': puzzle = invokeGen(WebSudokuGenerator); break;
+      case 'nonogram': puzzle = invokeGen(WebNonogramGenerator); break;
+      case 'nurikabe': puzzle = invokeGen(WebNurikabeGenerator); break;
+      case 'skyscraper': puzzle = invokeGen(WebSkyscraperGenerator); break;
+      case 'hashi': puzzle = invokeGen(WebHashiGenerator); break;
+      case 'kropki': puzzle = invokeGen(WebKropkiGenerator); break;
+      case 'slitherlink': puzzle = invokeGen(WebSlitherlinkGenerator); break;
+      case 'tents': puzzle = invokeGen(WebTentsGenerator); break;
+      case 'lightup': puzzle = invokeGen(WebLightUpGenerator); break;
+      case 'futoshiki': puzzle = invokeGen(WebFutoshikiGenerator); break;
+      case 'hitori': puzzle = invokeGen(WebHitoriGenerator); break;
+      case 'kakuro': puzzle = invokeGen(WebKakuroGenerator); break;
+      case 'masyu': puzzle = invokeGen(WebMasyuGenerator); break;
+      case 'dominoes': puzzle = invokeGen(WebDominoesGenerator); break;
+      case 'heyawake': puzzle = invokeGen(WebHeyawakeGenerator); break;
+      case 'yajilin': puzzle = invokeGen(WebYajilinGenerator); break;
+      case 'shikaku': puzzle = invokeGen(WebShikakuGenerator); break;
       default: return null;
     }
 
     if (!puzzle) return null;
 
     if (!puzzle.engine_type) puzzle.engine_type = gameId;
-    if (!puzzle.puzzle && (puzzle.grid || puzzle.solution || puzzle.clues)) {
-      puzzle.puzzle = { ...puzzle };
+
+    // 保證 spec 結構完整性，避免 clues / grid 混淆
+    if (!puzzle.puzzle) {
+      puzzle.puzzle = {
+        rows: puzzle.rows || puzzle.size || 6,
+        cols: puzzle.cols || puzzle.size || 6,
+        clues: puzzle.clues,
+        grid: puzzle.grid,
+        solution: puzzle.solution,
+        seed: puzzle.seed,
+        pureDeductionRate: puzzle.pureDeductionRate || 1.0,
+      };
     }
 
-    if (tier === 'legendary' || tier === 'ultimate') {
-      puzzle.tier = tier as any;
-      if (puzzle.metrics) {
-        puzzle.metrics.irt_logit_difficulty = Number(
-          ((puzzle.metrics.irt_logit_difficulty || 2.2) + (tier === 'ultimate' ? 1.0 : 0.6)).toFixed(2)
-        );
-      }
+    // 明確綁定當前請求的 Tier，防止被靜態 catalog 的 tag 污染
+    puzzle.tier = tier;
+
+    if (!puzzle.metrics) {
+      puzzle.metrics = {};
     }
+
+    const baselineIrt = TIER_IRT_BASELINE[tier];
+    puzzle.metrics.irt_logit_difficulty = Number(
+      (puzzle.metrics.irt_logit_difficulty ? Math.max(puzzle.metrics.irt_logit_difficulty, baselineIrt) : baselineIrt).toFixed(2)
+    );
 
     return puzzle as PuzzleEntity;
   } catch (e) {
-    console.error(`[Generator Error] ${gameId}:`, e);
+    console.error(`[Generator Error] ${gameId} @ ${tier}:`, e);
     return null;
   }
 }
 
-const MAX_CACHED_PUZZLES = 40;
+const MAX_CACHED_PER_TIER = 20;
 
 const MainDashboard: React.FC = () => {
   const { lang } = useLanguage();
@@ -214,31 +264,43 @@ const MainDashboard: React.FC = () => {
   const isGeneratingRef = useRef<boolean>(false);
   const boardContainerRef = useRef<HTMLDivElement>(null);
 
-  const [dynamicPuzzles, setDynamicPuzzles] = useState<Record<string, PuzzleEntity[]>>(() => {
-    const initialPool: Record<string, PuzzleEntity[]> = {};
-    ALL_GAMES.forEach((g) => { initialPool[g.id] = []; });
+  // 二維快取池：dynamicPuzzles[gameId][tier] 徹底隔離各階題目，防止難度擠壓退化
+  const [dynamicPool, setDynamicPool] = useState<Record<string, Record<ExtendedTierKey, PuzzleEntity[]>>>(() => {
+    const pool: Record<string, Record<ExtendedTierKey, PuzzleEntity[]>> = {};
+    ALL_GAMES.forEach((g) => {
+      pool[g.id] = {
+        kids: [],
+        intermediate: [],
+        expert: [],
+        master: [],
+        legendary: [],
+        ultimate: [],
+      };
+    });
 
     try {
-      const p = generateEnginePuzzle('maze', 'kids');
-      if (p) {
-        p.id = `maze_kids_init_0`;
-        initialPool.maze.push(p);
+      const initPuzzle = generateEnginePuzzle('maze', 'kids');
+      if (initPuzzle) {
+        initPuzzle.id = `maze_kids_init_0`;
+        pool.maze.kids.push(initPuzzle);
       }
     } catch (e) {
-      console.error('Initial puzzle gen error:', e);
+      console.error('Initial puzzle bootstrap failed:', e);
     }
-
-    return initialPool;
+    return pool;
   });
 
   const activeList = useMemo(() => {
-    const staticList = PUZZLE_CATALOG[selectedType] || [];
-    const liveList = dynamicPuzzles[selectedType] || [];
-    const fullList = [...liveList, ...staticList];
-    return fullList.filter((p) => ((p.tier as ExtendedTierKey) || 'kids') === currentLevel);
-  }, [selectedType, currentLevel, dynamicPuzzles]);
+    const staticCatalog = PUZZLE_CATALOG[selectedType] || [];
+    const staticFiltered = staticCatalog.filter((p) => ((p.tier as ExtendedTierKey) || 'kids') === currentLevel);
+    const liveList = dynamicPool[selectedType]?.[currentLevel] || [];
+    return [...liveList, ...staticFiltered];
+  }, [selectedType, currentLevel, dynamicPool]);
 
-  const activePuzzle = activeList.length > 0 ? activeList[puzzleIndex % activeList.length] : null;
+  const activePuzzle = useMemo(() => {
+    if (activeList.length === 0) return null;
+    return activeList[puzzleIndex % activeList.length];
+  }, [activeList, puzzleIndex]);
 
   const appendBatchPuzzles = useCallback(
     async (gameId: string, tier: ExtendedTierKey, count: number = 3) => {
@@ -251,21 +313,36 @@ const MainDashboard: React.FC = () => {
         try {
           const p = generateEnginePuzzle(gameId, tier);
           if (p) {
-            p.id = `${gameId}_${tier}_batch_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 5)}`;
+            p.id = `${gameId}_${tier}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
             generated.push(p);
           }
         } catch (err) {
-          console.warn(`Engine ${gameId} batch error:`, err);
+          console.warn(`Engine ${gameId} batch gen error:`, err);
         }
-        await new Promise((resolve) => setTimeout(resolve, 20));
+        await new Promise((resolve) => setTimeout(resolve, 16));
       }
 
       if (generated.length > 0) {
-        setDynamicPuzzles((prev) => {
-          const oldList = prev[gameId] || [];
-          const updated = [...oldList, ...generated];
-          const bounded = updated.length > MAX_CACHED_PUZZLES ? updated.slice(updated.length - MAX_CACHED_PUZZLES) : updated;
-          return { ...prev, [gameId]: bounded };
+        setDynamicPool((prev) => {
+          const gameBucket = prev[gameId] || {
+            kids: [],
+            intermediate: [],
+            expert: [],
+            master: [],
+            legendary: [],
+            ultimate: [],
+          };
+          const tierBucket = gameBucket[tier] || [];
+          const updated = [...tierBucket, ...generated];
+          const bounded = updated.length > MAX_CACHED_PER_TIER ? updated.slice(updated.length - MAX_CACHED_PER_TIER) : updated;
+
+          return {
+            ...prev,
+            [gameId]: {
+              ...gameBucket,
+              [tier]: bounded,
+            },
+          };
         });
       }
 
@@ -275,18 +352,21 @@ const MainDashboard: React.FC = () => {
     []
   );
 
+  // 門檻防護：若當前題數小於 2，自動非同步補充
   useEffect(() => {
     if (activeList.length < 2 && !isGeneratingRef.current) {
       appendBatchPuzzles(selectedType, currentLevel, 3);
     }
   }, [selectedType, currentLevel, activeList.length, appendBatchPuzzles]);
 
+  // 抵達隊尾時預載下一批
   useEffect(() => {
     if (activeList.length > 0 && puzzleIndex >= activeList.length - 1 && !isGeneratingRef.current) {
       appendBatchPuzzles(selectedType, currentLevel, 3);
     }
   }, [puzzleIndex, activeList.length, selectedType, currentLevel, appendBatchPuzzles]);
 
+  // 全域導航監聽
   useEffect(() => {
     const handleNav = (e: Event) => {
       const customEvent = e as CustomEvent<{ gameId?: string }>;
@@ -299,6 +379,7 @@ const MainDashboard: React.FC = () => {
     return () => window.removeEventListener('logicore:navigate-game', handleNav);
   }, []);
 
+  // 外部題目挑戰連結解碼
   useEffect(() => {
     const checkHashChallenge = () => {
       const hash = window.location.hash;
@@ -306,12 +387,28 @@ const MainDashboard: React.FC = () => {
         const code = hash.replace('#challenge=', '');
         const importedPuzzle = ChallengeCodec.decode(code);
         if (importedPuzzle) {
+          const targetTier = (importedPuzzle.tier as ExtendedTierKey) || 'kids';
           setSelectedType(importedPuzzle.engine_type);
-          setCurrentLevel((importedPuzzle.tier as ExtendedTierKey) || 'kids');
-          setDynamicPuzzles((prev) => ({
-            ...prev,
-            [importedPuzzle.engine_type]: [importedPuzzle, ...(prev[importedPuzzle.engine_type] || [])],
-          }));
+          setCurrentLevel(targetTier);
+
+          setDynamicPool((prev) => {
+            const gameBucket = prev[importedPuzzle.engine_type] || {
+              kids: [],
+              intermediate: [],
+              expert: [],
+              master: [],
+              legendary: [],
+              ultimate: [],
+            };
+            const currentList = gameBucket[targetTier] || [];
+            return {
+              ...prev,
+              [importedPuzzle.engine_type]: {
+                ...gameBucket,
+                [targetTier]: [importedPuzzle, ...currentList],
+              },
+            };
+          });
           setPuzzleIndex(0);
 
           const pRows = importedPuzzle.puzzle?.rows || '?';
@@ -335,6 +432,7 @@ const MainDashboard: React.FC = () => {
     return () => window.removeEventListener('hashchange', checkHashChallenge);
   }, [isEn]);
 
+  // 動態網頁標題
   useEffect(() => {
     const activeGame = ALL_GAMES.find((g) => g.id === selectedType);
     const gameName = activeGame ? (isEn ? activeGame.nameEn : activeGame.nameZh) : 'Cognitive Arena';
@@ -366,10 +464,17 @@ const MainDashboard: React.FC = () => {
       const newPuzzle = generateEnginePuzzle(selectedType, currentLevel);
       if (newPuzzle) {
         newPuzzle.id = `${selectedType}_${currentLevel}_manual_${Date.now().toString(36)}`;
-        setDynamicPuzzles((prev) => ({
-          ...prev,
-          [selectedType]: [newPuzzle, ...(prev[selectedType] || [])],
-        }));
+        setDynamicPool((prev) => {
+          const gameBucket = prev[selectedType];
+          const tierBucket = gameBucket[currentLevel] || [];
+          return {
+            ...prev,
+            [selectedType]: {
+              ...gameBucket,
+              [currentLevel]: [newPuzzle, ...tierBucket],
+            },
+          };
+        });
         setPuzzleIndex(0);
         setToastMsg(isEn ? '⚡ Dynamic puzzle synthesized' : '⚡ 演算法已即時合成全新題目');
         setTimeout(() => setToastMsg(null), 2000);
@@ -393,6 +498,7 @@ const MainDashboard: React.FC = () => {
     [currentLevel]
   );
 
+  // 快捷鍵 [ 與 ] 快速切題
   useEffect(() => {
     const handleGlobalKey = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
@@ -536,7 +642,6 @@ const MainDashboard: React.FC = () => {
           tabIndex={-1}
           className="flex flex-col items-center w-full max-w-sm sm:max-w-md outline-none pb-28"
         >
-          {/* 控制按鈕組：置於棋盤上方 */}
           <div className="mb-2 grid grid-cols-3 gap-1.5 w-full">
             <button
               onClick={handlePrevPuzzle}
