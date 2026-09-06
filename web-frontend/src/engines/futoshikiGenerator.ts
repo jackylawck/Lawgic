@@ -1,7 +1,7 @@
 // web-frontend/src/engines/futoshikiGenerator.ts
 import { PuzzleEntity, TierKey } from '../generated';
 
-export type ExtendedTierKey = TierKey | 'legendary';
+export type ExtendedTierKey = TierKey;
 
 export interface InequalityConstraint {
   r1: number;
@@ -33,8 +33,12 @@ export interface CruxInfo {
 }
 
 export interface FutoshikiSpec {
+  rows: number;
+  cols: number;
   size: number;
   initialGrid: number[][];
+  grid?: number[][];
+  clues?: any;
   inequalities: InequalityConstraint[];
   solution: number[][];
   pureDeductionRate: number;
@@ -60,12 +64,14 @@ interface TierConfig {
   timeLimitSec: number;
 }
 
+// 支援完整 6 階 Tier 配置
 const TIER_SPECS: Record<ExtendedTierKey, TierConfig> = {
-  kids: { size: 4, givenRatio: 0.35, inequalityCount: 4, minChainLength: 2, baseIrt: -0.4, timeLimitSec: 90 },
-  intermediate: { size: 5, givenRatio: 0.3, inequalityCount: 6, minChainLength: 3, baseIrt: 0.4, timeLimitSec: 150 },
-  expert: { size: 6, givenRatio: 0.25, inequalityCount: 9, minChainLength: 4, baseIrt: 1.4, timeLimitSec: 240 },
-  master: { size: 7, givenRatio: 0.2, inequalityCount: 13, minChainLength: 5, baseIrt: 2.4, timeLimitSec: 360 },
-  legendary: { size: 8, givenRatio: 0.18, inequalityCount: 17, minChainLength: 6, baseIrt: 3.3, timeLimitSec: 480 },
+  kids: { size: 4, givenRatio: 0.35, inequalityCount: 4, minChainLength: 2, baseIrt: 0.65, timeLimitSec: 90 },
+  intermediate: { size: 5, givenRatio: 0.30, inequalityCount: 6, minChainLength: 3, baseIrt: 1.45, timeLimitSec: 150 },
+  expert: { size: 6, givenRatio: 0.25, inequalityCount: 9, minChainLength: 4, baseIrt: 2.35, timeLimitSec: 240 },
+  master: { size: 7, givenRatio: 0.20, inequalityCount: 13, minChainLength: 5, baseIrt: 3.15, timeLimitSec: 360 },
+  legendary: { size: 8, givenRatio: 0.18, inequalityCount: 17, minChainLength: 6, baseIrt: 3.75, timeLimitSec: 480 },
+  ultimate: { size: 9, givenRatio: 0.15, inequalityCount: 22, minChainLength: 7, baseIrt: 4.35, timeLimitSec: 600 },
 };
 
 export function mulberry32(a: number) {
@@ -221,9 +227,6 @@ export class WebFutoshikiGenerator {
     return maxLength;
   }
 
-  /**
-   * 強化版因果推導定式 (含廣義極值邊界排除)
-   */
   public static getNextForcedDeduction(
     grid: number[][],
     size: number,
@@ -257,7 +260,6 @@ export class WebFutoshikiGenerator {
       const v2 = grid[ineq.r2][ineq.c2];
 
       if (ineq.op === '>') {
-        // v1 > v2: 若 v2 確定，v1 候選數可能收斂
         if (v2 !== 0 && v1 === 0) {
           const valid = this.getCandidates(grid, size, inequalities, ineq.r1, ineq.c1).filter((x) => x > v2);
           if (valid.length === 1) {
@@ -293,7 +295,6 @@ export class WebFutoshikiGenerator {
           }
         }
       } else {
-        // v1 < v2
         if (v2 !== 0 && v1 === 0) {
           const valid = this.getCandidates(grid, size, inequalities, ineq.r1, ineq.c1).filter((x) => x < v2);
           if (valid.length === 1) {
@@ -445,7 +446,7 @@ export class WebFutoshikiGenerator {
       const addSymmetricHorizontal = (r: number, c: number) => {
         if (c + 1 >= size) return;
         const symR = size - 1 - r;
-        const symC = size - 2 - c; // 正確 180° 對稱水準邊索引
+        const symC = size - 2 - c;
 
         const k1 = `H:${r},${c}`;
         const k2 = `H:${symR},${symC}`;
@@ -464,7 +465,7 @@ export class WebFutoshikiGenerator {
 
       const addSymmetricVertical = (r: number, c: number) => {
         if (r + 1 >= size) return;
-        const symR = size - 2 - r; // 正確 180° 對稱垂直邊索引
+        const symR = size - 2 - r;
         const symC = size - 1 - c;
 
         const k1 = `V:${r},${c}`;
@@ -532,7 +533,6 @@ export class WebFutoshikiGenerator {
         initialGrid[r1][c1] = 0;
         initialGrid[r2][c2] = 0;
 
-        // 快速先驗：任一格候補數不能為空
         if (
           this.getCandidates(initialGrid, size, inequalities, r1, c1).length === 0 ||
           this.getCandidates(initialGrid, size, inequalities, r2, c2).length === 0
@@ -560,8 +560,12 @@ export class WebFutoshikiGenerator {
       const dynamicIrt = Number((baseIrt + longestChain * 0.15 + inequalities.length * 0.04).toFixed(2));
 
       const spec: FutoshikiSpec = {
+        rows: size,
+        cols: size,
         size,
         initialGrid,
+        grid: initialGrid,
+        clues: { grid: initialGrid, inequalities },
         inequalities,
         solution,
         pureDeductionRate: 1.0,
@@ -574,12 +578,12 @@ export class WebFutoshikiGenerator {
 
       return {
         id: puzzleId,
-        category: 'numerical_logic' as any,
+        category: 'numeric_logic',
         engine_type: 'futoshiki',
-        tier: (tier === 'legendary' ? 'master' : tier) as TierKey,
+        tier,
         checksum: `FUTOSHIKI_${size}x${size}_S${actualSeed}_CRUX${crux.r}${crux.c}`,
-        puzzle: spec as any,
-        solution: solution as any,
+        puzzle: spec,
+        solution,
         cognitiveLoad: {
           spatial: 0.85,
           numeric: 0.95,
@@ -600,54 +604,58 @@ export class WebFutoshikiGenerator {
       };
     }
 
-    const fallbackCrux: CruxInfo = { r: 1, c: 2, chainDepth: 3, stepOrder: 2, forcedValue: 4 };
+    // 自適應尺寸的健全 Fallback（保留全部拓撲分析欄位）
+    const fallbackLatin = this.generateLatinSquare(size, rnd);
+    const fallbackIneqs: InequalityConstraint[] = [];
+    for (let i = 0; i < size - 1; i++) {
+      fallbackIneqs.push({
+        r1: i,
+        c1: i,
+        r2: i,
+        c2: i + 1,
+        op: fallbackLatin[i][i] > fallbackLatin[i][i + 1] ? '>' : '<',
+      });
+    }
+
+    const fallbackGrid = fallbackLatin.map((row, ri) =>
+      row.map((val, ci) => (ri === ci ? val : 0))
+    );
+
+    const fallbackCrux: CruxInfo = { r: 0, c: 0, chainDepth: 2, stepOrder: 1, forcedValue: fallbackLatin[0][0] };
+
+    const fallbackSpec: FutoshikiSpec = {
+      rows: size,
+      cols: size,
+      size,
+      initialGrid: fallbackGrid,
+      grid: fallbackGrid,
+      clues: { grid: fallbackGrid, inequalities: fallbackIneqs },
+      inequalities: fallbackIneqs,
+      solution: fallbackLatin,
+      pureDeductionRate: 1.0,
+      longestChainLength: 2,
+      crux: fallbackCrux,
+      isSymmetric: true,
+      seed: actualSeed,
+      depthProfile: [1, 2, 2, 1, 1],
+    };
+
     return {
       id: `futoshiki_${tier}_s${actualSeed}_fallback`,
-      category: 'numerical_logic' as any,
+      category: 'numeric_logic',
       engine_type: 'futoshiki',
-      tier: (tier === 'legendary' ? 'master' : tier) as TierKey,
-      checksum: `FUTOSHIKI_FALLBACK_180SYM_${actualSeed}`,
-      puzzle: {
-        size: 4,
-        initialGrid: [
-          [0, 2, 0, 0],
-          [0, 0, 0, 1],
-          [1, 0, 0, 0],
-          [0, 0, 2, 0],
-        ],
-        inequalities: [
-          { r1: 0, c1: 0, r2: 0, c2: 1, op: '<' },
-          { r1: 3, c1: 2, r2: 3, c2: 3, op: '<' },
-          { r1: 1, c1: 1, r2: 1, c2: 2, op: '<' },
-          { r1: 2, c1: 1, r2: 2, c2: 2, op: '<' },
-        ],
-        solution: [
-          [1, 2, 3, 4],
-          [2, 3, 4, 1],
-          [3, 4, 1, 2],
-          [4, 1, 2, 3],
-        ],
-        pureDeductionRate: 1.0,
-        longestChainLength: 3,
-        crux: fallbackCrux,
-        isSymmetric: true,
-        seed: actualSeed,
-        depthProfile: [1, 2, 3, 2, 1],
-      } as unknown as FutoshikiSpec,
-      solution: [
-        [1, 2, 3, 4],
-        [2, 3, 4, 1],
-        [3, 4, 1, 2],
-        [4, 1, 2, 3],
-      ] as any,
+      tier,
+      checksum: `FUTOSHIKI_FALLBACK_${size}x${size}_S${actualSeed}`,
+      puzzle: fallbackSpec,
+      solution: fallbackLatin,
       cognitiveLoad: { spatial: 0.7, numeric: 0.85, workingMemory: 0.6, inhibition: 0.8 },
       metrics: {
-        estimated_time_sec: 90,
+        estimated_time_sec: timeLimitSec,
         irt_logit_difficulty: config.baseIrt,
-        longestInequalityChain: 3,
-        cruxCoordinates: [1, 2],
-        cruxChainDepth: 3,
-        depthProfile: [1, 2, 3, 2, 1],
+        longestInequalityChain: 2,
+        cruxCoordinates: [0, 0],
+        cruxChainDepth: 2,
+        depthProfile: [1, 2, 2, 1, 1],
         seed: actualSeed,
         isSymmetric: true,
       } as any,
