@@ -1,4 +1,3 @@
-// web-frontend/public/sw.js
 const VERSION = 'lawgic-v7-apex';
 const CORE_CACHE = `${VERSION}-core`;
 const RUNTIME_CACHE = `${VERSION}-runtime`;
@@ -29,7 +28,6 @@ self.addEventListener('install', (event) => {
       );
     })
   );
-  // 讓新 SW 立即進入等待啟用，等待前端發送信號或立即接管
   self.skipWaiting();
 });
 
@@ -51,7 +49,7 @@ self.addEventListener('activate', (event) => {
   );
 });
 
-// 🌟 輔助函式：超時競速（避免 Network-first 在弱網卡住數十秒）
+// 輔助函式：超時競速（避免 Network-first 在弱網卡住）
 function fetchWithTimeout(request, timeoutMs = 2000) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
@@ -74,14 +72,13 @@ function fetchWithTimeout(request, timeoutMs = 2000) {
 self.addEventListener('fetch', (event) => {
   const { request } = event;
 
-  // 僅攔截 HTTP/HTTPS GET 請求
   if (request.method !== 'GET' || !request.url.startsWith('http')) {
     return;
   }
 
   const url = new URL(request.url);
 
-  // 策略 A：HTML 導航請求（帶 1.8 秒超時熔斷的 Network-First，弱網/離線秒開）
+  // 策略 A：HTML 導航請求（帶 1.8 秒超時熔斷的 Network-First）
   if (request.mode === 'navigate' || request.destination === 'document') {
     event.respondWith(
       fetchWithTimeout(request, 1800)
@@ -93,7 +90,6 @@ self.addEventListener('fetch', (event) => {
           return response;
         })
         .catch(async () => {
-          // 網路超時或斷網，立即無縫降級回退至離線快取
           const matched = await caches.match(request);
           if (matched) return matched;
           return caches.match(new URL('./index.html', BASE_SCOPE).toString());
@@ -102,8 +98,7 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // 🌟 策略 B：WebAssembly 與 Vite 靜態 Hash 資產（嚴格 Cache-First）
-  // 修正重點：涵蓋 .wasm 副檔名與空 destination 的 WebAssembly 二進制載入
+  // 策略 B：WebAssembly 與 Vite 靜態 Hash 資產（嚴格 Cache-First）
   const isWasmBinary = url.pathname.endsWith('.wasm');
   const isHashedAsset =
     isWasmBinary ||
@@ -133,7 +128,7 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // 策略 C：圖片、音效與動態 JSON 題庫（Stale-While-Revalidate 存於 RUNTIME_CACHE）
+  // 策略 C：圖片、音效與動態 JSON 題庫（標準 Stale-While-Revalidate）
   event.respondWith(
     caches.match(request).then((cachedResponse) => {
       const fetchPromise = fetch(request)
@@ -149,10 +144,15 @@ self.addEventListener('fetch', (event) => {
           return networkResponse;
         })
         .catch(() => {
-          // 離線時靜默失敗，由 cachedResponse 提供保障
+          // 離線靜默
         });
 
-      return cachedResponse || fetchPromise;
+      // 🌟 若快取存在，立即返回快取，同時在背景觸發 fetchPromise 進行更新
+      if (cachedResponse) {
+        event.waitUntil(fetchPromise);
+        return cachedResponse;
+      }
+      return fetchPromise;
     })
   );
 });
