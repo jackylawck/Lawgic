@@ -102,19 +102,20 @@ export const PuzzleRenderer: React.FC<PuzzleRendererProps> = ({ puzzle, tourname
   const normalizedProps = useMemo(() => {
     if (!puzzle) return null;
 
-    const spec = (puzzle.puzzle && typeof puzzle.puzzle === 'object') ? puzzle.puzzle : {};
+    const rawAny = puzzle as any;
+    const spec = (puzzle.puzzle && typeof puzzle.puzzle === 'object') ? (puzzle.puzzle as any) : {};
     
-    // 萃取維度
-    const rows = Number(spec.rows || spec.height || spec.size || puzzle.size || 6);
-    const cols = Number(spec.cols || spec.width || spec.size || puzzle.size || 6);
+    // 萃取維度 (安全相容 spec 與 raw 上的屬性)
+    const rows = Number(spec.rows || spec.height || spec.size || rawAny.size || 6);
+    const cols = Number(spec.cols || spec.width || spec.size || rawAny.size || 6);
     const size = Math.max(rows, cols);
 
     // 萃取難度標籤，優先使用最外層確認過的 tier
     const activeTier = String(puzzle.tier || spec.tier || spec.difficulty || 'kids');
 
     // 萃取題目數據 (同時相容 clues 與 grid)
-    const clues = spec.clues !== undefined ? spec.clues : (puzzle.clues !== undefined ? puzzle.clues : spec.grid);
-    const grid = spec.grid !== undefined ? spec.grid : (puzzle.grid !== undefined ? puzzle.grid : spec.clues);
+    const clues = spec.clues !== undefined ? spec.clues : (rawAny.clues !== undefined ? rawAny.clues : spec.grid);
+    const grid = spec.grid !== undefined ? spec.grid : (rawAny.grid !== undefined ? rawAny.grid : spec.clues);
     const solution = puzzle.solution !== undefined ? puzzle.solution : spec.solution;
 
     return {
@@ -151,7 +152,6 @@ export const PuzzleRenderer: React.FC<PuzzleRendererProps> = ({ puzzle, tourname
 
   return (
     <Suspense fallback={<BoardLoadingFallback />}>
-      {/* 加上 key 確保盤面在題目 ID 或難度變更時乾淨重置生命週期 */}
       <Component key={puzzle.id || `${normalizedType}_${normalizedProps.tier}`} {...normalizedProps} />
     </Suspense>
   );
