@@ -1,4 +1,3 @@
-// web-frontend/src/components/DominoesBoard.tsx
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { PuzzleEntity, TierKey } from '../generated';
 import { useLearnerProfile } from '../hooks/useLearnerProfile';
@@ -46,6 +45,15 @@ export const DominoesBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
   const { lang } = useLanguage();
   const isEn = lang === 'en';
 
+  // 提前返回守衛：保證 actualPuzzle 非空，消除全域 TS18048
+  if (!actualPuzzle) {
+    return (
+      <div className="flex items-center justify-center p-8 text-xs font-mono text-slate-500">
+        {isEn ? 'Loading Dominoes Board...' : '載入骨牌盤面中...'}
+      </div>
+    );
+  }
+
   const spec: DominoesSpec = (actualPuzzle as any)?.puzzle;
   const rows = spec?.rows || 4;
   const cols = spec?.cols || 5;
@@ -53,7 +61,7 @@ export const DominoesBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
   const dominoes = useMemo(() => spec?.dominoes || [], [spec]);
   const solution = useMemo(() => spec?.solutionBorders, [spec]);
 
-  const currentTier = (actualPuzzle?.tier as TierKey) || 'kids';
+  const currentTier = (actualPuzzle.tier as TierKey) || 'kids';
 
   const [hBorders, setHBorders] = useState<DominoBorderState[][]>(() =>
     Array.from({ length: rows }, () => Array(cols - 1).fill(0))
@@ -107,7 +115,7 @@ export const DominoesBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
     setConflictDisplay(0);
     movesCountRef.current = 0;
     hasRecordedRef.current = false;
-  }, [actualPuzzle?.id, rows, cols]);
+  }, [actualPuzzle.id, rows, cols]);
 
   useEffect(() => {
     if (isCompleted) return;
@@ -379,7 +387,6 @@ export const DominoesBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isCompleted, handleUndo, handleRedo]);
 
-  // 核心防禦：加入 movesCountRef.current > 0 與非空盤面檢驗
   useEffect(() => {
     if (isCompleted || !solution) return;
     if (movesCountRef.current === 0 || history.length === 0) return;
@@ -388,7 +395,7 @@ export const DominoesBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
       setIsCompleted(true);
       const timeSpent = Math.max(1, Math.round((Date.now() - startTimeRef.current) / 1000));
 
-      if (!hasRecordedRef.current && actualPuzzle) {
+      if (!hasRecordedRef.current) {
         hasRecordedRef.current = true;
         const baseIrt = (actualPuzzle.metrics as any)?.irt_logit_difficulty || 1.7;
 
@@ -502,7 +509,7 @@ export const DominoesBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
   };
 
   const theoryTime =
-    (actualPuzzle?.metrics as any)?.estimated_time_sec || dominoes.length * 4;
+    (actualPuzzle.metrics as any)?.estimated_time_sec || dominoes.length * 4;
   const benchmarkData = useMemo(() => {
     return getBenchmarkMetrics('TopologicalLookahead', theoryTime, 'dominoes');
   }, [getBenchmarkMetrics, theoryTime]);
