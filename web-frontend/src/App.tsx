@@ -3,7 +3,7 @@ import React, { useState, useMemo, useRef, useEffect, useCallback, memo } from '
 import { ErrorBoundary } from 'react-error-boundary';
 import { LanguageProvider, useLanguage } from './contexts/LanguageContext';
 import { PuzzleRenderer, CognitiveDashboard } from './registry/RendererRegistry';
-import { PUZZLE_CATALOG, PuzzleEntity, TierKey as GeneratedTierKey } from './generated';
+import { PUZZLE_CATALOG, PuzzleEntity } from './generated';
 import { LangSwitcher } from './components/LangSwitcher';
 import { VirtualGamepad } from './components/VirtualGamepad';
 import { useLearnerProfile, ExtendedTierKey } from './hooks/useLearnerProfile';
@@ -68,22 +68,47 @@ const TIER_NAMES: Record<ExtendedTierKey, { zh: string; en: string }> = {
   ultimate: { zh: '終極', en: 'Ultimate' },
 };
 
-const EngineFallbackUI: React.FC<{ resetErrorBoundary: () => void; error?: Error }> = ({ resetErrorBoundary, error }) => (
-  <div className="flex flex-col items-center justify-center p-6 bg-red-950/40 border border-red-800 text-center my-4 font-mono rounded-xl max-w-md w-full">
-    <p className="text-red-300 text-xs font-bold uppercase tracking-wider">載入異常 / Render Error</p>
-    {error?.message && (
-      <p className="text-red-400/80 text-[10px] mt-1 break-all px-2 font-mono">
-        {error.message}
+// 🌟 強化版 Fallback：偵測到動態 Chunk 遺失時，自動重新載入最新部署
+const EngineFallbackUI: React.FC<{ resetErrorBoundary: () => void; error?: Error }> = ({ resetErrorBoundary, error }) => {
+  const isChunkError = error?.message?.includes('Failed to fetch dynamically imported module') ||
+                       error?.message?.includes('Loading chunk');
+
+  const handleReload = () => {
+    if ('caches' in window) {
+      caches.keys().then((keys) => {
+        keys.forEach((k) => caches.delete(k));
+      });
+    }
+    window.location.reload();
+  };
+
+  return (
+    <div className="flex flex-col items-center justify-center p-6 bg-red-950/40 border border-red-800 text-center my-4 font-mono rounded-xl max-w-md w-full">
+      <p className="text-red-300 text-xs font-bold uppercase tracking-wider">
+        {isChunkError ? '版本已更新 / New Version Available' : '載入異常 / Render Error'}
       </p>
-    )}
-    <button
-      onClick={resetErrorBoundary}
-      className="mt-3 px-3 py-1 bg-red-900/60 hover:bg-red-800 text-red-100 text-[10px] border border-red-700 rounded transition cursor-pointer"
-    >
-      重試 / Retry
-    </button>
-  </div>
-);
+      {error?.message && (
+        <p className="text-red-400/80 text-[10px] mt-1 break-all px-2 font-mono">
+          {error.message}
+        </p>
+      )}
+      <div className="flex gap-2 mt-3">
+        <button
+          onClick={handleReload}
+          className="px-3 py-1 bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] font-bold rounded transition cursor-pointer"
+        >
+          重新載入最新版本 / Reload
+        </button>
+        <button
+          onClick={resetErrorBoundary}
+          className="px-3 py-1 bg-red-900/60 hover:bg-red-800 text-red-100 text-[10px] border border-red-700 rounded transition cursor-pointer"
+        >
+          重試 / Retry
+        </button>
+      </div>
+    </div>
+  );
+};
 
 const PuzzleTimer: React.FC<{ activeId: string | undefined }> = memo(({ activeId }) => {
   const [elapsed, setElapsed] = useState<number>(0);
@@ -107,27 +132,27 @@ PuzzleTimer.displayName = 'PuzzleTimer';
 function generateEnginePuzzle(gameId: string, tier: ExtendedTierKey): PuzzleEntity | null {
   try {
     let puzzle: any = null;
-    const baseTier: GeneratedTierKey = (tier === 'legendary' || tier === 'ultimate') ? 'master' : (tier as GeneratedTierKey);
 
+    // 🌟 直接傳入 ExtendedTierKey，確保終極、傳奇能正確觸發各自生成器的原生大尺寸矩陣規格
     switch (gameId) {
-      case 'maze': puzzle = WebMazeGenerator.generate(baseTier); break;
-      case 'sudoku': puzzle = WebSudokuGenerator.generate(baseTier); break;
-      case 'nonogram': puzzle = WebNonogramGenerator.generate(baseTier); break;
-      case 'nurikabe': puzzle = WebNurikabeGenerator.generate(baseTier); break;
-      case 'skyscraper': puzzle = WebSkyscraperGenerator.generate(baseTier); break;
-      case 'hashi': puzzle = WebHashiGenerator.generate(baseTier); break;
-      case 'kropki': puzzle = WebKropkiGenerator.generate(baseTier); break;
-      case 'slitherlink': puzzle = WebSlitherlinkGenerator.generate(baseTier); break;
-      case 'tents': puzzle = WebTentsGenerator.generate(baseTier); break;
-      case 'lightup': puzzle = WebLightUpGenerator.generate(baseTier); break;
-      case 'futoshiki': puzzle = WebFutoshikiGenerator.generate(baseTier); break;
-      case 'hitori': puzzle = WebHitoriGenerator.generate(baseTier); break;
-      case 'kakuro': puzzle = WebKakuroGenerator.generate(baseTier); break;
-      case 'masyu': puzzle = WebMasyuGenerator.generate(baseTier); break;
-      case 'dominoes': puzzle = WebDominoesGenerator.generate(baseTier); break;
-      case 'heyawake': puzzle = WebHeyawakeGenerator.generate(baseTier); break;
-      case 'yajilin': puzzle = WebYajilinGenerator.generate(baseTier); break;
-      case 'shikaku': puzzle = WebShikakuGenerator.generate(baseTier); break;
+      case 'maze': puzzle = WebMazeGenerator.generate(tier as any); break;
+      case 'sudoku': puzzle = WebSudokuGenerator.generate(tier as any); break;
+      case 'nonogram': puzzle = WebNonogramGenerator.generate(tier as any); break;
+      case 'nurikabe': puzzle = WebNurikabeGenerator.generate(tier as any); break;
+      case 'skyscraper': puzzle = WebSkyscraperGenerator.generate(tier as any); break;
+      case 'hashi': puzzle = WebHashiGenerator.generate(tier as any); break;
+      case 'kropki': puzzle = WebKropkiGenerator.generate(tier as any); break;
+      case 'slitherlink': puzzle = WebSlitherlinkGenerator.generate(tier as any); break;
+      case 'tents': puzzle = WebTentsGenerator.generate(tier as any); break;
+      case 'lightup': puzzle = WebLightUpGenerator.generate(tier as any); break;
+      case 'futoshiki': puzzle = WebFutoshikiGenerator.generate(tier as any); break;
+      case 'hitori': puzzle = WebHitoriGenerator.generate(tier as any); break;
+      case 'kakuro': puzzle = WebKakuroGenerator.generate(tier as any); break;
+      case 'masyu': puzzle = WebMasyuGenerator.generate(tier as any); break;
+      case 'dominoes': puzzle = WebDominoesGenerator.generate(tier as any); break;
+      case 'heyawake': puzzle = WebHeyawakeGenerator.generate(tier as any); break;
+      case 'yajilin': puzzle = WebYajilinGenerator.generate(tier as any); break;
+      case 'shikaku': puzzle = WebShikakuGenerator.generate(tier as any); break;
       default: return null;
     }
 
@@ -161,7 +186,6 @@ const MainDashboard: React.FC = () => {
   const isEn = lang === 'en';
   const { profile, getCompositeCognitiveIndex } = useLearnerProfile();
 
-  // 100% 完整雙語字典
   const t = useMemo(() => ({
     synthesizing: isEn ? 'Synthesizing Topology...' : '神經網絡拓撲生成中...',
     tournamentOn: isEn ? '🏆 TOURNAMENT SANCTIONED' : '🏆 賽事認證模式',
@@ -512,7 +536,7 @@ const MainDashboard: React.FC = () => {
           tabIndex={-1}
           className="flex flex-col items-center w-full max-w-sm sm:max-w-md outline-none pb-28"
         >
-          {/* 控制按鈕組：置於棋盤上方，保證在手機/結算模式下永遠第一時間可點擊 */}
+          {/* 控制按鈕組：置於棋盤上方 */}
           <div className="mb-2 grid grid-cols-3 gap-1.5 w-full">
             <button
               onClick={handlePrevPuzzle}
