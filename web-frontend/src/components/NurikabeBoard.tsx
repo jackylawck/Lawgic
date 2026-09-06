@@ -1,4 +1,3 @@
-// web-frontend/src/components/NurikabeBoard.tsx
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { PuzzleEntity, TierKey } from '../generated';
 import { useLearnerProfile } from '../hooks/useLearnerProfile';
@@ -43,12 +42,21 @@ export const NurikabeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
   const { lang } = useLanguage();
   const isEn = lang === 'en';
 
+  // 提前返回守衛：保證 actualPuzzle 非空，消除全域 TS18048
+  if (!actualPuzzle) {
+    return (
+      <div className="flex items-center justify-center p-8 text-xs font-mono text-slate-500">
+        {isEn ? 'Loading Nurikabe Board...' : '載入數牆盤面中...'}
+      </div>
+    );
+  }
+
   const spec: NurikabeSpec = (actualPuzzle as any)?.puzzle;
   const rows = spec?.rows || 6;
   const cols = spec?.cols || 6;
   const grid = useMemo(() => spec?.grid || [], [spec]);
 
-  const currentTier = (actualPuzzle?.tier as TierKey) || 'kids';
+  const currentTier = (actualPuzzle.tier as TierKey) || 'kids';
 
   // 1. 盤面狀態：0: 未決, 1: 黑海, 2: 島嶼點標
   const [board, setBoard] = useState<NurikabeCellState[][]>(() =>
@@ -104,7 +112,7 @@ export const NurikabeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
     setConflictDisplay(0);
     movesCountRef.current = 0;
     hasRecordedRef.current = false;
-  }, [actualPuzzle?.id, rows, cols]);
+  }, [actualPuzzle.id, rows, cols]);
 
   useEffect(() => {
     if (isCompleted || isReplaying) return;
@@ -366,7 +374,7 @@ export const NurikabeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
   }, [isReplaying, replayStepIndex, replayStepsList, replaySpeed]);
 
   const handleCopySeedShareCode = () => {
-    const seed = (actualPuzzle as any)?.puzzle?.seed || (actualPuzzle?.metrics as any)?.seed || 0;
+    const seed = (actualPuzzle as any)?.puzzle?.seed || (actualPuzzle.metrics as any)?.seed || 0;
     const origin = typeof window !== 'undefined' ? window.location.origin : 'https://lawgic.app';
     const duelUrl = `${origin}/?engine=nurikabe&tier=${currentTier}&seed=${seed}`;
     navigator.clipboard.writeText(duelUrl);
@@ -454,7 +462,7 @@ export const NurikabeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
     setTimeout(() => setCopyToast(null), 2500);
   };
 
-  const theoryTime = (actualPuzzle?.metrics as any)?.estimated_time_sec || rows * cols * 3;
+  const theoryTime = (actualPuzzle.metrics as any)?.estimated_time_sec || rows * cols * 3;
   const benchmarkData = useMemo(() => {
     return getBenchmarkMetrics('TopologicalLookahead', theoryTime, 'nurikabe');
   }, [getBenchmarkMetrics, theoryTime]);
