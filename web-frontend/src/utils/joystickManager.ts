@@ -4,6 +4,8 @@ export type JoystickCallback = (x: number, y: number) => void;
 export type DirectionStepCallback = (dx: number, dy: number) => void;
 export type ActionCallback = () => void;
 
+export type JoystickMode = 'fixed' | 'floating'; // 支援固定與動態浮動定位
+
 export interface JoystickElements {
   leftZone?: HTMLElement | null;
   leftKnob?: HTMLElement | null;
@@ -14,31 +16,37 @@ export interface JoystickElements {
   onMoveStep?: DirectionStepCallback;
   onRotate?: JoystickCallback;
   onGrip?: ActionCallback;
+  mode?: JoystickMode;
 }
 
 interface CachedZoneData {
   centerX: number;
   centerY: number;
   maxRadius: number;
+  isFloating?: boolean;
 }
 
 export class JoystickManagerInstance {
   private activePointers: { left: number | null; right: number | null } = { left: null, right: null };
   private _cachedZones: { left: CachedZoneData | null; right: CachedZoneData | null } = { left: null, right: null };
-  private _listeners: { target: EventTarget; type: string; fn: EventListenerOrEventListenerObject }[] = [];
+  private _listeners: { target: EventTarget; type: string; fn: EventListenerOrEventListenerObject; options?: AddEventListenerOptions }[] = [];
   
   private _hapticState = {
     left: { passedDeadzone: false, reachedMax: false },
     right: { passedDeadzone: false, reachedMax: false },
   };
 
-  // 當前方向向量快取（修復方向鎖定閉包 Bug）
   private _currentStepDir: { left: [number, number]; right: [number, number] } = {
     left: [0, 0],
     right: [0, 0],
   };
 
-  private _stepTimers: { left: ReturnType<typeof setInterval> | null; right: ReturnType<typeof setInterval> | null } = {
+  // 電競級 DAS (Delayed Auto Shift) / ARR (Auto Repeat Rate) 計時器
+  private _dasTimers: { left: ReturnType<typeof setTimeout> | null; right: ReturnType<typeof setTimeout> | null } = {
+    left: null,
+    right: null,
+  };
+  private _arrIntervals: { left: ReturnType<typeof setInterval> | null; right: ReturnType<typeof setInterval> | null } = {
     left: null,
     right: null,
   };
@@ -46,10 +54,12 @@ export class JoystickManagerInstance {
   private _rafId: { left: number | null; right: number | null } = { left: null, right: null };
 
   public config = {
-    deadzone: 0.12,            // 12% 防誤觸死區
-    curve: 1.6,                // 1.6 階非線性響應曲線
-    discreteStepInterval: 135, // 離散網格移動步進間隔 (ms)
-    snapToCenterEasing: 'transform 0.18s cubic-bezier(0.34, 1.56, 0.64, 1)',
+    deadzone: 0.12,             // 12% 防誤觸死區
+    curve: 1.5,                 // 1.5 階平滑非線性曲線
+    dasDelayMs: 180,            // 首次步進防誤觸延遲 (Delayed Auto Shift)
+    arrIntervalMs: 85,          // 連續快速步進頻率 (Auto Repeat Rate)
+    diagonalThreshold: 0.38,    // 對角線死區夾角門檻 (約 22.5 度邊界保護)
+    snapToCenterEasing: 'transform 0.18s cubic-bezier(0.18, 0.89, 0.32, 1.28)',
   };
 
   constructor(private elements: JoystickElements) {
@@ -72,6 +82,10 @@ export class JoystickManagerInstance {
     stepCallback?: DirectionStepCallback
   ) {
     let active = false;
+    const isFloating = this.elements.mode === 'floating';
+
+    // 開啟 GPU 合成層加速
+    knob.style.willChange = 'transform';
 
     const onPointerDown = (e: PointerEvent) => {
       e.preventDefault();
@@ -80,10 +94,17 @@ export class JoystickManagerInstance {
       this.activePointers[id] = e.pointerId;
 
       const rect = zone.getBoundingClientRect();
+      const maxRadius = Math.min(rect.width, rect.height) / 2;
+
+      // 浮動模式下以落點為新中心；固定模式下以區域正中為中心
+      const centerX = isFloating ? e.clientX : rect.left + rect.width / 2;
+      const centerY = isFloating ? e.clientY : rect.top + rect.height / 2;
+
       this._cachedZones[id] = {
-        centerX: rect.left + rect.width / 2,
-        centerY: rect.top + rect.height / 2,
-        maxRadius: rect.width / 2,
+        centerX,
+        centerY,
+        maxRadius,
+        isFloating,
       };
 
       try {
@@ -114,10 +135,7 @@ export class JoystickManagerInstance {
       this._hapticState[id].reachedMax = false;
       this._currentStepDir[id] = [0, 0];
 
-      if (this._stepTimers[id]) {
-        clearInterval(this._stepTimers[id]!);
-        this._stepTimers[id] = null;
-      }
+      this._clearTimers(id);
 
       if (this._rafId[id]) {
         cancelAnimationFrame(this._rafId[id]!);
@@ -133,22 +151,34 @@ export class JoystickManagerInstance {
       zone.classList.remove('active');
 
       knob.style.transition = this.config.snapToCenterEasing;
-      knob.style.transform = 'translate(-50%, -50%)';
+      knob.style.transform = 'translate3d(-50%, -50%, 0)';
 
       if (analogCallback) analogCallback(0, 0);
     };
 
-    zone.addEventListener('pointerdown', onPointerDown as EventListener);
-    zone.addEventListener('pointermove', onPointerMove as EventListener);
-    zone.addEventListener('pointerup', onPointerUp as EventListener);
-    zone.addEventListener('pointercancel', onPointerUp as EventListener);
+    const options: AddEventListenerOptions = { passive: false };
+    zone.addEventListener('pointerdown', onPointerDown as EventListener, options);
+    zone.addEventListener('pointermove', onPointerMove as EventListener, options);
+    zone.addEventListener('pointerup', onPointerUp as EventListener, options);
+    zone.addEventListener('pointercancel', onPointerUp as EventListener, options);
 
     this._listeners.push(
-      { target: zone, type: 'pointerdown', fn: onPointerDown as EventListener },
-      { target: zone, type: 'pointermove', fn: onPointerMove as EventListener },
-      { target: zone, type: 'pointerup', fn: onPointerUp as EventListener },
-      { target: zone, type: 'pointercancel', fn: onPointerUp as EventListener }
+      { target: zone, type: 'pointerdown', fn: onPointerDown as EventListener, options },
+      { target: zone, type: 'pointermove', fn: onPointerMove as EventListener, options },
+      { target: zone, type: 'pointerup', fn: onPointerUp as EventListener, options },
+      { target: zone, type: 'pointercancel', fn: onPointerUp as EventListener, options }
     );
+  }
+
+  private _clearTimers(id: 'left' | 'right') {
+    if (this._dasTimers[id]) {
+      clearTimeout(this._dasTimers[id]!);
+      this._dasTimers[id] = null;
+    }
+    if (this._arrIntervals[id]) {
+      clearInterval(this._arrIntervals[id]!);
+      this._arrIntervals[id] = null;
+    }
   }
 
   private _handleMove(
@@ -168,21 +198,18 @@ export class JoystickManagerInstance {
 
     const deadzonePx = this.config.deadzone * maxRadius;
 
-    // 死區判定
+    // 死區判定 (Deadzone Gating)
     if (dist < deadzonePx) {
       if (this._rafId[id]) cancelAnimationFrame(this._rafId[id]!);
       this._rafId[id] = requestAnimationFrame(() => {
-        knob.style.transform = 'translate(-50%, -50%)';
+        knob.style.transform = 'translate3d(-50%, -50%, 0)';
       });
 
       this._hapticState[id].passedDeadzone = false;
       this._currentStepDir[id] = [0, 0];
+      this._clearTimers(id);
 
       if (analogCallback) analogCallback(0, 0);
-      if (this._stepTimers[id]) {
-        clearInterval(this._stepTimers[id]!);
-        this._stepTimers[id] = null;
-      }
       return;
     }
 
@@ -195,7 +222,7 @@ export class JoystickManagerInstance {
     const nx = Math.cos(angle) * curvedMagnitude;
     const ny = Math.sin(angle) * curvedMagnitude;
 
-    // 觸覺微反饋 (加入回滯區間保護，避免抖動反覆觸發)
+    // 階梯微反饋 (Hysteresis Protection)
     if (typeof navigator !== 'undefined' && navigator.vibrate) {
       if (!this._hapticState[id].passedDeadzone && rawMagnitude > 0.08) {
         navigator.vibrate(6);
@@ -209,48 +236,57 @@ export class JoystickManagerInstance {
       }
     }
 
-    // rAF 節流位移渲染
+    // GPU 加速位移渲染 (translate3d)
     const displayX = Math.cos(angle) * clampedDist;
     const displayY = Math.sin(angle) * clampedDist;
     if (this._rafId[id]) cancelAnimationFrame(this._rafId[id]!);
     this._rafId[id] = requestAnimationFrame(() => {
-      knob.style.transform = `translate(calc(-50% + ${displayX.toFixed(1)}px), calc(-50% + ${displayY.toFixed(1)}px))`;
+      knob.style.transform = `translate3d(calc(-50% + ${displayX.toFixed(1)}px), calc(-50% + ${displayY.toFixed(1)}px), 0)`;
     });
 
     if (analogCallback) analogCallback(nx, ny);
 
-    // 離散步進支援（動態方向讀取，徹底解決閉包鎖定）
+    // 電競級離散步進 (DAS + ARR 雙階響應)
     if (stepCallback) {
       let stepDx = 0;
       let stepDy = 0;
-      if (Math.abs(nx) > Math.abs(ny)) {
+
+      // 八分角精準過濾：防止斜向微推引發晃動
+      const absX = Math.abs(nx);
+      const absY = Math.abs(ny);
+      if (absX > absY) {
         stepDx = nx > 0 ? 1 : -1;
       } else {
         stepDy = ny > 0 ? 1 : -1;
       }
 
       const prevDir = this._currentStepDir[id];
+      const isDirChanged = prevDir[0] !== stepDx || prevDir[1] !== stepDy;
       this._currentStepDir[id] = [stepDx, stepDy];
 
-      // 若尚未建立循環，立即發射一次並排程
-      if (!this._stepTimers[id]) {
+      if (isDirChanged) {
+        this._clearTimers(id);
+
+        // 1. 首次立即執行一次步進 (Tap feedback)
         stepCallback(stepDx, stepDy);
-        this._stepTimers[id] = setInterval(() => {
-          // 動態讀取最新方向向量，支援無縫切換方向
-          const [currentDx, currentDy] = this._currentStepDir[id];
-          if (currentDx !== 0 || currentDy !== 0) {
-            stepCallback(currentDx, currentDy);
-          }
-        }, this.config.discreteStepInterval);
-      } else if (prevDir[0] !== stepDx || prevDir[1] !== stepDy) {
-        // 當手指在推動中直接切換方向時，立即響應新方向一次
-        stepCallback(stepDx, stepDy);
+
+        // 2. 啟動 DAS (延遲防誤觸)
+        this._dasTimers[id] = setTimeout(() => {
+          // 3. 進入 ARR (高頻連續步進)
+          this._arrIntervals[id] = setInterval(() => {
+            const [curX, curY] = this._currentStepDir[id];
+            if (curX !== 0 || curY !== 0) {
+              stepCallback(curX, curY);
+            }
+          }, this.config.arrIntervalMs);
+        }, this.config.dasDelayMs);
       }
     }
   }
 
   private _setupGripButton(btn: HTMLElement, onGrip?: ActionCallback) {
     let cooldown = false;
+    btn.style.willChange = 'transform';
 
     const onPointerDown = (e: PointerEvent) => {
       e.preventDefault();
@@ -270,19 +306,19 @@ export class JoystickManagerInstance {
       }, 140);
     };
 
-    btn.addEventListener('pointerdown', onPointerDown as EventListener);
+    btn.addEventListener('pointerdown', onPointerDown as EventListener, { passive: false });
     this._listeners.push({ target: btn, type: 'pointerdown', fn: onPointerDown as EventListener });
   }
 
   public destroy() {
-    Object.values(this._stepTimers).forEach((t) => {
-      if (t) clearInterval(t);
-    });
+    this._clearTimers('left');
+    this._clearTimers('right');
+
     Object.values(this._rafId).forEach((id) => {
       if (id) cancelAnimationFrame(id);
     });
-    this._listeners.forEach(({ target, type, fn }) => {
-      target.removeEventListener(type, fn);
+    this._listeners.forEach(({ target, type, fn, options }) => {
+      target.removeEventListener(type, fn, options);
     });
     this._listeners = [];
     this.activePointers = { left: null, right: null };
