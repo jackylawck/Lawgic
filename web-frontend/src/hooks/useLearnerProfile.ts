@@ -2,9 +2,11 @@
 import { useState, useCallback, useEffect } from 'react';
 import { SecureStorage } from '../utils/secureStorage';
 import { useLanguage } from '../contexts/LanguageContext';
+import { ItemBankCalibrator } from '../utils/itemBankCalibrator';
 
-export type TierKey = 'kids' | 'intermediate' | 'expert' | 'master';
-export type ExtendedTierKey = TierKey | 'legendary' | 'ultimate';
+// 完整相容 6 階難度體系
+export type TierKey = 'kids' | 'intermediate' | 'expert' | 'master' | 'legendary' | 'ultimate';
+export type ExtendedTierKey = TierKey;
 export type CognitiveDimension = 'spatial' | 'numeric' | 'workingMemory' | 'inhibition' | 'processingSpeed';
 
 export interface HintDistributionTrend {
@@ -17,7 +19,7 @@ export interface HintDistributionTrend {
 export interface AttemptPayload {
   puzzleId: string;
   engineType: string;
-  tier: TierKey | ExtendedTierKey;
+  tier: TierKey;
   cognitiveLoad: {
     spatial: number;
     numeric: number;
@@ -35,6 +37,7 @@ export interface AttemptPayload {
   isPureClear?: boolean;
   hintLogs?: { secFromStart: number; level: number }[];
   irtDifficulty?: number;
+  timestamp?: string;
 }
 
 export type AttemptRecord = AttemptPayload;
@@ -58,7 +61,7 @@ export interface PersonalBest {
 export interface BookmarkRecord {
   puzzleId: string;
   engineType: string;
-  tier: TierKey | ExtendedTierKey;
+  tier: TierKey;
   boardState: any;
   elapsedSec: number;
   bookmarkedAt: string;
@@ -278,23 +281,29 @@ export const useLearnerProfile = () => {
   }, []);
 
   const recordAttempt = useCallback((payload: AttemptPayload) => {
+    // 確保每筆記錄具備明確的時間戳記
+    const recordWithTime: AttemptPayload = {
+      ...payload,
+      timestamp: payload.timestamp || new Date().toISOString(),
+    };
+
     setProfile((prev) => {
-      const tech = payload.technique || 'General';
+      const tech = recordWithTime.technique || 'General';
       const prevStat: TechniqueStats = prev.techniqueStats[tech] || {
         attempts: 0,
-        avgTimeSec: payload.timeSpentSec,
+        avgTimeSec: recordWithTime.timeSpentSec,
         accuracy: 1.0,
         times: [],
         conflicts: [],
       };
 
       const newAttempts = prevStat.attempts + 1;
-      const newTimes = [...(prevStat.times || []), payload.timeSpentSec].slice(-40);
-      const newConflicts = [...(prevStat.conflicts || []), payload.conflictsCount].slice(-40);
+      const newTimes = [...(prevStat.times || []), recordWithTime.timeSpentSec].slice(-50);
+      const newConflicts = [...(prevStat.conflicts || []), recordWithTime.conflictsCount].slice(-50);
 
-      const effectiveAccuracy = payload.isSuccess
-        ? payload.conflictsCount === 0 ? 1 : 0.85
-        : (payload.partialCompletionRatio || payload.partialCredit || 0) * 0.7;
+      const effectiveAccuracy = recordWithTime.isSuccess
+        ? recordWithTime.conflictsCount === 0 ? 1 : 0.85
+        : (recordWithTime.partialCompletionRatio || recordWithTime.partialCredit || 0) * 0.7;
 
       const newAvgTime = Math.round(newTimes.reduce((a, b) => a + b, 0) / newTimes.length);
       const newAccuracy = Number(
@@ -303,11 +312,11 @@ export const useLearnerProfile = () => {
 
       let isPB = false;
       const pb = { ...prev.personalBest };
-      if (payload.isSuccess && payload.timeSpentSec < pb.fastestTime) {
-        pb.fastestTime = payload.timeSpentSec;
+      if (recordWithTime.isSuccess && recordWithTime.timeSpentSec < pb.fastestTime) {
+        pb.fastestTime = recordWithTime.timeSpentSec;
         isPB = true;
       }
-      const newStreak = payload.isSuccess ? prev.currentStreak + 1 : 0;
+      const newStreak = recordWithTime.isSuccess ? prev.currentStreak + 1 : 0;
       if (newStreak > pb.longestStreak) {
         pb.longestStreak = newStreak;
         isPB = true;
@@ -315,18 +324,18 @@ export const useLearnerProfile = () => {
       if (isPB) pb.updatedAt = new Date().toISOString();
 
       let newPureStreak = prev.pureStreak;
-      if (payload.isPureClear) {
+      if (recordWithTime.isPureClear) {
         newPureStreak = prev.pureStreak + 1;
-      } else if (payload.isPureModeAttempt && !payload.isSuccess) {
+      } else if (recordWithTime.isPureModeAttempt && !recordWithTime.isSuccess) {
         newPureStreak = 0;
       }
 
       let updatedTrend = { ...prev.hintTrend };
-      if (payload.hintLogs && payload.hintLogs.length > 0) {
+      if (recordWithTime.hintLogs && recordWithTime.hintLogs.length > 0) {
         let t1 = updatedTrend.t1Count;
         let t2 = updatedTrend.t2Count;
         let t3 = updatedTrend.t3Count;
-        payload.hintLogs.forEach((log) => {
+        recordWithTime.hintLogs.forEach((log) => {
           if (log.secFromStart <= 30) t1++;
           else if (log.secFromStart <= 60) t2++;
           else t3++;
@@ -342,19 +351,22 @@ export const useLearnerProfile = () => {
       const shouldSnapshot = (prev.totalAttempts + 1) % 10 === 0;
       const prevSnapshot = shouldSnapshot ? { ...prev.cognitiveDimensions } : prev.previousCognitiveDimensions;
 
-      const irtFactor = payload.irtDifficulty ? Math.max(0.08, Math.min(0.24, 0.15 + payload.irtDifficulty * 0.04)) : 0.15;
-      const speedScore = Math.max(0.2, Math.min(0.98, 120 / (payload.timeSpentSec || 120)));
-      const accuracyScore = payload.conflictsCount === 0 ? 0.95 : Math.max(0.3, 0.9 - payload.conflictsCount * 0.1);
+      // 自適應學習率與項目難度加權
+      const irtDifficulty = recordWithTime.irtDifficulty ?? 1.5;
+      const irtFactor = Math.max(0.08, Math.min(0.25, 0.12 + (irtDifficulty / 4.5) * 0.10));
+      const speedScore = Math.max(0.2, Math.min(0.98, 120 / (recordWithTime.timeSpentSec || 120)));
+      const accuracyScore = recordWithTime.conflictsCount === 0 ? 0.95 : Math.max(0.25, 0.92 - recordWithTime.conflictsCount * 0.1);
 
       const updatedDims: Record<CognitiveDimension, number> = {
-        spatial: Number((prev.cognitiveDimensions.spatial * (1 - irtFactor) + (payload.cognitiveLoad.spatial || 0.6) * irtFactor).toFixed(2)),
-        numeric: Number((prev.cognitiveDimensions.numeric * (1 - irtFactor) + (payload.cognitiveLoad.numeric || 0.6) * irtFactor).toFixed(2)),
-        workingMemory: Number((prev.cognitiveDimensions.workingMemory * (1 - irtFactor) + (payload.cognitiveLoad.workingMemory || 0.6) * irtFactor).toFixed(2)),
+        spatial: Number((prev.cognitiveDimensions.spatial * (1 - irtFactor) + (recordWithTime.cognitiveLoad.spatial || 0.6) * irtFactor).toFixed(2)),
+        numeric: Number((prev.cognitiveDimensions.numeric * (1 - irtFactor) + (recordWithTime.cognitiveLoad.numeric || 0.6) * irtFactor).toFixed(2)),
+        workingMemory: Number((prev.cognitiveDimensions.workingMemory * (1 - irtFactor) + (recordWithTime.cognitiveLoad.workingMemory || 0.6) * irtFactor).toFixed(2)),
         inhibition: Number((prev.cognitiveDimensions.inhibition * (1 - irtFactor) + accuracyScore * irtFactor).toFixed(2)),
         processingSpeed: Number((prev.cognitiveDimensions.processingSpeed * (1 - irtFactor) + speedScore * irtFactor).toFixed(2)),
       };
 
-      const records = [payload, ...(prev.recentRecords || prev.history || [])].slice(0, 50);
+      // 擴充保留最近 120 筆完整作答歷程，支援更長期的心理計量學縱向分析
+      const records = [recordWithTime, ...(prev.recentRecords || prev.history || [])].slice(0, 120);
 
       const updated: LearnerProfileState = {
         totalAttempts: prev.totalAttempts + 1,
@@ -381,6 +393,16 @@ export const useLearnerProfile = () => {
       };
 
       SecureStorage.setItemSafe('logicore_learner_profile', updated);
+
+      // 雙向回饋：通知經驗題庫校準器更新該題難度位置參數
+      try {
+        const partialCredit = recordWithTime.isSuccess
+          ? 1.0
+          : (recordWithTime.partialCompletionRatio ?? recordWithTime.partialCredit ?? 0.0);
+        const approxTheta = (updatedDims.spatial + updatedDims.numeric + updatedDims.workingMemory) / 3 * 4 - 2;
+        ItemBankCalibrator.updateEmpiricalDifficulty(recordWithTime.puzzleId, approxTheta, partialCredit);
+      } catch {}
+
       return updated;
     });
   }, []);
