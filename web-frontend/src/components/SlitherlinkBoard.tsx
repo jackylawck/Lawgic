@@ -42,7 +42,15 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
   const { lang } = useLanguage();
   const isEn = lang === 'en';
 
-  // 集中雙語字典，確保英文字串 100% 覆蓋
+  // 提前返回守衛：保證 actualPuzzle 非空，消除全域 TS18048
+  if (!actualPuzzle) {
+    return (
+      <div className="flex items-center justify-center p-8 text-xs font-mono text-slate-500">
+        {isEn ? 'Loading Slitherlink Board...' : '載入迴路盤面中...'}
+      </div>
+    );
+  }
+
   const t = useMemo(() => ({
     speed: isEn ? 'Speed' : '競速',
     moves: isEn ? 'Moves' : '步數',
@@ -79,7 +87,7 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
   const rows = spec?.rows || 6;
   const cols = spec?.cols || 6;
   const grid = useMemo(() => (spec as any)?.clues || (spec as any)?.grid || [], [spec]);
-  const currentTier = (actualPuzzle?.tier as TierKey) || 'kids';
+  const currentTier = (actualPuzzle.tier as TierKey) || 'kids';
 
   const [hEdges, setHEdges] = useState<EdgeState[][]>(() =>
     Array.from({ length: rows + 1 }, () => Array(cols).fill(0))
@@ -138,7 +146,7 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
     setConflictDisplay(0);
     movesCountRef.current = 0;
     hasRecordedRef.current = false;
-  }, [actualPuzzle?.id, rows, cols]);
+  }, [actualPuzzle.id, rows, cols]);
 
   useEffect(() => {
     if (isCompleted || isReplaying) return;
@@ -478,7 +486,7 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
   }, [isReplaying, replayStepIndex, replayStepsList, replaySpeed]);
 
   const handleCopySeedShareCode = () => {
-    const seed = (actualPuzzle as any)?.puzzle?.seed || (actualPuzzle?.metrics as any)?.seed || 0;
+    const seed = (actualPuzzle as any)?.puzzle?.seed || (actualPuzzle.metrics as any)?.seed || 0;
     const origin = typeof window !== 'undefined' ? window.location.origin : 'https://lawgic.app';
     const duelUrl = `${origin}/?engine=slitherlink&tier=${currentTier}&seed=${seed}`;
     navigator.clipboard.writeText(duelUrl);
@@ -487,7 +495,7 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
     setTimeout(() => setCopyToast(false), 2400);
   };
 
-  const theoryTime = (actualPuzzle?.metrics as any)?.estimated_time_sec || rows * cols * 3;
+  const theoryTime = (actualPuzzle.metrics as any)?.estimated_time_sec || rows * cols * 3;
   const benchmarkData = useMemo(() => {
     return getBenchmarkMetrics('TopologicalLookahead', theoryTime, 'slitherlink');
   }, [getBenchmarkMetrics, theoryTime]);
@@ -735,7 +743,6 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
         </div>
       </div>
 
-      {/* 底部快捷操作 */}
       <div className="w-full max-w-[340px] flex items-center justify-between px-1 mt-1.5 text-[7.5px] text-slate-400">
         <div className="flex gap-1">
           <button
@@ -767,7 +774,6 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
         </div>
       </div>
 
-      {/* 結算面板 */}
       {isCompleted && (
         <div className="mt-2 p-2.5 bg-slate-950/95 border border-indigo-500/60 rounded-xl text-center w-[min(88vw,42vh)] shadow-2xl animate-fade-in font-mono">
           <div className="flex items-center justify-between border-b border-slate-800 pb-1 mb-1.5">
