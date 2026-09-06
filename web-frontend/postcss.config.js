@@ -1,6 +1,4 @@
-export default ({ env }) => {
-  const isProd = env === 'production' || process.env.NODE_ENV === 'production';
-
+export default () => {
   return {
     plugins: {
       'tailwindcss/nesting': {},
@@ -10,20 +8,6 @@ export default ({ env }) => {
         flexbox: 'no-2009',
         grid: 'autoplace',
       },
-      ...(isProd
-        ? {
-            cssnano: {
-              preset: [
-                'advanced',
-                {
-                  discardComments: { removeAll: true },
-                  reduceIdents: false, // 避免破壞 keyframe 動畫名稱
-                  zindex: false,       // 避免重寫全域彈窗與棋盤圖層的 z-index
-                },
-              ],
-            },
-          }
-        : {}),
     },
   };
 };
