@@ -1,7 +1,7 @@
 // web-frontend/src/engines/masyuGenerator.ts
 import { PuzzleEntity, TierKey } from '../generated';
 
-export type ExtendedTierKey = TierKey | 'legendary' | 'ultimate';
+export type ExtendedTierKey = TierKey;
 export type PearlType = 'none' | 'white' | 'black';
 
 export interface MasyuHintStep {
@@ -24,8 +24,11 @@ export interface MasyuHintStep {
 }
 
 export interface MasyuSpec {
+  rows: number;
+  cols: number;
   size: number;
   grid: PearlType[][];
+  clues?: PearlType[][];
   solutionEdges: string[];
   pureDeductionRate: number;
   longestChainLength: number;
@@ -63,12 +66,12 @@ interface TierConfig {
 }
 
 const TIER_SPECS: Record<ExtendedTierKey, TierConfig> = {
-  kids: { size: 5, minWhite: 2, minBlack: 2, baseIrt: -0.4, timeLimitSec: 90 },
-  intermediate: { size: 6, minWhite: 4, minBlack: 3, baseIrt: 0.5, timeLimitSec: 150 },
-  expert: { size: 7, minWhite: 6, minBlack: 5, baseIrt: 1.5, timeLimitSec: 240 },
-  master: { size: 8, minWhite: 8, minBlack: 7, baseIrt: 2.5, timeLimitSec: 360 },
-  legendary: { size: 9, minWhite: 10, minBlack: 9, baseIrt: 3.4, timeLimitSec: 480 },
-  ultimate: { size: 10, minWhite: 13, minBlack: 11, baseIrt: 4.4, timeLimitSec: 600 },
+  kids: { size: 5, minWhite: 2, minBlack: 2, baseIrt: 0.65, timeLimitSec: 90 },
+  intermediate: { size: 6, minWhite: 4, minBlack: 3, baseIrt: 1.45, timeLimitSec: 150 },
+  expert: { size: 7, minWhite: 6, minBlack: 5, baseIrt: 2.35, timeLimitSec: 240 },
+  master: { size: 8, minWhite: 8, minBlack: 7, baseIrt: 3.15, timeLimitSec: 360 },
+  legendary: { size: 9, minWhite: 10, minBlack: 9, baseIrt: 3.75, timeLimitSec: 480 },
+  ultimate: { size: 10, minWhite: 13, minBlack: 11, baseIrt: 4.35, timeLimitSec: 600 },
 };
 
 export class WebMasyuGenerator {
@@ -109,7 +112,6 @@ export class WebMasyuGenerator {
 
     while (curr) {
       visited.add(curr);
-      // 🌟 明確型別標註，消除 TS7022
       const nexts: string[] = adj.get(curr)!;
       const nextNode: string | undefined = nexts[0] === prev ? nexts[1] : nexts[0];
       if (!nextNode) return false;
@@ -175,8 +177,8 @@ export class WebMasyuGenerator {
   }
 
   public static generateWindingLoop(size: number, rnd: () => number): [number, number][] | null {
-    const startR = 1 + Math.floor(rnd() * (size - 3));
-    const startC = 1 + Math.floor(rnd() * (size - 3));
+    const startR = 1 + Math.floor(rnd() * Math.max(1, size - 3));
+    const startC = 1 + Math.floor(rnd() * Math.max(1, size - 3));
     let loop: [number, number][] = [
       [startR, startC],
       [startR, startC + 1],
@@ -190,7 +192,7 @@ export class WebMasyuGenerator {
     const targetLength = Math.max(10, Math.floor(size * size * 0.48));
     let attempts = 0;
 
-    while (loop.length < targetLength && attempts++ < 150) {
+    while (loop.length < targetLength && attempts++ < 250) {
       const idx = Math.floor(rnd() * loop.length);
       const nextIdx = (idx + 1) % loop.length;
       const [r1, c1] = loop[idx];
@@ -382,7 +384,7 @@ export class WebMasyuGenerator {
     const rnd = mulberry32(actualSeed);
 
     let attempts = 0;
-    while (attempts++ < 40) {
+    while (attempts++ < 50) {
       const path = this.generateWindingLoop(size, rnd);
       if (!path || path.length < size * 2) continue;
 
@@ -440,8 +442,11 @@ export class WebMasyuGenerator {
       const dynamicIrt = Number((baseIrt + turnDensity * 0.4 + (blackCount + whiteCount) * 0.05).toFixed(2));
 
       const spec: MasyuSpec = {
+        rows: size,
+        cols: size,
         size,
         grid,
+        clues: grid,
         solutionEdges: Array.from(solutionEdges),
         pureDeductionRate: 1.0,
         longestChainLength: 4,
@@ -453,12 +458,12 @@ export class WebMasyuGenerator {
 
       return {
         id: `masyu_${tier}_s${actualSeed}`,
-        category: 'spatial_logic' as any,
+        category: 'spatial_logic',
         engine_type: 'masyu',
-        tier: (tier === 'ultimate' ? 'master' : tier) as TierKey,
+        tier,
         checksum: `MASYU_${size}x${size}_S${actualSeed}`,
-        puzzle: spec as any,
-        solution: Array.from(solutionEdges) as any,
+        puzzle: spec,
+        solution: Array.from(solutionEdges),
         cognitiveLoad: {
           spatial: Number(Math.min(1.0, 0.6 + turnDensity * 0.4).toFixed(2)),
           numeric: 0.1,
@@ -478,44 +483,68 @@ export class WebMasyuGenerator {
       };
     }
 
-    return this._generateFallback(tier, size, actualSeed, config.baseIrt);
+    return this._generateFallback(tier, size, actualSeed, config.baseIrt, timeLimitSec);
   }
 
-  private static _generateFallback(tier: ExtendedTierKey, _size: number, seed: number, baseIrt: number): PuzzleEntity {
-    const fallbackGrid: PearlType[][] = Array.from({ length: 5 }, () => Array(5).fill('none'));
+  /**
+   * 自適應尺寸的合法邊界環狀 Fallback，杜絕大尺寸退化至 5x5
+   */
+  private static _generateFallback(
+    tier: ExtendedTierKey,
+    size: number,
+    seed: number,
+    baseIrt: number,
+    timeLimitSec: number
+  ): PuzzleEntity {
+    const fallbackGrid: PearlType[][] = Array.from({ length: size }, () => Array(size).fill('none'));
+
+    // 依據當前尺寸動態在四角配置黑珍珠
     fallbackGrid[0][0] = 'black';
-    fallbackGrid[0][4] = 'black';
-    fallbackGrid[4][4] = 'black';
-    fallbackGrid[4][0] = 'black';
-    fallbackGrid[0][2] = 'white';
-    fallbackGrid[4][2] = 'white';
+    fallbackGrid[0][size - 1] = 'black';
+    fallbackGrid[size - 1][size - 1] = 'black';
+    fallbackGrid[size - 1][0] = 'black';
+
+    // 在四邊中央配置白珍珠
+    const mid = Math.floor(size / 2);
+    fallbackGrid[0][mid] = 'white';
+    fallbackGrid[size - 1][mid] = 'white';
 
     const fallbackEdges: string[] = [];
-    for (let c = 0; c < 4; c++) fallbackEdges.push(this.makeEdgeKey(0, c, 0, c + 1));
-    for (let r = 0; r < 4; r++) fallbackEdges.push(this.makeEdgeKey(r, 4, r + 1, 4));
-    for (let c = 4; c > 0; c--) fallbackEdges.push(this.makeEdgeKey(4, c, 4, c - 1));
-    for (let r = 4; r > 0; r--) fallbackEdges.push(this.makeEdgeKey(r, 0, r - 1, 0));
+    for (let c = 0; c < size - 1; c++) fallbackEdges.push(this.makeEdgeKey(0, c, 0, c + 1));
+    for (let r = 0; r < size - 1; r++) fallbackEdges.push(this.makeEdgeKey(r, size - 1, r + 1, size - 1));
+    for (let c = size - 1; c > 0; c--) fallbackEdges.push(this.makeEdgeKey(size - 1, c, size - 1, c - 1));
+    for (let r = size - 1; r > 0; r--) fallbackEdges.push(this.makeEdgeKey(r, 0, r - 1, 0));
+
+    const spec: MasyuSpec = {
+      rows: size,
+      cols: size,
+      size,
+      grid: fallbackGrid,
+      clues: fallbackGrid,
+      solutionEdges: fallbackEdges,
+      pureDeductionRate: 1.0,
+      longestChainLength: 3,
+      seed,
+      depthProfile: [1, 2, 3, 2, 1],
+      turnDensity: 0.25,
+      avgSegmentLength: size - 1,
+    };
 
     return {
       id: `masyu_${tier}_s${seed}_fb`,
-      category: 'spatial_logic' as any,
+      category: 'spatial_logic',
       engine_type: 'masyu',
-      tier: (tier === 'ultimate' ? 'master' : tier) as TierKey,
-      checksum: `MASYU_FB_${seed}`,
-      puzzle: {
-        size: 5,
-        grid: fallbackGrid,
-        solutionEdges: fallbackEdges,
-        pureDeductionRate: 1.0,
-        longestChainLength: 3,
-        seed,
-        depthProfile: [1, 2, 3, 2, 1],
-        turnDensity: 0.25,
-        avgSegmentLength: 4.0,
-      } as unknown as MasyuSpec,
-      solution: fallbackEdges as any,
+      tier,
+      checksum: `MASYU_FB_${size}x${size}_S${seed}`,
+      puzzle: spec,
+      solution: fallbackEdges,
       cognitiveLoad: { spatial: 0.9, numeric: 0.1, workingMemory: 0.6, inhibition: 0.85 },
-      metrics: { estimated_time_sec: 90, irt_logit_difficulty: baseIrt, seed, isSymmetric: false } as any,
+      metrics: {
+        estimated_time_sec: timeLimitSec,
+        irt_logit_difficulty: baseIrt,
+        seed,
+        isSymmetric: true,
+      } as any,
     };
   }
 }
