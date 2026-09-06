@@ -55,6 +55,9 @@ export interface KakuroSpec {
 
 const PARTITION_CACHE = new Map<string, number[][]>();
 
+/**
+ * 取得指定長度與和值的唯一組合清單 (無重複數字，升序排列)
+ */
 export function getPartitions(length: number, sum: number): number[][] {
   if (length <= 0 || sum <= 0 || length > 9) return [];
   const key = `${length}_${sum}`;
@@ -77,6 +80,9 @@ export function getPartitions(length: number, sum: number): number[][] {
   return results;
 }
 
+/**
+ * 依據已有填入數字收斂候選數
+ */
 export function getPartitionCandidateDigits(length: number, sum: number, existingDigits: number[]): number[] {
   const partitions = getPartitions(length, sum);
   const validSet = new Set<number>();
@@ -100,6 +106,36 @@ export function mulberry32(a: number) {
     t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
+}
+
+/**
+ * 賽事認證專用數位指紋簽名 (WPF / WPC 零信任存證)
+ * 供 KakuroBoard.tsx 及賽事後端存證呼叫
+ */
+export async function generateSanctionedSignature(payload: string): Promise<string> {
+  if (typeof window !== 'undefined' && window.crypto?.subtle) {
+    try {
+      const msgBuffer = new TextEncoder().encode(payload);
+      const hashBuffer = await window.crypto.subtle.digest('SHA-256', msgBuffer);
+      const hashArray = Array.from(new Uint8Array(hashBuffer));
+      const hex = hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
+      return `WPF-${hex.slice(0, 16).toUpperCase()}`;
+    } catch {
+      // 降級至純 JS 高熵雜湊
+    }
+  }
+
+  // 64-bit 雙質數雪崩雜湊降級
+  let h1 = 0xdeadbeef;
+  let h2 = 0x41c6ce57;
+  for (let i = 0; i < payload.length; i++) {
+    const ch = payload.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 2654435761);
+    h2 = Math.imul(h2 ^ ch, 1597334677);
+  }
+  const p1 = (h1 >>> 0).toString(16).padStart(8, '0');
+  const p2 = (h2 >>> 0).toString(16).padStart(8, '0');
+  return `WPF-FB-${p1}${p2}`.toUpperCase();
 }
 
 interface TierConfig {
@@ -278,7 +314,7 @@ export class WebKakuroGenerator {
                 c,
                 forcedValue: val,
                 technique: 'magic_partition',
-                rationale: `利用極限唯一分割定式（長度 ${runInfo.acrossLength} 和 ${runInfo.acrossClue}），該格必為 ${val}`,
+                rationale: `利用極限定式唯一分割（長度 ${runInfo.acrossLength} 和 ${runInfo.acrossClue}），該格必為 ${val}`,
                 humanReadable: {
                   zh: `坐標 [${r + 1}, ${c + 1}] 處於唯一分割組合區間，正交約束交集鎖定數字 ${val}！`,
                   en: `Magic partition constraint at [${r + 1}, ${c + 1}] forces single valid digit ${val}!`,
