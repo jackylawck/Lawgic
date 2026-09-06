@@ -1,6 +1,8 @@
 // web-frontend/src/engines/kropkiGenerator.ts
 import { PuzzleEntity, TierKey } from '../generated';
 
+export type ExtendedTierKey = TierKey;
+
 export type DeductionType =
   | 'dot_forced_white'
   | 'dot_forced_black'
@@ -29,8 +31,12 @@ export interface SolvingStep {
 }
 
 export interface KropkiSpec {
+  rows: number;
+  cols: number;
   size: number;
   initialGrid: number[][];
+  grid?: number[][];
+  clues?: KropkiDot[];
   dots: KropkiDot[];
   solution: number[][];
   solvingSteps: SolvingStep[];
@@ -49,11 +55,14 @@ interface TierConfig {
   baseIrt: number;
 }
 
+// 支援完整 6 階 Tier 配置，消除編譯錯誤
 const TIER_SPECS: Record<TierKey, TierConfig> = {
-  kids: { size: 4, targetPrefill: 4, minCoverageRatio: 0.85, minForcedChain: 3, baseIrt: -0.6 },
-  intermediate: { size: 5, targetPrefill: 3, minCoverageRatio: 0.75, minForcedChain: 5, baseIrt: 0.3 },
-  expert: { size: 6, targetPrefill: 2, minCoverageRatio: 0.65, minForcedChain: 8, baseIrt: 1.2 },
-  master: { size: 7, targetPrefill: 0, minCoverageRatio: 0.55, minForcedChain: 12, baseIrt: 2.2 },
+  kids: { size: 4, targetPrefill: 4, minCoverageRatio: 0.85, minForcedChain: 3, baseIrt: 0.65 },
+  intermediate: { size: 5, targetPrefill: 3, minCoverageRatio: 0.75, minForcedChain: 5, baseIrt: 1.45 },
+  expert: { size: 6, targetPrefill: 2, minCoverageRatio: 0.65, minForcedChain: 7, baseIrt: 2.35 },
+  master: { size: 7, targetPrefill: 0, minCoverageRatio: 0.55, minForcedChain: 10, baseIrt: 3.15 },
+  legendary: { size: 8, targetPrefill: 0, minCoverageRatio: 0.50, minForcedChain: 12, baseIrt: 3.75 },
+  ultimate: { size: 9, targetPrefill: 0, minCoverageRatio: 0.45, minForcedChain: 14, baseIrt: 4.35 },
 };
 
 function mulberry32(a: number) {
@@ -114,7 +123,6 @@ export class WebKropkiGenerator {
       const isRatio2 = v1 === v2 * 2 || v2 === v1 * 2;
 
       if (isConsecutive && isRatio2) {
-        // 1 與 2 特殊情況：按種子 50% 機率分配黑點或白點
         dots.push({ r1, c1, r2, c2, type: rnd() < 0.5 ? 'white' : 'black' });
       } else if (isConsecutive) {
         dots.push({ r1, c1, r2, c2, type: 'white' });
@@ -450,7 +458,8 @@ export class WebKropkiGenerator {
 
       const { depth, steps, maxForcedChain, pureRate } = this.traceSolvingProcess(initialGrid, allDots, n);
 
-      if (tier === 'master' && (pureRate < 0.95 || maxForcedChain < config.minForcedChain)) {
+      if ((tier === 'master' || tier === 'legendary' || tier === 'ultimate') && 
+          (pureRate < 0.85 || maxForcedChain < Math.min(config.minForcedChain, 8))) {
         continue;
       }
 
@@ -458,25 +467,31 @@ export class WebKropkiGenerator {
       const dynamicIrt = Number((config.baseIrt + (depth / (n * n)) * 0.5).toFixed(2));
       const puzzleId = `kropki_${tier}_s${actualSeed}`;
 
+      const spec: KropkiSpec = {
+        rows: n,
+        cols: n,
+        size: n,
+        initialGrid,
+        grid: initialGrid,
+        clues: allDots,
+        dots: allDots,
+        solution,
+        solvingSteps: steps,
+        inferenceDepth: depth,
+        maxForcedChain,
+        isSymmetric180,
+        pureDeductionRate: pureRate,
+        seed: actualSeed,
+      };
+
       return {
         id: puzzleId,
-        category: 'numeric_logic' as any,
+        category: 'numeric_logic',
         engine_type: 'kropki',
         tier,
         checksum: `KROPKI_${n}x${n}_S${actualSeed}_SYM${isSymmetric180 ? '180' : 'NO'}`,
-        puzzle: {
-          size: n,
-          initialGrid,
-          dots: allDots,
-          solution,
-          solvingSteps: steps,
-          inferenceDepth: depth,
-          maxForcedChain,
-          isSymmetric180,
-          pureDeductionRate: pureRate,
-          seed: actualSeed,
-        } as unknown as KropkiSpec,
-        solution: solution as any,
+        puzzle: spec,
+        solution,
         cognitiveLoad: {
           spatial: 0.6,
           numeric: 0.9,
@@ -489,34 +504,42 @@ export class WebKropkiGenerator {
           human_sim_steps: steps.length,
           seed: actualSeed,
           isSymmetric: isSymmetric180,
-        } as any,
+        },
       };
     }
 
-    // 確定性降級 Fallback
+    // 健全 Fallback（保留完整 rows/cols/grid/clues 欄位）
     const fallback = this.generateLatinSquare(n, rnd);
     const fallbackDots = this.extractDotsStrict(fallback, n, rnd);
+    const fallbackInitial = fallback.map((r, ri) => r.map((c, ci) => (ri === ci ? c : 0)));
+
+    const fallbackSpec: KropkiSpec = {
+      rows: n,
+      cols: n,
+      size: n,
+      initialGrid: fallbackInitial,
+      grid: fallbackInitial,
+      clues: fallbackDots,
+      dots: fallbackDots,
+      solution: fallback,
+      solvingSteps: [],
+      inferenceDepth: 2,
+      maxForcedChain: 2,
+      isSymmetric180: false,
+      pureDeductionRate: 1.0,
+      seed: actualSeed,
+    };
+
     return {
       id: `kropki_${tier}_s${actualSeed}_fb`,
-      category: 'numeric_logic' as any,
+      category: 'numeric_logic',
       engine_type: 'kropki',
       tier,
       checksum: `KROPKI_FB_${n}x${n}_S${actualSeed}`,
-      puzzle: {
-        size: n,
-        initialGrid: fallback.map((r, ri) => r.map((c, ci) => (ri === ci ? c : 0))),
-        dots: fallbackDots,
-        solution: fallback,
-        solvingSteps: [],
-        inferenceDepth: 2,
-        maxForcedChain: 2,
-        isSymmetric180: false,
-        pureDeductionRate: 1.0,
-        seed: actualSeed,
-      } as unknown as KropkiSpec,
-      solution: fallback as any,
+      puzzle: fallbackSpec,
+      solution: fallback,
       cognitiveLoad: { spatial: 0.6, numeric: 0.9, workingMemory: 0.7, inhibition: 0.8 },
-      metrics: { estimated_time_sec: 40, irt_logit_difficulty: config.baseIrt, seed: actualSeed } as any,
+      metrics: { estimated_time_sec: 40, irt_logit_difficulty: config.baseIrt, seed: actualSeed },
     };
   }
 }
