@@ -1,7 +1,7 @@
 // web-frontend/src/engines/mazeGenerator.ts
 import { PuzzleEntity, TierKey } from '../generated';
 
-export type ExtendedTierKey = TierKey | 'legendary' | 'ultimate';
+export type ExtendedTierKey = TierKey;
 export type StrategyPersona = 'Macro-Planner' | 'Wall-Follower' | 'Intuitive-Explorer';
 
 function mulberry32(a: number) {
@@ -14,7 +14,7 @@ function mulberry32(a: number) {
 }
 
 export class WebMazeGenerator {
-  static generate(tier: ExtendedTierKey, personaBias?: StrategyPersona, inputSeed?: number): PuzzleEntity {
+  static generate(tier: ExtendedTierKey = 'kids', personaBias?: StrategyPersona, inputSeed?: number): PuzzleEntity {
     const sizeMap: Record<ExtendedTierKey, number> = {
       kids: 11,
       intermediate: 17,
@@ -34,7 +34,7 @@ export class WebMazeGenerator {
     // 1. 初始化實心牆 (1: 牆, 0: 通路)
     const grid: number[][] = Array.from({ length: height }, () => Array(width).fill(1));
 
-    // 2. 深度遞迴生成樹 (帶慣性動量的 DFS，取代寫死 chosenIdx = 0)
+    // 2. 深度遞迴生成樹 (帶慣性動量的 DFS)
     const rootX = 1;
     const rootY = 1;
     grid[rootY][rootX] = 0;
@@ -63,7 +63,6 @@ export class WebMazeGenerator {
       if (neighbors.length > 0) {
         let chosenIdx = Math.floor(rnd() * neighbors.length);
 
-        // 策略偏好：Macro-Planner 具備方向前進慣性 (直道優先，而非寫死往北)
         if (personaBias === 'Macro-Planner' && lastDir && neighbors.length > 1) {
           const sameDirIdx = neighbors.findIndex((n) => n[4][0] === lastDir![0] && n[4][1] === lastDir![1]);
           if (sameDirIdx !== -1 && rnd() < 0.72) {
@@ -82,10 +81,10 @@ export class WebMazeGenerator {
       }
     }
 
-    // 3. 圖論樹直徑搜尋：雙重 BFS 取得整張地圖拓撲最遠之端點
+    // 3. 雙重 BFS 取得地圖拓撲最遠端點
     const { start, end } = this._findTopologicalDiameterEndpoints(grid, width, height);
 
-    // 4. 受控死胡同注入 (嚴格杜絕迴圈形成)
+    // 4. 受控死胡同注入 (杜絕環路形成)
     const distractorBaseMap: Record<ExtendedTierKey, number> = {
       kids: 0,
       intermediate: 2,
@@ -98,15 +97,15 @@ export class WebMazeGenerator {
     if (personaBias === 'Intuitive-Explorer') distractorCount = Math.round(distractorCount * 1.4);
     this._injectStrictBlindAlleys(grid, width, height, start, end, distractorCount, rnd);
 
-    // 5. 最優解計算 (BFS 最短路徑)
+    // 5. BFS 最短路徑
     const solution = this._bfs(grid, width, height, start, end);
 
-    // 6. 人類工作記憶衰減尋路模擬 (FOV=3, Decay=0.7)
+    // 6. 人類工作記憶尋路模擬
     const limitedHumanPath = this._simulateHumanPathLimited(grid, width, height, start, end, 3, 0.7);
     const baselineWallFollow = this._simulateWallFollower(grid, width, height, start, end);
     const cognitiveGap = Math.max(0, limitedHumanPath.length - solution.length);
 
-    // 7. 認知與拓撲指標計算
+    // 7. 認知指標統計
     const turnCount = this._countTurns(solution);
     const realDeadEndDepth = this._computeRealDeadEndDepth(grid, width, height);
     const pathEntropy = this._computePathEntropy(grid, width, height, solution);
@@ -144,19 +143,24 @@ export class WebMazeGenerator {
 
     return {
       id: `maze_${tier}_s${actualSeed}`,
-      category: 'topological',
+      category: 'spatial_logic',
       engine_type: 'maze',
-      tier: (tier === 'ultimate' || tier === 'legendary' ? 'master' : tier) as TierKey,
+      // 保留原生真實 tier，杜絕降級為 master 造成過濾器失配
+      tier,
       puzzle: {
+        rows: height, // 補齊介面強校驗屬性
+        cols: width,  // 補齊介面強校驗屬性
+        grid,
+        clues: grid,  // 補齊 clues 提高相容性
         width,
         height,
         size,
         start,
         end,
         goal: end,
-        grid,
         seed: actualSeed,
         actualTier: tier,
+        pureDeductionRate: 1.0,
         visualNoise: tier === 'kids' ? 0.15 : tier === 'intermediate' ? 0.45 : tier === 'expert' ? 0.75 : 0.95,
         adaptedFor: personaBias || 'standard',
         solving_path: solvingPath,
@@ -245,9 +249,6 @@ export class WebMazeGenerator {
     return furthest;
   }
 
-  /**
-   * 嚴格保持單一樹拓撲的死胡同注入器 (杜絕 2x2 與環狀連通)
-   */
   private static _injectStrictBlindAlleys(
     grid: number[][],
     width: number,
@@ -299,7 +300,6 @@ export class WebMazeGenerator {
           grid[wallY][wallX] === 1 &&
           grid[blindY][blindX] === 1
         ) {
-          // 嚴格檢測：blindX, blindY 周邊 8 鄰居除 wallX, wallY 外不得有任何已開通路
           let hasNearbyLeak = false;
           for (let ox = -1; ox <= 1; ox++) {
             for (let oy = -1; oy <= 1; oy++) {
@@ -450,9 +450,6 @@ export class WebMazeGenerator {
     return path;
   }
 
-  /**
-   * 健全的右手摸牆法則模擬器（杜絕原地死循環震盪）
-   */
   private static _simulateWallFollower(
     grid: number[][],
     width: number,
@@ -463,7 +460,7 @@ export class WebMazeGenerator {
     const path: [number, number][] = [start];
     let cx = start[0];
     let cy = start[1];
-    let dir = 0; // 0: 南, 1: 東, 2: 北, 3: 西
+    let dir = 0;
     const dirs: [number, number][] = [
       [0, 1],
       [1, 0],
@@ -475,7 +472,6 @@ export class WebMazeGenerator {
     const maxSteps = width * height * 4;
 
     while (!(cx === end[0] && cy === end[1]) && steps++ < maxSteps) {
-      // 右手摸牆優先嘗試右轉方向：(dir + 1) % 4
       let moved = false;
       for (let offset = 1; offset >= -2; offset--) {
         const newDir = (dir + offset + 4) % 4;
