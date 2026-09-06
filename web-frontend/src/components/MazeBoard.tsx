@@ -1,4 +1,3 @@
-// web-frontend/src/components/MazeBoard.tsx
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { PuzzleEntity, TierKey } from '../generated';
 import { useLearnerProfile } from '../hooks/useLearnerProfile';
@@ -53,7 +52,16 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode 
   const { lang } = useLanguage();
   const isEn = lang === 'en';
 
-  const currentTier = (actualPuzzle?.tier as TierKey) || 'kids';
+  // 提前返回守衛：保證 actualPuzzle 非空，消除全域 TS18048
+  if (!actualPuzzle) {
+    return (
+      <div className="flex items-center justify-center p-8 text-xs font-mono text-slate-500">
+        {isEn ? 'Loading Maze Matrix...' : '載入迷宮矩陣中...'}
+      </div>
+    );
+  }
+
+  const currentTier = (actualPuzzle.tier as TierKey) || 'kids';
   const actualTier =
     (actualPuzzle as any)?.puzzle?.actualTier ||
     (actualPuzzle as any)?.metrics?.actualTier ||
@@ -98,8 +106,8 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode 
     return { grid: nextGrid, endPos: [ex, ey] as [number, number] };
   }, [baseGrid, rawData, w, h, startPos]);
 
-  const optimalSolution: [number, number][] = actualPuzzle?.solution || [];
-  const theoryTime = (actualPuzzle?.metrics as any)?.estimated_time_sec || Math.max(15, Math.round(optimalSolution.length * 0.8));
+  const optimalSolution: [number, number][] = actualPuzzle.solution || [];
+  const theoryTime = (actualPuzzle.metrics as any)?.estimated_time_sec || Math.max(15, Math.round(optimalSolution.length * 0.8));
 
   const benchmarkData = useMemo(() => {
     return getBenchmarkMetrics('TopologicalLookahead', theoryTime, 'maze');
@@ -158,7 +166,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode 
     hasRecordedRef.current = false;
 
     if (replayTimerRef.current) clearInterval(replayTimerRef.current);
-  }, [actualPuzzle?.id, startPos, actualTier]);
+  }, [actualPuzzle.id, startPos, actualTier]);
 
   useEffect(() => {
     if (isCompleted) return;
@@ -425,7 +433,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode 
     const bt = backtrackCountRef.current;
     const hesitations = hesitationsRef.current;
 
-    const simSteps = (actualPuzzle?.metrics as any)?.human_sim_steps || Math.round(optimalLen * 1.6);
+    const simSteps = (actualPuzzle.metrics as any)?.human_sim_steps || Math.round(optimalLen * 1.6);
     const cognitiveAdvantage = Math.round(simSteps - totalSteps);
 
     let strategy: StrategyType = 'Intuitive-Explorer';
@@ -455,7 +463,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode 
       confidence,
       cognitiveAdvantage,
     };
-  }, [isCompleted, trail.length, optimalSolution.length, actualPuzzle?.metrics, isEn]);
+  }, [isCompleted, trail.length, optimalSolution.length, actualPuzzle.metrics, isEn]);
 
   const rankEvaluation = useMemo(() => {
     if (!isCompleted) return null;
@@ -492,7 +500,6 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode 
 
   return (
     <div className="flex flex-col items-center justify-center p-1 select-none font-mono">
-      {/* 頂部數據列 */}
       <div className="w-full grid grid-cols-5 gap-1 px-0.5 mb-1.5 text-[8px] sm:text-[9px]">
         <div className="bg-slate-950 border border-slate-800 p-1 rounded text-center">
           <div className="text-slate-500 text-[6.5px]">{isEn ? '⏱️ Speed' : '⏱️ 競速'}</div>
@@ -520,7 +527,6 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode 
           </div>
         </div>
 
-        {/* 視野切換按鈕 */}
         <button
           onClick={handleCycleViewMode}
           disabled={isUltimate}
@@ -546,7 +552,6 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode 
         </button>
       </div>
 
-      {/* 迷宮主盤面 */}
       <div
         className={`relative overflow-hidden p-1 rounded-xl bg-slate-950 border-2 transition-all duration-150 shadow-2xl ${
           isWallBlockedPulse ? 'border-rose-500 ring-2 ring-rose-500/50 scale-[0.99]' : 'border-slate-800'
@@ -646,13 +651,11 @@ export const MazeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode 
         </div>
       </div>
 
-      {/* 滑動與按鍵提示指引 */}
       <div className="w-full max-w-[340px] flex items-center justify-between px-1 mt-1 text-[7px] text-slate-500">
         <span>{isEn ? '🎮 Virtual Joystick / Swipe to move' : '🎮 虛擬搖桿 / 螢幕滑動移動'}</span>
         <span>{isEn ? 'E / MARK: Drop Beacon ✦' : 'E / MARK 放置信標 ✦'}</span>
       </div>
 
-      {/* 賽事級反思面板 */}
       {isCompleted && rankEvaluation && telemetryAnalysis && (
         <div className="mt-2 p-2.5 bg-slate-950/95 border border-indigo-500/60 rounded-xl text-center w-[min(88vw,42vh)] shadow-2xl animate-fade-in font-mono">
           <div className="flex items-center justify-between border-b border-slate-800 pb-1 mb-1.5">
