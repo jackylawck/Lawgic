@@ -688,7 +688,6 @@ export class WebSlitherlinkGenerator {
     const hEdges: boolean[][] = Array.from({ length: rows + 1 }, () => Array(cols).fill(false));
     const vEdges: boolean[][] = Array.from({ length: rows }, () => Array(cols + 1).fill(false));
 
-    // 外邊界環路
     for (let c = 0; c < cols; c++) {
       hEdges[0][c] = true;
       hEdges[rows][c] = true;
@@ -784,15 +783,7 @@ export class WebSlitherlinkGenerator {
         engine_type: 'slitherlink',
         tier,
         checksum: `SLITHER_${rows}x${cols}_CERTIFIED_${seed}`,
-        puzzle: {
-          rows,
-          cols,
-          grid: puzzleClues,
-          clues: puzzleClues,
-          pureDeductionRate: simResult.pureRate,
-          seed,
-          ...spec,
-        },
+        puzzle: spec, // 解決 TS2783 重複屬性警告
         solution: { solutionH: hEdges, solutionV: vEdges },
         cognitiveLoad: {
           spatial: 0.95,
@@ -809,7 +800,7 @@ export class WebSlitherlinkGenerator {
       };
     }
 
-    // 動態尺寸適配的健全 Fallback（杜絕下標越界崩潰）
+    // 尺寸適配的健全 Fallback
     const { hEdges: fallbackH, vEdges: fallbackV } = this.createSafeFallbackLoop(rows, cols);
     const fallbackClues = this.extractClues(rows, cols, fallbackH, fallbackV);
 
@@ -841,15 +832,7 @@ export class WebSlitherlinkGenerator {
       engine_type: 'slitherlink',
       tier,
       checksum: `SLITHER_FALLBACK_${rows}x${cols}_S${seed}`,
-      puzzle: {
-        rows,
-        cols,
-        grid: fallbackClues,
-        clues: fallbackClues,
-        pureDeductionRate: 1.0,
-        seed,
-        ...fallbackSpec,
-      },
+      puzzle: fallbackSpec, // 解決 TS2783 重複屬性警告
       solution: { solutionH: fallbackH, solutionV: fallbackV },
       cognitiveLoad: { spatial: 0.9, numeric: 0.3, workingMemory: 0.6, inhibition: 0.8 },
       metrics: { estimated_time_sec: 45, irt_logit_difficulty: config.baseIrt, seed },
