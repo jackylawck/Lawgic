@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh-HK" class="dark">
+<html lang="zh-HK" class="dark scroll-smooth">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, shrink-to-fit=no, viewport-fit=cover" />
@@ -9,19 +9,19 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="Lawgic" />
   <meta name="mobile-web-app-capable" content="yes" />
-  <meta name="theme-color" content="#090d14" media="(prefers-color-scheme: dark)" />
+  <meta name="theme-color" content="#070a0f" media="(prefers-color-scheme: dark)" />
   <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
 
-  <!-- 嚴格合規 CSP：支援 WASM、Web Worker 與原生 Web Crypto -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: blob:; font-src 'self' data: https://fonts.gstatic.com; connect-src 'self' data: blob:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'none';" />
+  <!-- 嚴格合規 CSP：支援 WASM、Web Worker、Data URI 與原生 Web Crypto -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: blob:; font-src 'self' data: https://fonts.gstatic.com; connect-src 'self' data: blob:; worker-src 'self' blob: data:; object-src 'none'; base-uri 'self'; form-action 'none';" />
   <meta http-equiv="X-Content-Type-Options" content="nosniff" />
   <meta name="referrer" content="strict-origin-when-cross-origin" />
 
   <meta name="google-site-verification" content="JZ5UohX-CcP_fQV0_DI9VadkKY4ZoTTkUifL88-fIcY" />
 
   <title>Lawgic 羅輯・遊戲 | 高精度邏輯推理、空間運算與競技解題平台</title>
-  <meta name="description" content="Lawgic (羅輯) 是一款純前端即時演算法益智競技平台。收錄空間迷宮、數獨魔陣、摩天透視、星際數橋等，提供因果提示鏈與零信任存證。" />
-  <meta name="keywords" content="Lawgic, 羅輯, 數獨, Sudoku, 空間迷宮, Maze, 摩天透視, 數橋, PWA, 邏輯遊戲" />
+  <meta name="description" content="Lawgic (羅輯) 是一款純前端即時演算法益智競技平台。收錄空間迷宮、數獨魔陣、摩天透視、星際數橋等 18 款經典謎題，提供臨床因果推導階梯與零信任本地存證。" />
+  <meta name="keywords" content="Lawgic, 羅輯, 數獨, Sudoku, 空間迷宮, Maze, 摩天透視, 數橋, Hashi, PWA, 邏輯遊戲, 認知評測" />
   <meta name="author" content="羅子淇 Jacky Law" />
   <meta name="robots" content="index, follow" />
   <link rel="canonical" href="https://jackylawck.github.io/Lawgic/" />
@@ -47,25 +47,32 @@
   <!-- Twitter Card -->
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:url" content="https://jackylawck.github.io/Lawgic/" />
-  <meta name="twitter:title" content="Lawgic 羅輯 | Logic Games" />
-  <meta name="twitter:description" content="Deterministic procedural puzzle generator." />
+  <meta name="twitter:title" content="Lawgic 羅輯 | Logic Arena" />
+  <meta name="twitter:description" content="Deterministic procedural puzzle generator & cognitive assessment engine." />
   <meta name="twitter:image" content="https://jackylawck.github.io/Lawgic/Lawgic512icon.png" />
 
-  <!-- 結構化資料 (Rich Snippets) -->
+  <!-- 豐富結構化資料 (Schema.org) -->
   <script type="application/ld+json">
   {
     "@context": "https://schema.org",
     "@type": "WebApplication",
     "name": "Lawgic 羅輯",
+    "alternateName": "LogiCore Puzzle Arena",
     "url": "https://jackylawck.github.io/Lawgic/",
     "applicationCategory": "GameApplication",
     "operatingSystem": "All",
-    "genre": "Logic Puzzle",
-    "inLanguage": "zh-HK"
+    "genre": ["Logic Puzzle", "Cognitive Assessment"],
+    "softwareVersion": "3.0.0",
+    "inLanguage": ["zh-HK", "en"],
+    "offers": {
+      "@type": "Offer",
+      "price": "0",
+      "priceCurrency": "USD"
+    }
   }
   </script>
 
-  <!-- 首屏平滑樣式與安全邊界適配 -->
+  <!-- 首屏平滑樣式、安全邊界適配與首屏載入動畫 -->
   <style>
     :root {
       --sat: env(safe-area-inset-top, 0px);
@@ -78,52 +85,52 @@
       padding-bottom: var(--sab);
       padding-left: var(--sal);
       padding-right: var(--sar);
-      background-color: #090d14;
+      background-color: #070a0f;
+    }
+    /* 首屏極簡骨架指示器（React 渲染後自動被頂替） */
+    #initial-loader {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      height: 100dvh;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace;
+      color: #818cf8;
+      user-select: none;
+    }
+    .initial-spinner {
+      width: 28px;
+      height: 28px;
+      border: 2px solid rgba(99, 102, 241, 0.2);
+      border-top-color: #6366f1;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin-bottom: 12px;
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
     }
   </style>
 </head>
-<body class="bg-[#090d14] text-slate-200 overflow-x-hidden select-none touch-manipulation overscroll-none min-h-screen antialiased">
+<body class="bg-[#070a0f] text-slate-200 overflow-x-hidden select-none touch-manipulation overscroll-none min-h-screen antialiased">
   <noscript>
-    <div style="display: flex; height: 100vh; align-items: center; justify-content: center; text-align: center; padding: 20px; color: #fff;">
+    <div style="display: flex; height: 100vh; align-items: center; justify-content: center; text-align: center; padding: 20px; color: #fff; background-color: #070a0f;">
       <h2>運行 Lawgic 羅輯競技平台需要啟用 JavaScript 與 WebAssembly 支援。</h2>
     </div>
   </noscript>
 
-  <div id="root"></div>
+  <!-- React 根掛載節點，內置輕量首屏骨架 -->
+  <div id="root">
+    <div id="initial-loader">
+      <div class="initial-spinner"></div>
+      <div style="font-size: 11px; font-weight: 700; letter-spacing: 0.15em; text-transform: uppercase;">
+        Lawgic Engine Initializing...
+      </div>
+    </div>
+  </div>
+
+  <!-- 主程式入口（已在 main.tsx 中整合單一可靠的 PWA 與錯誤守護，避免重複註冊） -->
   <script type="module" src="/src/main.tsx"></script>
-
-  <!-- 強固型 PWA 註冊與生命週期握手 -->
-  <script>
-    if ('serviceWorker' in navigator && window.location.protocol.startsWith('http')) {
-      window.addEventListener('load', () => {
-        navigator.serviceWorker.register('./sw.js', { scope: './' })
-          .then((registration) => {
-            registration.addEventListener('updatefound', () => {
-              const newWorker = registration.installing;
-              if (newWorker) {
-                newWorker.addEventListener('statechange', () => {
-                  if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
-                    console.info('[Lawgic PWA] 新版本核心資產已就緒，可立即切換。');
-                    // 可在此處對外拋出自訂事件，觸發 UI 上的「更新通知橫幅」
-                    window.dispatchEvent(new CustomEvent('lawgic:update_ready'));
-                  }
-                });
-              }
-            });
-          })
-          .catch((err) => {
-            console.warn('[Lawgic PWA] Service Worker 註冊失敗:', err);
-          });
-      });
-
-      let refreshing = false;
-      navigator.serviceWorker.addEventListener('controllerchange', () => {
-        if (!refreshing) {
-          refreshing = true;
-          window.location.reload();
-        }
-      });
-    }
-  </script>
 </body>
 </html>
