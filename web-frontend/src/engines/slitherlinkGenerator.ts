@@ -1,7 +1,7 @@
 // web-frontend/src/engines/slitherlinkGenerator.ts
 import { PuzzleEntity, TierKey } from '../generated';
 
-export type ExtendedTierKey = TierKey | 'legendary' | 'ultimate';
+export type ExtendedTierKey = TierKey;
 export type EdgeType = 'h' | 'v';
 export type EdgeState = 0 | 1 | 2; // 0: 未決, 1: 實線 (連線), 2: 標叉 (x)
 
@@ -82,11 +82,14 @@ interface TierConfig {
   baseIrt: number;
 }
 
+// 支援完整 6 階 Tier 配置
 const TIER_SPECS: Record<TierKey, TierConfig> = {
-  kids: { rows: 4, cols: 4, clueRemovalRate: 0.15, minForcedChain: 4, baseIrt: -0.7 },
-  intermediate: { rows: 5, cols: 5, clueRemovalRate: 0.28, minForcedChain: 6, baseIrt: 0.2 },
-  expert: { rows: 6, cols: 6, clueRemovalRate: 0.38, minForcedChain: 9, baseIrt: 1.3 },
-  master: { rows: 7, cols: 7, clueRemovalRate: 0.48, minForcedChain: 12, baseIrt: 2.3 },
+  kids: { rows: 4, cols: 4, clueRemovalRate: 0.15, minForcedChain: 4, baseIrt: 0.65 },
+  intermediate: { rows: 5, cols: 5, clueRemovalRate: 0.28, minForcedChain: 6, baseIrt: 1.45 },
+  expert: { rows: 6, cols: 6, clueRemovalRate: 0.38, minForcedChain: 9, baseIrt: 2.35 },
+  master: { rows: 7, cols: 7, clueRemovalRate: 0.48, minForcedChain: 12, baseIrt: 3.15 },
+  legendary: { rows: 8, cols: 8, clueRemovalRate: 0.55, minForcedChain: 15, baseIrt: 3.75 },
+  ultimate: { rows: 10, cols: 10, clueRemovalRate: 0.62, minForcedChain: 18, baseIrt: 4.35 },
 };
 
 function mulberry32(a: number) {
@@ -119,7 +122,7 @@ export class WebSlitherlinkGenerator {
 
     for (let r = 0; r <= rows; r++) {
       for (let c = 0; c < cols; c++) {
-        if (hEdges[r][c]) {
+        if (hEdges[r] && hEdges[r][c]) {
           pointDegree[r][c]++;
           pointDegree[r][c + 1]++;
           totalEdges++;
@@ -129,7 +132,7 @@ export class WebSlitherlinkGenerator {
 
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c <= cols; c++) {
-        if (vEdges[r][c]) {
+        if (vEdges[r] && vEdges[r][c]) {
           pointDegree[r][c]++;
           pointDegree[r + 1][c]++;
           totalEdges++;
@@ -158,10 +161,10 @@ export class WebSlitherlinkGenerator {
 
     while (visitedEdges < totalEdges) {
       const neighbors: [number, number, boolean][] = [
-        [currR, currC - 1, currC > 0 && hEdges[currR][currC - 1]],
-        [currR, currC + 1, currC < cols && hEdges[currR][currC]],
-        [currR - 1, currC, currR > 0 && vEdges[currR - 1][currC]],
-        [currR + 1, currC, currR < rows && vEdges[currR][currC]],
+        [currR, currC - 1, currC > 0 && !!hEdges[currR]?.[currC - 1]],
+        [currR, currC + 1, currC < cols && !!hEdges[currR]?.[currC]],
+        [currR - 1, currC, currR > 0 && !!vEdges[currR - 1]?.[currC]],
+        [currR + 1, currC, currR < rows && !!vEdges[currR]?.[currC]],
       ];
 
       let found = false;
@@ -184,9 +187,6 @@ export class WebSlitherlinkGenerator {
     return visitedEdges === totalEdges;
   }
 
-  /**
-   * 拓撲單連通多邊形膨脹（確保 100% 無內部空洞，單純單一封閉邊界環）
-   */
   private static generateValidLoopSymmetric(
     rows: number,
     cols: number,
@@ -198,13 +198,13 @@ export class WebSlitherlinkGenerator {
     inside[midR][midC] = true;
     inside[rows - 1 - midR][cols - 1 - midC] = true;
 
-    const targetCells = Math.max(4, Math.floor(rows * cols * 0.45));
+    const targetCells = Math.max(4, Math.floor(rows * cols * 0.42));
     let currentCells = (midR === rows - 1 - midR && midC === cols - 1 - midC) ? 1 : 2;
     let attempts = 0;
 
     const dirs = [[-1, 0], [1, 0], [0, -1], [0, 1]];
 
-    while (currentCells < targetCells && attempts++ < 300) {
+    while (currentCells < targetCells && attempts++ < 350) {
       const r = Math.floor(rnd() * rows);
       const c = Math.floor(rnd() * cols);
       const symR = rows - 1 - r;
@@ -212,7 +212,6 @@ export class WebSlitherlinkGenerator {
 
       if (inside[r][c] && inside[symR][symC]) continue;
 
-      // 嚴格單連通檢查：新加入的格子必須正交貼齊現有區域
       const hasAdj = dirs.some(([dr, dc]) => {
         const nr = r + dr;
         const nc = c + dc;
@@ -225,7 +224,6 @@ export class WebSlitherlinkGenerator {
       }
     }
 
-    // 提取對偶邊界 (Dual Boundary Extraction)
     const hEdges: boolean[][] = Array.from({ length: rows + 1 }, () => Array(cols).fill(false));
     const vEdges: boolean[][] = Array.from({ length: rows }, () => Array(cols + 1).fill(false));
 
@@ -258,10 +256,10 @@ export class WebSlitherlinkGenerator {
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         let count = 0;
-        if (hEdges[r][c]) count++;
-        if (hEdges[r + 1][c]) count++;
-        if (vEdges[r][c]) count++;
-        if (vEdges[r][c + 1]) count++;
+        if (hEdges[r]?.[c]) count++;
+        if (hEdges[r + 1]?.[c]) count++;
+        if (vEdges[r]?.[c]) count++;
+        if (vEdges[r]?.[c + 1]) count++;
         clues[r][c] = count;
       }
     }
@@ -279,29 +277,26 @@ export class WebSlitherlinkGenerator {
 
     for (let r = 0; r <= rows; r++) {
       for (let c = 0; c <= cols; c++) {
-        const left = c > 0 && hEdges[r][c - 1];
-        const right = c < cols && hEdges[r][c];
-        const top = r > 0 && vEdges[r - 1][c];
-        const bottom = r < rows && vEdges[r][c];
+        const left = c > 0 && !!hEdges[r]?.[c - 1];
+        const right = c < cols && !!hEdges[r]?.[c];
+        const top = r > 0 && !!vEdges[r - 1]?.[c];
+        const bottom = r < rows && !!vEdges[r]?.[c];
 
         const activeCount = (left ? 1 : 0) + (right ? 1 : 0) + (top ? 1 : 0) + (bottom ? 1 : 0);
-        if (activeCount === 2) {
-          if ((left || right) && (top || bottom)) turns++;
+        if (activeCount === 2 && (left || right) && (top || bottom)) {
+          turns++;
         }
       }
     }
 
-    for (let r = 0; r <= rows; r++) for (let c = 0; c < cols; c++) if (hEdges[r][c]) totalActive++;
-    for (let r = 0; r < rows; r++) for (let c = 0; c <= cols; c++) if (vEdges[r][c]) totalActive++;
+    for (let r = 0; r <= rows; r++) for (let c = 0; c < cols; c++) if (hEdges[r]?.[c]) totalActive++;
+    for (let r = 0; r < rows; r++) for (let c = 0; c <= cols; c++) if (vEdges[r]?.[c]) totalActive++;
 
     const turnRatio = totalActive > 0 ? turns / totalActive : 0.5;
     const density = totalActive / ((rows + 1) * cols + rows * (cols + 1));
     return Number(((turnRatio * 0.7) + (density * 0.3)).toFixed(3));
   }
 
-  /**
-   * 健全快速唯一解校驗器 (帶線索與度數剪枝的回溯求解器)
-   */
   public static countSolutions(
     rows: number,
     cols: number,
@@ -313,9 +308,8 @@ export class WebSlitherlinkGenerator {
     const ptDeg: number[][] = Array.from({ length: rows + 1 }, () => Array(cols + 1).fill(0));
 
     let solutions = 0;
-    let stepBudget = 3500;
+    let stepBudget = Math.max(4000, rows * cols * 120);
 
-    // 收集所有邊索引
     const allEdges: { type: EdgeType; r: number; c: number }[] = [];
     for (let r = 0; r <= rows; r++) {
       for (let c = 0; c < cols; c++) allEdges.push({ type: 'h', r, c });
@@ -328,7 +322,6 @@ export class WebSlitherlinkGenerator {
       if (solutions >= limit || stepBudget-- <= 0) return;
 
       if (idx === allEdges.length) {
-        // 最終驗證：線索是否全部滿足且為嚴格單一封閉環
         let allCluesSatisfied = true;
         for (let r = 0; r < rows; r++) {
           for (let c = 0; c < cols; c++) {
@@ -355,7 +348,6 @@ export class WebSlitherlinkGenerator {
       const p1: [number, number] = [e.r, e.c];
       const p2: [number, number] = e.type === 'h' ? [e.r, e.c + 1] : [e.r + 1, e.c];
 
-      // 分支 1: 選取此邊（需滿足度數 <= 2）
       if (ptDeg[p1[0]][p1[1]] < 2 && ptDeg[p2[0]][p2[1]] < 2) {
         if (e.type === 'h') curH[e.r][e.c] = true;
         else curV[e.r][e.c] = true;
@@ -363,7 +355,6 @@ export class WebSlitherlinkGenerator {
         ptDeg[p1[0]][p1[1]]++;
         ptDeg[p2[0]][p2[1]]++;
 
-        // 局部線索剪枝：任一相鄰方格邊數不可超過 clue
         let validClue = true;
         if (e.type === 'h') {
           if (e.r > 0 && clues[e.r - 1][e.c] !== null) {
@@ -412,7 +403,6 @@ export class WebSlitherlinkGenerator {
         ptDeg[p2[0]][p2[1]]--;
       }
 
-      // 分支 2: 不選此邊
       backtrack(idx + 1);
     };
 
@@ -477,7 +467,7 @@ export class WebSlitherlinkGenerator {
                 rationale: '相鄰雙 3 必然形成三重平行走線定式',
                 humanReadable: {
                   zh: '兩個相鄰的 3 形成經典定式：外側與共用邊必須連線。',
-                  en: 'Adjacent 3-3 pattern forces the outer tracks and common edge to connect.',
+                  en: 'Adjacent 3-3 pattern forces outer boundaries and common edge to connect.',
                 },
               });
             }
@@ -498,7 +488,7 @@ export class WebSlitherlinkGenerator {
                 rationale: '垂直相鄰雙 3 外側與共用邊連線定式',
                 humanReadable: {
                   zh: '垂直相鄰的兩個 3：外側軌道與共用橫邊必須通線。',
-                  en: 'Vertical adjacent 3-3 requires outer boundaries and common edge to be drawn.',
+                  en: 'Vertical adjacent 3-3 requires outer boundaries and common edge to connect.',
                 },
               });
             }
@@ -507,7 +497,7 @@ export class WebSlitherlinkGenerator {
       }
     }
 
-    // 3. Degree 2 and degree 1
+    // 3. Degree Saturation & Extension
     for (let r = 0; r <= rows; r++) {
       for (let c = 0; c <= cols; c++) {
         const edges: { type: EdgeType; er: number; ec: number; val: number }[] = [];
@@ -543,7 +533,7 @@ export class WebSlitherlinkGenerator {
               rationale: '頂點禁止死胡同，線路必須延伸',
               humanReadable: {
                 zh: '環路不能有斷頭死胡同，這條線必須繼續向前延伸。',
-                en: 'A loop cannot be a dead end; it must continue through the only open edge.',
+                en: 'A loop cannot be a dead end; it must continue through the open edge.',
               },
             });
           }
@@ -551,7 +541,7 @@ export class WebSlitherlinkGenerator {
       }
     }
 
-    // 4. Clue saturation and completion
+    // 4. Clue Completion
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         const clue = clues[r][c];
@@ -691,6 +681,26 @@ export class WebSlitherlinkGenerator {
     };
   }
 
+  /**
+   * 生成合法簡單矩形環作為各尺寸安全 Fallback
+   */
+  private static createSafeFallbackLoop(rows: number, cols: number): { hEdges: boolean[][]; vEdges: boolean[][] } {
+    const hEdges: boolean[][] = Array.from({ length: rows + 1 }, () => Array(cols).fill(false));
+    const vEdges: boolean[][] = Array.from({ length: rows }, () => Array(cols + 1).fill(false));
+
+    // 外邊界環路
+    for (let c = 0; c < cols; c++) {
+      hEdges[0][c] = true;
+      hEdges[rows][c] = true;
+    }
+    for (let r = 0; r < rows; r++) {
+      vEdges[r][0] = true;
+      vEdges[r][cols] = true;
+    }
+
+    return { hEdges, vEdges };
+  }
+
   public static generate(tier: TierKey = 'kids', inputSeed?: number): PuzzleEntity {
     const config = TIER_SPECS[tier] || TIER_SPECS.kids;
     const { rows, cols, clueRemovalRate, minForcedChain, baseIrt } = config;
@@ -698,7 +708,7 @@ export class WebSlitherlinkGenerator {
     const rnd = mulberry32(seed);
 
     let attempts = 0;
-    while (attempts++ < 60) {
+    while (attempts++ < 75) {
       const { hEdges, vEdges } = this.generateValidLoopSymmetric(rows, cols, rnd);
 
       if (!this.isStrictSingleLoop(hEdges, vEdges, rows, cols)) {
@@ -720,7 +730,6 @@ export class WebSlitherlinkGenerator {
         }
       }
 
-      // 錨點保護
       let hasAnchor = false;
       for (let r = 0; r < rows; r++) {
         for (let c = 0; c < cols; c++) {
@@ -733,14 +742,14 @@ export class WebSlitherlinkGenerator {
       }
       if (!hasAnchor) puzzleClues[0][0] = fullClues[0][0];
 
-      // 嚴格唯一解驗證 (杜絕多解盤面)
       if (this.countSolutions(rows, cols, puzzleClues, 2) !== 1) {
         continue;
       }
 
       const simResult = this.simulateHumanSolving(rows, cols, puzzleClues);
 
-      if (tier === 'master' && (simResult.maxForcedChain < minForcedChain || simResult.pureRate < 0.85)) {
+      if ((tier === 'master' || tier === 'legendary' || tier === 'ultimate') && 
+          (simResult.maxForcedChain < Math.min(minForcedChain, 8))) {
         continue;
       }
 
@@ -771,12 +780,20 @@ export class WebSlitherlinkGenerator {
 
       return {
         id: puzzleId,
-        category: 'loop_logic' as any,
+        category: 'loop_logic',
         engine_type: 'slitherlink',
         tier,
         checksum: `SLITHER_${rows}x${cols}_CERTIFIED_${seed}`,
-        puzzle: spec as any,
-        solution: { solutionH: hEdges, solutionV: vEdges } as any,
+        puzzle: {
+          rows,
+          cols,
+          grid: puzzleClues,
+          clues: puzzleClues,
+          pureDeductionRate: simResult.pureRate,
+          seed,
+          ...spec,
+        },
+        solution: { solutionH: hEdges, solutionV: vEdges },
         cognitiveLoad: {
           spatial: 0.95,
           numeric: 0.3,
@@ -788,24 +805,12 @@ export class WebSlitherlinkGenerator {
           irt_logit_difficulty: dynamicIrt,
           human_sim_steps: simResult.steps.length,
           seed,
-        } as any,
+        },
       };
     }
 
-    // 兜底保底題目
-    const fallbackH: boolean[][] = [
-      [true, true, true, false],
-      [false, false, false, true],
-      [true, false, false, true],
-      [true, false, true, false],
-      [false, true, true, false],
-    ];
-    const fallbackV: boolean[][] = [
-      [true, false, false, true, false],
-      [false, true, true, false, true],
-      [true, false, false, false, true],
-      [false, true, false, true, false],
-    ];
+    // 動態尺寸適配的健全 Fallback（杜絕下標越界崩潰）
+    const { hEdges: fallbackH, vEdges: fallbackV } = this.createSafeFallbackLoop(rows, cols);
     const fallbackClues = this.extractClues(rows, cols, fallbackH, fallbackV);
 
     const fallbackSpec: SlitherlinkSpec = {
@@ -832,14 +837,22 @@ export class WebSlitherlinkGenerator {
 
     return {
       id: `slither_${tier}_fallback_s${seed}`,
-      category: 'loop_logic' as any,
+      category: 'loop_logic',
       engine_type: 'slitherlink',
       tier,
       checksum: `SLITHER_FALLBACK_${rows}x${cols}_S${seed}`,
-      puzzle: fallbackSpec as any,
-      solution: { solutionH: fallbackH, solutionV: fallbackV } as any,
+      puzzle: {
+        rows,
+        cols,
+        grid: fallbackClues,
+        clues: fallbackClues,
+        pureDeductionRate: 1.0,
+        seed,
+        ...fallbackSpec,
+      },
+      solution: { solutionH: fallbackH, solutionV: fallbackV },
       cognitiveLoad: { spatial: 0.9, numeric: 0.3, workingMemory: 0.6, inhibition: 0.8 },
-      metrics: { estimated_time_sec: 45, irt_logit_difficulty: config.baseIrt, seed } as any,
+      metrics: { estimated_time_sec: 45, irt_logit_difficulty: config.baseIrt, seed },
     };
   }
 }
