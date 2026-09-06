@@ -3,28 +3,66 @@
 @tailwind utilities;
 
 @layer base {
-  html, body {
+  :root {
+    --sat: env(safe-area-inset-top, 0px);
+    --sar: env(safe-area-inset-right, 0px);
+    --sab: env(safe-area-inset-bottom, 0px);
+    --sal: env(safe-area-inset-left, 0px);
+  }
+
+  html {
+    /* 啟用現代動態視口高度與標準色彩空間 */
+    height: 100%;
+    color-scheme: dark;
+  }
+
+  body {
     margin: 0;
     padding: 0;
-    background-color: #090d14;
+    min-height: 100%;
+    min-height: 100dvh;
+    background-color: #070a0f;
     color: #f8fafc;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
-    /* 防禦 Safari 橡皮筋下拉刷新與手勢爭搶 */
+    
+    /* 徹底杜絕行動端橡皮筋下拉重整與彈性晃動 */
+    overscroll-behavior: none;
     overscroll-behavior-y: none;
     touch-action: pan-x pan-y;
+
+    /* 消除行動端點擊灰斑與系統長按選單干擾 */
+    -webkit-tap-highlight-color: transparent;
+    -webkit-touch-callout: none;
   }
 
-  /* 針對益智棋盤互動區域徹底隔離瀏覽器默認手勢干擾 */
-  canvas, .puzzle-board, svg.board-interactive {
-    touch-action: none;
-    user-select: none;
-    -webkit-user-select: none;
+  /* 針對電競棋盤、虛擬搖桿與互動畫布隔離預設手勢 */
+  canvas,
+  .puzzle-board,
+  svg.board-interactive,
+  .joystick-zone {
+    touch-action: none !important;
+    user-select: none !important;
+    -webkit-user-select: none !important;
+  }
+
+  /* 鍵盤操作無障礙焦點增強 (WCAG 2.2 Focus Visible) */
+  :focus-visible {
+    outline: 2px solid #6366f1;
+    outline-offset: 2px;
+  }
+
+  button:focus:not(:focus-visible) {
+    outline: none;
   }
 }
 
-/* 隱藏原生滾動條但保持滾動能力 */
+/* ==========================================================================
+   🛠️ 視口與滾動控制實用類
+   ========================================================================== */
+
+/* 隱藏原生滾動條但維持無障礙平滑滾動 */
 .scrollbar-none::-webkit-scrollbar {
   display: none;
 }
@@ -33,113 +71,146 @@
   scrollbar-width: none;
 }
 
+/* 瀏海屏 / 底部手勢條安全區邊距工具類 */
+.safe-padding-top {
+  padding-top: var(--sat);
+}
+.safe-padding-bottom {
+  padding-bottom: var(--sab);
+}
+
+/* 螢幕閱讀器專用隱藏類 (Accessible Screen-Reader Only) */
+.sr-only {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
+
 /* ==========================================================================
-   🎮 動畫特效系統 (GPU 最佳化)
+   🎮 動畫特效系統 (GPU 硬件合成加速)
    ========================================================================== */
 
-/* 連勝心跳呼吸動效 */
+/* 連勝心跳高能脈衝 */
 @keyframes flame-pulse {
   0%, 100% {
     box-shadow: 0 0 15px rgba(249, 115, 22, 0.25), inset 0 0 10px rgba(249, 115, 22, 0.15);
   }
   50% {
-    box-shadow: 0 0 30px rgba(249, 115, 22, 0.5), inset 0 0 20px rgba(249, 115, 22, 0.3);
+    box-shadow: 0 0 30px rgba(249, 115, 22, 0.55), inset 0 0 20px rgba(249, 115, 22, 0.35);
   }
 }
 .animate-flame-heat {
-  animation: flame-pulse 2s ease-in-out infinite;
+  animation: flame-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  transform: translate3d(0, 0, 0);
   will-change: box-shadow;
 }
 
 /* 通關多巴胺慶典閃爍 */
 @keyframes victory-glow {
-  0% { opacity: 0; transform: scale(0.98); }
-  50% { opacity: 1; transform: scale(1); }
-  100% { opacity: 0; transform: scale(1.02); }
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 0, 0) scale(0.96);
+  }
+  50% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(0, 0, 0) scale(1.04);
+  }
 }
 .animate-victory-pulse {
-  animation: victory-glow 1.2s ease-out forwards;
+  animation: victory-glow 1.1s cubic-bezier(0.16, 1, 0.3, 1) forwards;
   will-change: transform, opacity;
 }
 
-/* 通用平滑淡入動畫 */
+/* 平滑微交互淡入 */
 @keyframes fadeIn {
   from {
     opacity: 0;
-    transform: translateY(4px);
+    transform: translate3d(0, 6px, 0);
   }
   to {
     opacity: 1;
-    transform: translateY(0);
+    transform: translate3d(0, 0, 0);
   }
 }
 .animate-fade-in {
-  animation: fadeIn 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  animation: fadeIn 0.22s cubic-bezier(0.16, 1, 0.3, 1) forwards;
   will-change: transform, opacity;
 }
 
-/* 碎紙屑粒子飄落動效 (支援動態視口高度 dvh) */
+/* 碎紙屑粒子物理飄落 (支援 dvh 動態視口高度) */
 @keyframes confettiFall {
   0% {
-    transform: translateY(0) rotate(0deg);
+    transform: translate3d(0, -10px, 0) rotate(0deg);
     opacity: 1;
   }
   100% {
-    transform: translateY(105dvh) rotate(720deg);
+    transform: translate3d(0, 105dvh, 0) rotate(720deg);
     opacity: 0;
   }
 }
 .animate-confetti-fall {
-  animation-name: confettiFall;
-  animation-duration: 3s;
-  animation-timing-function: linear;
-  animation-iteration-count: infinite;
+  animation: confettiFall 3s linear infinite;
   will-change: transform, opacity;
 }
 
 /* ==========================================================================
-   ♿ 無障礙系統 (AccessibilityContext 連動支援)
+   ♿ 無障礙系統 (AccessibilityContext 連動標準)
    ========================================================================== */
 
-/* 1. 專注模式：徹底禁用所有動畫與平滑過渡（自閉/ADHD 友善） */
+/* 1. 專注/減弱動態模式：徹底壓制所有閃爍、動畫與過渡 */
 .a11y-focus-mode *,
 .a11y-focus-mode *::before,
-.a11y-focus-mode *::after {
+.a11y-focus-mode *::after,
+@media (prefers-reduced-motion: reduce) {
   animation-duration: 0.001ms !important;
   animation-iteration-count: 1 !important;
   transition-duration: 0.001ms !important;
   scroll-behavior: auto !important;
 }
 
-/* 2. 高對比模式：加強棋盤格線、反轉邊框清晰度 */
+/* 2. 高對比模式：加強棋盤格線、強調可見性 */
 .a11y-high-contrast {
   --contrast-border: #ffffff;
 }
 .a11y-high-contrast .border-slate-800,
 .a11y-high-contrast .border-slate-700 {
-  border-color: #e2e8f0 !important;
+  border-color: #f1f5f9 !important;
 }
 .a11y-high-contrast .bg-slate-900,
 .a11y-high-contrast .bg-slate-950 {
-  background-color: #020617 !important;
+  background-color: #000000 !important;
 }
 .a11y-high-contrast .text-slate-500,
 .a11y-high-contrast .text-slate-400 {
-  color: #cbd5e1 !important;
+  color: #e2e8f0 !important;
 }
 
-/* 3. 大字體模式：全域基礎尺寸放大 10% */
+/* 3. 大字體無障礙增強 */
 .a11y-large-text {
-  font-size: 110% !important;
+  font-size: 112% !important;
 }
 
-/* 4. 色弱模式濾鏡：支援紅/綠/藍色盲 (經過安全 URL-Encode，相容 Safari 與各版瀏覽器) */
-html[data-colorblind="protanopia"] {
+/* 4. 色弱/色盲矩陣過濾（掛載於 body 上，徹底保護 position: fixed 頂層容器） */
+body[data-colorblind="protanopia"] {
   filter: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg"><filter id="f"><feColorMatrix type="matrix" values="0.567,0.433,0,0,0 0.558,0.442,0,0,0 0,0.242,0.758,0,0 0,0,0,1,0"/></filter></svg>%23f');
 }
-html[data-colorblind="deuteranopia"] {
+body[data-colorblind="deuteranopia"] {
   filter: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg"><filter id="f"><feColorMatrix type="matrix" values="0.625,0.375,0,0,0 0.7,0.3,0,0,0 0,0.3,0.7,0,0 0,0,0,1,0"/></filter></svg>%23f');
 }
-html[data-colorblind="tritanopia"] {
+body[data-colorblind="tritanopia"] {
   filter: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg"><filter id="f"><feColorMatrix type="matrix" values="0.95,0.05,0,0,0 0,0.433,0.567,0,0 0,0.475,0.525,0,0 0,0,0,1,0"/></filter></svg>%23f');
+}
+/* 全色盲 (Achromatopsia / 純灰階明度對比模式) */
+body[data-colorblind="achromatopsia"] {
+  filter: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg"><filter id="f"><feColorMatrix type="matrix" values="0.299,0.587,0.114,0,0 0.299,0.587,0.114,0,0 0.299,0.587,0.114,0,0 0,0,0,1,0"/></filter></svg>%23f');
 }
