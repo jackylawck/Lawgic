@@ -1,4 +1,3 @@
-// web-frontend/src/components/SkyscraperBoard.tsx
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { PuzzleEntity, TierKey } from '../generated';
 import { useLearnerProfile } from '../hooks/useLearnerProfile';
@@ -33,18 +32,27 @@ export const SkyscraperBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamen
   const { lang } = useLanguage();
   const isEn = lang === 'en';
 
+  // 提前返回守衛：保證 actualPuzzle 非空，消除全域 TS18048
+  if (!actualPuzzle) {
+    return (
+      <div className="flex items-center justify-center p-8 text-xs font-mono text-slate-500">
+        {isEn ? 'Loading Skyscraper Perspective...' : '載入摩天透視盤面中...'}
+      </div>
+    );
+  }
+
   const [internalAssessment, setInternalAssessment] = useState<boolean>(false);
   const isAssessmentMode = tournamentMode || internalAssessment;
 
-  const spec = actualPuzzle?.puzzle as any;
+  const spec = actualPuzzle.puzzle as any;
   const size: number = spec?.size || 4;
   const clues = spec?.clues || { top: [], bottom: [], left: [], right: [] };
   const hints: SkyscraperHintStep[] = useMemo(() => spec?.hints || [], [spec]);
-  const solutionGrid = useMemo(() => (actualPuzzle?.solution as number[][]) || [], [actualPuzzle]);
+  const solutionGrid = useMemo(() => (actualPuzzle.solution as number[][]) || [], [actualPuzzle]);
 
-  const metrics = (actualPuzzle?.metrics as any) || {};
+  const metrics = (actualPuzzle.metrics as any) || {};
   const theoryTime = metrics.estimated_time_sec || 120;
-  const currentTier = (actualPuzzle?.tier as TierKey) || 'kids';
+  const currentTier = (actualPuzzle.tier as TierKey) || 'kids';
   const standardTimeLimit = size === 4 ? 360 : 540;
 
   const benchmarkData = useMemo(() => {
@@ -96,7 +104,7 @@ export const SkyscraperBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamen
   }, [isAssessmentMode, isCompleted, isTimedOut, isResigned, isEn]);
 
   useEffect(() => {
-    const bookmark = profile.bookmarks[actualPuzzle?.id || ''];
+    const bookmark = profile.bookmarks[actualPuzzle.id || ''];
     if (bookmark && bookmark.boardState) {
       setGrid(Array.isArray(bookmark.boardState) && bookmark.boardState.length > 0 ? bookmark.boardState : initialGrid);
       setElapsedSec(bookmark.elapsedSec);
@@ -121,7 +129,7 @@ export const SkyscraperBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamen
     hypothesisAttemptsRef.current = 0;
     moveSequenceRef.current = [];
     hasRecordedRef.current = false;
-  }, [initialGrid, actualPuzzle?.id, profile.bookmarks, isEn]);
+  }, [initialGrid, actualPuzzle.id, profile.bookmarks, isEn]);
 
   const detectedStrategy = useMemo<SpatialStrategy>(() => {
     const seq = moveSequenceRef.current;
@@ -228,9 +236,9 @@ export const SkyscraperBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamen
 
       if (isAssessmentMode && currentElapsed >= standardTimeLimit) {
         setIsTimedOut(true);
-        if (!hasRecordedRef.current) {
+        if (!hasRecordedRef.current && actualPuzzle) {
           hasRecordedRef.current = true;
-          const sol = actualPuzzle?.solution as number[][];
+          const sol = actualPuzzle.solution as number[][];
           const totalCells = size * size;
           let correctFilled = 0;
           let filledCount = 0;
@@ -245,10 +253,10 @@ export const SkyscraperBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamen
           const partialRatio = filledCount > 0 ? Number((correctFilled / totalCells).toFixed(2)) : 0;
 
           recordAttempt({
-            puzzleId: actualPuzzle?.id || 'unknown',
+            puzzleId: actualPuzzle.id,
             engineType: 'skyscraper',
             tier: currentTier,
-            cognitiveLoad: actualPuzzle?.cognitiveLoad || {
+            cognitiveLoad: actualPuzzle.cognitiveLoad || {
               spatial: 0.85,
               numeric: 0.4,
               workingMemory: 0.8,
@@ -262,7 +270,7 @@ export const SkyscraperBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamen
           });
 
           try {
-            const canonical = `${actualPuzzle?.id}|${standardTimeLimit}|${conflictCountRef.current}|TIMEOUT_AUDIT`;
+            const canonical = `${actualPuzzle.id}|${standardTimeLimit}|${conflictCountRef.current}|TIMEOUT_AUDIT`;
             const enc = new TextEncoder();
             window.crypto.subtle.digest('SHA-256', enc.encode(canonical)).then((buf) => {
               const hex = Array.from(new Uint8Array(buf))
@@ -281,7 +289,7 @@ export const SkyscraperBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamen
 
   const checkVictory = useCallback(
     async (currentGrid: number[][]) => {
-      const sol = actualPuzzle?.solution as number[][];
+      const sol = actualPuzzle.solution as number[][];
       if (!sol || !Array.isArray(sol)) return;
 
       let isMatch = true;
@@ -296,7 +304,7 @@ export const SkyscraperBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamen
 
       if (isMatch) {
         setIsCompleted(true);
-        removeBookmark(actualPuzzle?.id || '');
+        removeBookmark(actualPuzzle.id);
 
         if (!hasRecordedRef.current) {
           hasRecordedRef.current = true;
@@ -305,7 +313,7 @@ export const SkyscraperBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamen
             puzzleId: actualPuzzle.id,
             engineType: 'skyscraper',
             tier: currentTier,
-            cognitiveLoad: actualPuzzle?.cognitiveLoad || {
+            cognitiveLoad: actualPuzzle.cognitiveLoad || {
               spatial: 0.85,
               numeric: 0.4,
               workingMemory: 0.8,
@@ -368,16 +376,16 @@ export const SkyscraperBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamen
 
     setIsResigned(true);
     hasRecordedRef.current = true;
-    removeBookmark(actualPuzzle?.id || '');
+    removeBookmark(actualPuzzle.id);
 
     setGrid(solutionGrid.map((row) => [...row]));
 
     const timeSpent = Math.max(1, Math.round((Date.now() - startTimeRef.current) / 1000));
     recordAttempt({
-      puzzleId: actualPuzzle?.id || 'skyscraper',
+      puzzleId: actualPuzzle.id,
       engineType: 'skyscraper',
       tier: currentTier,
-      cognitiveLoad: actualPuzzle?.cognitiveLoad || {
+      cognitiveLoad: actualPuzzle.cognitiveLoad || {
         spatial: 0.85,
         numeric: 0.4,
         workingMemory: 0.8,
@@ -419,7 +427,7 @@ export const SkyscraperBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamen
     const [r, c] = selected;
     if (initialGrid[r][c] !== 0) return;
 
-    const sol = actualPuzzle?.solution as number[][];
+    const sol = actualPuzzle.solution as number[][];
 
     if (num === 0 && grid[r][c] !== 0) {
       hypothesisAttemptsRef.current += 1;
@@ -708,7 +716,6 @@ export const SkyscraperBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamen
         </div>
       </div>
 
-      {/* 數字按鍵盤 */}
       {!isCompleted && !isTimedOut && !isResigned && (
         <div className="flex gap-1.5 mt-2.5 justify-center w-[min(90vw,46vh)]">
           {Array.from({ length: size }, (_, i) => i + 1).map((num) => (
@@ -732,7 +739,6 @@ export const SkyscraperBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamen
         </div>
       )}
 
-      {/* 超時結算面板 */}
       {isTimedOut && (
         <div className="mt-3 p-3 bg-rose-950/90 border border-rose-600 rounded-xl text-center w-[min(90vw,46vh)] shadow-2xl animate-fade-in">
           <div className="text-xs text-rose-200 font-bold mb-1">⚠️ ASSESSMENT CEILING REACHED</div>
@@ -753,7 +759,6 @@ export const SkyscraperBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamen
         </div>
       )}
 
-      {/* 通關反思面板 */}
       {(isCompleted || isResigned) && (
         <div className="mt-3 p-3 bg-slate-950/95 border border-indigo-500/60 rounded-xl text-center w-[min(90vw,46vh)] shadow-2xl animate-fade-in font-mono">
           <div className="flex items-center justify-between border-b border-slate-800 pb-1.5 mb-2">
