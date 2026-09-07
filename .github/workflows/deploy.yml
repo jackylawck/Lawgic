@@ -45,15 +45,15 @@ jobs:
         with:
           version: 'latest'
 
-      # 🌟 2. 確定性 WASM 核心構建（顯式追加 --no-wasm-opt 杜絕 CI 驗證衝突）
+      # 🌟 2. 確定性 WASM 核心構建（移除違法參數 --no-wasm-opt，依賴 Cargo.toml 自動生效）
       - name: Build & Optimize WASM Core
         run: |
           mkdir -p web-frontend/src/wasm
           cd core-engine
-          wasm-pack build --target web --release --no-wasm-opt --out-dir ../web-frontend/src/wasm
+          wasm-pack build --target web --release --out-dir ../web-frontend/src/wasm
           rm -f ../web-frontend/src/wasm/.gitignore
 
-      # 🌟 3. 配置 Node.js 與 npm 模組自動快取
+      # 🌟 3. 配置 Node.js 與 npm 快取
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -73,16 +73,16 @@ jobs:
             npm install
           fi
 
-      # 🌟 5. 前端構建與 GitHub Pages 靜態路由相容性注入
+      # 🌟 5. 前端構建與 SPA 靜態路由相容性處理
       - name: Build Frontend Artifacts
         working-directory: web-frontend
         env:
           NODE_ENV: production
         run: |
           npm run build
-          # 禁用 Jekyll 避免底線檔案被忽略
+          # 禁用 GitHub Pages Jekyll 引擎（避免底線檔案被略過）
           touch dist/.nojekyll
-          # 複製 404.html 支援 SPA 前端路由直接刷新
+          # 建立 404.html 支援 SPA 深層連結刷新
           cp dist/index.html dist/404.html
 
       # 🌟 6. GitHub Pages 官方無縫部署
