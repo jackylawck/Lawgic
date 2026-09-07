@@ -9,27 +9,23 @@ description = "World-class zero-copy deterministic Sudoku propagation engine"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-# 鎖定具體修訂版本，避免 CI/CD 環境建置漂移
+# 鎖定成熟穩定的 wasm-bindgen 綁定庫
 wasm-bindgen = "0.2.92"
 
-# 輕量堆配置
-wee_alloc = { version = "0.4.5", optional = true }
-
-[features]
-default = ["wee_alloc"]
-
 [profile.release]
-# 🌟 全域極限速度優化
+# 🌟 極限速度優化 (針對數獨 CSP 位元回溯徹底內聯)
 opt-level = 3
-# 🌟 跨 crate 全局連結時優化（大幅提升位元運算查表 PEERS_TABLE 內聯機率）
+# 🌟 肥大跨 Crate 全局連結時優化 (LTO)
 lto = "fat"
-# 🌟 單代碼生成單元，最大化編譯器全域暫存器排程與死碼消除
+# 🌟 單代碼生成單元，最大化全域暫存器排程與死碼消除
 codegen-units = 1
-# 🌟 移除巨型 unwinding 堆疊展開機制，體積驟降且提升分支預測
+# 🌟 移除 unwinding 展開機制，體積驟降且杜絕異常跳轉分支預測損耗
 panic = "abort"
-# 🌟 剝離所有符號表與除錯資訊
+# 🌟 徹底剝離所有除錯符號
 strip = "symbols"
 
 [package.metadata.wasm-pack.profile.release]
-# 🌟 修正重點：加上 --enable-bulk-memory 解決 wasm-validator error
-wasm-opt = ["-O4", "--converge", "--strip-debug", "--enable-bulk-memory"]
+# 🌟 根治 CI 跨環境 wasm-validator 衝突的最穩解法：
+# 由 rustc 自身的 opt-level=3 與 lto="fat" 全權接管二進制優化，
+# 禁用外掛 wasm-opt，秒級建置且杜絕 feature 不匹配錯誤。
+wasm-opt = false
