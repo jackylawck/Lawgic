@@ -1,5 +1,5 @@
 // web-frontend/src/components/CognitiveDashboard.tsx
-import React, { useMemo } from 'react';
+import React, { useMemo, useState, memo } from 'react';
 import { useLearnerProfile } from '../hooks/useLearnerProfile';
 import { useLanguage } from '../contexts/LanguageContext';
 import { PsychometricsEngine } from '../utils/psychometricsEngine';
@@ -8,10 +8,21 @@ interface Props {
   onClose?: () => void;
 }
 
-export const CognitiveDashboard: React.FC<Props> = ({ onClose }) => {
+interface HoverPoint {
+  index: number;
+  x: number;
+  y: number;
+  rawTheta: number;
+  smoothedTheta: number;
+  timestamp: string;
+}
+
+export const CognitiveDashboard: React.FC<Props> = memo(({ onClose }) => {
   const { profile, exportLongitudinalDataset } = useLearnerProfile();
   const { lang } = useLanguage();
   const isEn = lang === 'en';
+
+  const [activeHoverPoint, setActiveHoverPoint] = useState<HoverPoint | null>(null);
 
   const report = useMemo(() => {
     return PsychometricsEngine.generateReport(profile.history || []);
@@ -25,13 +36,14 @@ export const CognitiveDashboard: React.FC<Props> = ({ onClose }) => {
     window.print();
   };
 
-  const radarDimensions = [
-    { key: 'gf', label: isEn ? 'Gf (Fluid Logic)' : 'Gf (流體推理)', val: report.constructs?.gf || 0.5, base: report.baselineConstructs?.gf || 0.5 },
-    { key: 'gv', label: isEn ? 'Gv (Visual Spatial)' : 'Gv (空間視覺)', val: report.constructs?.gv || 0.5, base: report.baselineConstructs?.gv || 0.5 },
-    { key: 'gsm', label: isEn ? 'Gsm (Working Memory)' : 'Gsm (工作記憶)', val: report.constructs?.gsm || 0.5, base: report.baselineConstructs?.gsm || 0.5 },
-    { key: 'inhibition', label: isEn ? 'Inhibition (Executive)' : '抑制控制 (執行功能)', val: report.constructs?.inhibition || 0.5, base: report.baselineConstructs?.inhibition || 0.5 },
-    { key: 'gq', label: isEn ? 'Gq (Quantitative)' : 'Gq (數量推理)', val: report.constructs?.gq || 0.5, base: report.baselineConstructs?.gq || 0.5 },
-  ];
+  // 🌟 使用 useMemo 固化維度定義，避免三角函數與雷達坐標無效重算
+  const radarDimensions = useMemo(() => [
+    { key: 'gf', label: isEn ? 'Gf (Fluid Logic)' : 'Gf (流體推理)', val: report.constructs?.gf ?? 0.5, base: report.baselineConstructs?.gf ?? 0.5 },
+    { key: 'gv', label: isEn ? 'Gv (Visual Spatial)' : 'Gv (空間視覺)', val: report.constructs?.gv ?? 0.5, base: report.baselineConstructs?.gv ?? 0.5 },
+    { key: 'gsm', label: isEn ? 'Gsm (Working Memory)' : 'Gsm (工作記憶)', val: report.constructs?.gsm ?? 0.5, base: report.baselineConstructs?.gsm ?? 0.5 },
+    { key: 'inhibition', label: isEn ? 'Inhibition (Executive)' : '抑制控制 (執行功能)', val: report.constructs?.inhibition ?? 0.5, base: report.baselineConstructs?.inhibition ?? 0.5 },
+    { key: 'gq', label: isEn ? 'Gq (Quantitative)' : 'Gq (數量推理)', val: report.constructs?.gq ?? 0.5, base: report.baselineConstructs?.gq ?? 0.5 },
+  ], [isEn, report.constructs, report.baselineConstructs]);
 
   const radarPoints = useMemo(() => {
     const size = 280;
@@ -41,20 +53,20 @@ export const CognitiveDashboard: React.FC<Props> = ({ onClose }) => {
 
     const currentCoords = radarDimensions.map((d, i) => {
       const angle = (Math.PI * 2 / total) * i - Math.PI / 2;
-      const r = radius * d.val;
+      const r = radius * Math.max(0.1, Math.min(1.0, d.val));
       return `${(center + r * Math.cos(angle)).toFixed(1)},${(center + r * Math.sin(angle)).toFixed(1)}`;
     }).join(' ');
 
     const baselineCoords = radarDimensions.map((d, i) => {
       const angle = (Math.PI * 2 / total) * i - Math.PI / 2;
-      const r = radius * d.base;
+      const r = radius * Math.max(0.1, Math.min(1.0, d.base));
       return `${(center + r * Math.cos(angle)).toFixed(1)},${(center + r * Math.sin(angle)).toFixed(1)}`;
     }).join(' ');
 
     return { size, center, radius, currentCoords, baselineCoords };
   }, [radarDimensions]);
 
-  // 繪製 IRT 信賴帶的多邊形路徑
+  // 繪製 IRT 信賴帶多邊形
   const ciBandPath = useMemo(() => {
     if (!report.trajectory || report.trajectory.length <= 1) return '';
     const upperPoints = report.trajectory.map((p, idx) => {
@@ -72,6 +84,8 @@ export const CognitiveDashboard: React.FC<Props> = ({ onClose }) => {
 
     return [...upperPoints, ...lowerPoints].join(' ');
   }, [report.trajectory]);
+
+  const hasHistory = (profile.history?.length || 0) > 0;
 
   return (
     <div className="w-full max-w-4xl mx-auto p-3 sm:p-6 bg-slate-950 text-slate-100 font-mono select-none print:bg-white print:text-slate-900 print:p-0">
@@ -109,7 +123,8 @@ export const CognitiveDashboard: React.FC<Props> = ({ onClose }) => {
           {onClose && (
             <button
               onClick={onClose}
-              className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 text-[9px] rounded font-bold cursor-pointer"
+              className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 text-[9px] rounded font-bold cursor-pointer transition active:scale-95"
+              aria-label="Close"
             >
               ✕
             </button>
@@ -119,49 +134,49 @@ export const CognitiveDashboard: React.FC<Props> = ({ onClose }) => {
 
       {/* 核心指標卡 */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">
-        <div className="bg-slate-900/70 print:bg-slate-50 border border-slate-800 print:border-slate-300 p-2.5 rounded-xl text-center">
+        <div className="bg-slate-900/70 print:bg-slate-50 border border-slate-800 print:border-slate-300 p-2.5 rounded-xl text-center shadow-sm">
           <div className="text-[8px] text-slate-400 print:text-slate-600 uppercase tracking-wider">
             {isEn ? 'Wechsler Scale IQ' : 'Wechsler 標尺 IQ'}
           </div>
           <div className="text-2xl sm:text-3xl font-black text-cyan-400 print:text-cyan-700 mt-0.5">
-            {report.overallIQ}
+            {hasHistory ? report.overallIQ : 100}
           </div>
-          <div className="text-[7px] text-slate-500 mt-0.5">SEM: ±{report.sem} (r_xx ≈ 0.92)</div>
+          <div className="text-[7px] text-slate-500 mt-0.5">SEM: ±{report.sem || 5.2} (r_xx ≈ 0.92)</div>
         </div>
 
-        <div className="bg-slate-900/70 print:bg-slate-50 border border-slate-800 print:border-slate-300 p-2.5 rounded-xl text-center">
+        <div className="bg-slate-900/70 print:bg-slate-50 border border-slate-800 print:border-slate-300 p-2.5 rounded-xl text-center shadow-sm">
           <div className="text-[8px] text-slate-400 print:text-slate-600 uppercase tracking-wider">
             {isEn ? 'Percentile Rank (PR)' : '常模百分位數'}
           </div>
           <div className="text-2xl sm:text-3xl font-black text-indigo-400 print:text-indigo-700 mt-0.5">
-            PR {report.percentileRank}
+            PR {hasHistory ? report.percentileRank : 50.0}
           </div>
           <div className="text-[7px] text-slate-500 mt-0.5">
-            {isEn ? 'Top' : '優於'} {Number((100 - report.percentileRank).toFixed(1))}%
+            {isEn ? 'Top' : '優於'} {hasHistory ? Number((100 - report.percentileRank).toFixed(1)) : 50.0}%
           </div>
         </div>
 
-        <div className="bg-slate-900/70 print:bg-slate-50 border border-slate-800 print:border-slate-300 p-2.5 rounded-xl text-center">
+        <div className="bg-slate-900/70 print:bg-slate-50 border border-slate-800 print:border-slate-300 p-2.5 rounded-xl text-center shadow-sm">
           <div className="text-[8px] text-slate-400 print:text-slate-600 uppercase tracking-wider">
             {isEn ? '95% Confidence Band' : '95% 信賴區間'}
           </div>
           <div className="text-xl sm:text-2xl font-black text-amber-400 print:text-amber-700 mt-1">
-            [{report.ci95[0]} - {report.ci95[1]}]
+            [{report.ci95?.[0] ?? 90} - {report.ci95?.[1] ?? 110}]
           </div>
           <div className="text-[7px] text-slate-500 mt-0.5">
             {isEn ? 'True Ability Bound' : '真實認知能力估計區間'}
           </div>
         </div>
 
-        <div className="bg-slate-900/70 print:bg-slate-50 border border-slate-800 print:border-slate-300 p-2.5 rounded-xl text-center">
+        <div className="bg-slate-900/70 print:bg-slate-50 border border-slate-800 print:border-slate-300 p-2.5 rounded-xl text-center shadow-sm">
           <div className="text-[8px] text-slate-400 print:text-slate-600 uppercase tracking-wider">
             {isEn ? 'Deduction Purity' : '純邏輯推演純度'}
           </div>
           <div className="text-2xl sm:text-3xl font-black text-emerald-400 print:text-emerald-700 mt-0.5">
-            {report.pureClearRate}%
+            {report.pureClearRate ?? 100}%
           </div>
           <div className="text-[7px] text-slate-500 mt-0.5">
-            {report.totalAttempts} {isEn ? 'Sessions Evaluated' : '次完整施測'}
+            {report.totalAttempts ?? 0} {isEn ? 'Sessions Evaluated' : '次完整施測'}
           </div>
         </div>
       </div>
@@ -169,7 +184,7 @@ export const CognitiveDashboard: React.FC<Props> = ({ onClose }) => {
       {/* 視覺化展演：CHC 雙層雷達圖 + IRT EMA 平滑曲線與 95% 信賴帶 */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
         {/* 左側：CHC 雷達圖 */}
-        <div className="bg-slate-900/40 print:bg-slate-50 border border-slate-800/80 print:border-slate-300 rounded-xl p-3 flex flex-col items-center justify-center">
+        <div className="bg-slate-900/40 print:bg-slate-50 border border-slate-800/80 print:border-slate-300 rounded-xl p-3 flex flex-col items-center justify-center relative shadow-sm">
           <div className="w-full flex justify-between items-center text-[8px] text-slate-400 print:text-slate-600 mb-1">
             <span className="font-bold tracking-wider uppercase">
               {isEn ? 'Adaptive CHC Radar' : '自適應 CHC 認知雷達'}
@@ -191,7 +206,7 @@ export const CognitiveDashboard: React.FC<Props> = ({ onClose }) => {
               const pts = radarDimensions.map((_, i) => {
                 const angle = (Math.PI * 2 / radarDimensions.length) * i - Math.PI / 2;
                 const r = radarPoints.radius * level;
-                return `${radarPoints.center + r * Math.cos(angle)},${radarPoints.center + r * Math.sin(angle)}`;
+                return `${(radarPoints.center + r * Math.cos(angle)).toFixed(1)},${(radarPoints.center + r * Math.sin(angle)).toFixed(1)}`;
               }).join(' ');
               return (
                 <polygon
@@ -209,8 +224,8 @@ export const CognitiveDashboard: React.FC<Props> = ({ onClose }) => {
               const angle = (Math.PI * 2 / radarDimensions.length) * i - Math.PI / 2;
               const x2 = radarPoints.center + radarPoints.radius * Math.cos(angle);
               const y2 = radarPoints.center + radarPoints.radius * Math.sin(angle);
-              const labelX = radarPoints.center + (radarPoints.radius + 20) * Math.cos(angle);
-              const labelY = radarPoints.center + (radarPoints.radius + 20) * Math.sin(angle);
+              const labelX = radarPoints.center + (radarPoints.radius + 22) * Math.cos(angle);
+              const labelY = radarPoints.center + (radarPoints.radius + 22) * Math.sin(angle);
 
               return (
                 <g key={d.key}>
@@ -230,6 +245,7 @@ export const CognitiveDashboard: React.FC<Props> = ({ onClose }) => {
               );
             })}
 
+            {/* 基準雷達多邊形 */}
             <polygon
               points={radarPoints.baselineCoords}
               fill="rgba(99, 102, 241, 0.15)"
@@ -238,6 +254,7 @@ export const CognitiveDashboard: React.FC<Props> = ({ onClose }) => {
               strokeDasharray="3 3"
             />
 
+            {/* 當前校準雷達多邊形 */}
             <polygon
               points={radarPoints.currentCoords}
               fill="rgba(56, 189, 248, 0.25)"
@@ -247,14 +264,14 @@ export const CognitiveDashboard: React.FC<Props> = ({ onClose }) => {
           </svg>
         </div>
 
-        {/* 右側：IRT θ 曲線 + 95% 信賴帶 */}
-        <div className="bg-slate-900/40 print:bg-slate-50 border border-slate-800/80 print:border-slate-300 rounded-xl p-3 flex flex-col justify-between">
+        {/* 右側：IRT θ 曲線 + 95% 信賴帶 + 浮窗互動 */}
+        <div className="bg-slate-900/40 print:bg-slate-50 border border-slate-800/80 print:border-slate-300 rounded-xl p-3 flex flex-col justify-between relative shadow-sm">
           <div className="flex justify-between items-center text-[8px] text-slate-400 print:text-slate-600 mb-2">
             <span className="font-bold tracking-wider uppercase">
               {isEn ? 'Smoothed IRT Ability (θ) & 95% Band' : 'IRT 能力值平滑曲線 (θ) 與 95% 信賴帶'}
             </span>
             {report.progress?.hasSufficientData && (
-              <span className={`px-1.5 py-0.2 rounded text-[6.5px] font-bold ${
+              <span className={`px-1.5 py-0.5 rounded text-[6.5px] font-bold ${
                 report.progress.isSignificant ? 'bg-emerald-950 border border-emerald-500 text-emerald-300' : 'bg-slate-800 text-slate-400'
               }`}>
                 {report.progress.isSignificant
@@ -264,54 +281,81 @@ export const CognitiveDashboard: React.FC<Props> = ({ onClose }) => {
             )}
           </div>
 
-          <div className="relative h-44 w-full flex items-end pb-4 pt-2 px-2 border-b border-l border-slate-800 print:border-slate-300">
+          <div 
+            className="relative h-44 w-full flex items-end pb-4 pt-2 px-2 border-b border-l border-slate-800 print:border-slate-300"
+            onMouseLeave={() => setActiveHoverPoint(null)}
+          >
             {report.trajectory && report.trajectory.length > 1 ? (
-              <svg className="w-full h-full overflow-visible" viewBox="0 0 100 100" preserveAspectRatio="none">
-                {/* 零水平參考線 */}
-                <line x1="0" y1="50" x2="100" y2="50" stroke="#475569" strokeWidth="0.8" strokeDasharray="3 3" />
+              <>
+                <svg className="w-full h-full overflow-visible" viewBox="0 0 100 100" preserveAspectRatio="none">
+                  {/* 零水平參考線 */}
+                  <line x1="0" y1="50" x2="100" y2="50" stroke="#475569" strokeWidth="0.8" strokeDasharray="3 3" />
 
-                {/* 95% 信賴陰影帶 */}
-                {ciBandPath && (
-                  <polygon
-                    points={ciBandPath}
-                    fill="rgba(56, 189, 248, 0.12)"
-                    stroke="none"
-                  />
-                )}
-
-                {/* EMA 平滑主曲線 */}
-                <polyline
-                  fill="none"
-                  stroke="#38bdf8"
-                  strokeWidth="2.2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  points={report.trajectory.map((p, idx) => {
-                    const x = (idx / (report.trajectory.length - 1)) * 100;
-                    const y = 50 - (p.smoothedTheta / 3.0) * 45;
-                    return `${x.toFixed(1)},${Math.max(2, Math.min(98, y)).toFixed(1)}`;
-                  }).join(' ')}
-                />
-
-                {/* 原始單題散點 */}
-                {report.trajectory.map((p, idx) => {
-                  const x = (idx / (report.trajectory.length - 1)) * 100;
-                  const y = 50 - (p.rawTheta / 3.0) * 45;
-                  return (
-                    <circle
-                      key={idx}
-                      cx={x}
-                      cy={Math.max(2, Math.min(98, y))}
-                      r="1.8"
-                      fill="#94a3b8"
-                      opacity="0.45"
+                  {/* 95% 信賴陰影帶 */}
+                  {ciBandPath && (
+                    <polygon
+                      points={ciBandPath}
+                      fill="rgba(56, 189, 248, 0.12)"
+                      stroke="none"
                     />
-                  );
-                })}
-              </svg>
+                  )}
+
+                  {/* EMA 平滑主曲線 */}
+                  <polyline
+                    fill="none"
+                    stroke="#38bdf8"
+                    strokeWidth="2.2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    points={report.trajectory.map((p, idx) => {
+                      const x = (idx / (report.trajectory.length - 1)) * 100;
+                      const y = 50 - (p.smoothedTheta / 3.0) * 45;
+                      return `${x.toFixed(1)},${Math.max(2, Math.min(98, y)).toFixed(1)}`;
+                    }).join(' ')}
+                  />
+
+                  {/* 原始單題散點與互動熱區 */}
+                  {report.trajectory.map((p, idx) => {
+                    const x = (idx / (report.trajectory.length - 1)) * 100;
+                    const y = 50 - (p.rawTheta / 3.0) * 45;
+                    const clampedY = Math.max(2, Math.min(98, y));
+                    return (
+                      <g key={idx}>
+                        <circle
+                          cx={x}
+                          cy={clampedY}
+                          r="2"
+                          fill="#94a3b8"
+                          className="hover:fill-cyan-300 hover:r-3 transition-all cursor-pointer"
+                          onMouseEnter={() => setActiveHoverPoint({
+                            index: idx + 1,
+                            x,
+                            y: clampedY,
+                            rawTheta: p.rawTheta,
+                            smoothedTheta: p.smoothedTheta,
+                            timestamp: p.timestamp || `#${idx + 1}`,
+                          })}
+                        />
+                      </g>
+                    );
+                  })}
+                </svg>
+
+                {/* 互動 Tooltip */}
+                {activeHoverPoint && (
+                  <div
+                    className="absolute z-20 px-2 py-1 bg-slate-900/95 border border-cyan-500 rounded text-[7.5px] font-mono text-cyan-200 pointer-events-none shadow-xl transform -translate-x-1/2 -translate-y-full mb-2"
+                    style={{ left: `${activeHoverPoint.x}%`, top: `${activeHoverPoint.y}%` }}
+                  >
+                    <div>Session: #{activeHoverPoint.index}</div>
+                    <div>Raw θ: {activeHoverPoint.rawTheta.toFixed(2)}</div>
+                    <div>EMA θ: {activeHoverPoint.smoothedTheta.toFixed(2)}</div>
+                  </div>
+                )}
+              </>
             ) : (
               <div className="w-full h-full flex items-center justify-center text-[8px] text-slate-500">
-                {isEn ? 'Complete more sessions to build longitudinal curve.' : '累積更多測驗數據以繪製成長曲線'}
+                {isEn ? 'Complete 2+ sessions to plot longitudinal growth curve.' : '完成 2 次以上施測以繪製縱向成長曲線'}
               </div>
             )}
           </div>
@@ -321,7 +365,7 @@ export const CognitiveDashboard: React.FC<Props> = ({ onClose }) => {
             <span className="text-cyan-400 print:text-cyan-700 font-bold">
               {report.progress?.hasSufficientData
                 ? (isEn ? report.progress.interpretation.en : report.progress.interpretation.zh)
-                : (isEn ? 'Building confidence model...' : '正在建立信賴區間模型...')}
+                : (isEn ? 'Calibrating confidence...' : '正在校準信賴區間...')}
             </span>
             <span>{report.trajectory?.[report.trajectory.length - 1]?.timestamp || (isEn ? 'Current' : '當前')}</span>
           </div>
@@ -367,4 +411,6 @@ export const CognitiveDashboard: React.FC<Props> = ({ onClose }) => {
       </div>
     </div>
   );
-};
+});
+
+CognitiveDashboard.displayName = 'CognitiveDashboard';
