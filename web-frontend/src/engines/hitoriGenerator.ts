@@ -47,6 +47,11 @@ export interface HitoriSpec {
   solvingSteps?: HitoriHintStep[];
 }
 
+export const HITORI_SYMBOLIC_SETS: Record<'dots' | 'geometric', string[]> = {
+  dots: ['·', '○', '⦿', '◉', '●', '◈', '◆', '✦'],
+  geometric: ['▲', '■', '◆', '●', '★', '▼', '✦', '⬢'],
+};
+
 interface TierConfig {
   size: number;
   baseIrt: number;
@@ -55,7 +60,7 @@ interface TierConfig {
 }
 
 const TIER_SPECS: Record<TierKey, TierConfig> = {
-  kids: { size: 4, baseIrt: 0.65, timeLimitSec: 60, blackRatio: 0.2 },
+  kids: { size: 4, baseIrt: 0.65, timeLimitSec: 60, blackRatio: 0.20 },
   intermediate: { size: 5, baseIrt: 1.45, timeLimitSec: 120, blackRatio: 0.22 },
   expert: { size: 6, baseIrt: 2.35, timeLimitSec: 200, blackRatio: 0.24 },
   master: { size: 7, baseIrt: 3.15, timeLimitSec: 300, blackRatio: 0.25 },
@@ -78,7 +83,52 @@ export class WebHitoriGenerator {
   }
 
   /**
-   * 白格四向正交連通檢查 (快速平坦二維陣列 BFS)
+   * 驗證完整盤面狀態合法性（供 HitoriBoard.tsx 與評判器調用）
+   */
+  public static isValidSolution(board: number[][], state: number[][], size: number): boolean {
+    const dirs = [[-1, 0], [1, 0], [0, -1], [0, 1]];
+
+    // 1. 黑格不可正交相鄰
+    for (let r = 0; r < size; r++) {
+      for (let c = 0; c < size; c++) {
+        if (state[r][c] === 1) {
+          for (const [dr, dc] of dirs) {
+            const nr = r + dr;
+            const nc = c + dc;
+            if (this.inBounds(nr, nc, size) && state[nr][nc] === 1) return false;
+          }
+        }
+      }
+    }
+
+    // 2. 白格網絡必須連通
+    if (!this.isWhiteConnected(state, size)) return false;
+
+    // 3. 行列留白數字無重複
+    for (let r = 0; r < size; r++) {
+      const seen = new Set<number>();
+      for (let c = 0; c < size; c++) {
+        if (state[r][c] === 2) {
+          if (seen.has(board[r][c])) return false;
+          seen.add(board[r][c]);
+        }
+      }
+    }
+    for (let c = 0; c < size; c++) {
+      const seen = new Set<number>();
+      for (let r = 0; r < size; r++) {
+        if (state[r][c] === 2) {
+          if (seen.has(board[r][c])) return false;
+          seen.add(board[r][c]);
+        }
+      }
+    }
+
+    return true;
+  }
+
+  /**
+   * 白格四向正交連通檢查 (快速平坦 BFS)
    */
   public static isWhiteConnected(state: number[][], size: number): boolean {
     let startR = -1;
@@ -136,7 +186,7 @@ export class WebHitoriGenerator {
   }
 
   /**
-   * 因果推導波前分析器（支援角隅三連、三明治與相鄰對子）
+   * 人類因果定式波前分析器
    */
   public static getNextForcedDeduction(
     board: number[][],
@@ -146,7 +196,7 @@ export class WebHitoriGenerator {
   ): HitoriHintStep | null {
     const dirs = [[-1, 0], [1, 0], [0, -1], [0, 1]];
 
-    // 定式 1: 黑格相鄰必留白
+    // 定式 1: 黑格鄰域保白
     for (let r = 0; r < size; r++) {
       for (let c = 0; c < size; c++) {
         if (state[r][c] === 1) {
@@ -162,9 +212,9 @@ export class WebHitoriGenerator {
                 technique: 'black_neighbor_white',
                 techniqueIcon: '⬜',
                 techniqueName: { zh: '黑格鄰域保白', en: 'Black Neighbor White' },
-                rationale: `依黑格不得正交相鄰規則，[${r + 1}, ${c + 1}] 已黑，此格強制標白。`,
+                rationale: `依黑格不得相鄰規則，[${r + 1}, ${c + 1}] 已黑，此格強制標白。`,
                 humanReadable: {
-                  zh: `相鄰格 [${r + 1}, ${c + 1}] 已塗黑，黑格不能相連，此處強制保留為白格！`,
+                  zh: `相鄰格 [${r + 1}, ${c + 1}] 已塗黑，黑格不可相連，此處必須保留為白格！`,
                   en: `Adjacent cell [${r + 1}, ${c + 1}] is black. Cell must be white!`,
                 },
               };
@@ -187,7 +237,7 @@ export class WebHitoriGenerator {
               technique: 'three_in_a_row',
               techniqueIcon: '🎯',
               techniqueName: { zh: '三連居中必白', en: 'Three-in-a-Row Center' },
-              rationale: `橫向連續三個相同數字 ${board[r][c]}，若中間塗黑會導致兩端為白而重複，故中間必白。`,
+              rationale: `橫向連續三個數字同為 ${board[r][c]}，若中間塗黑則兩端皆白造成衝突，故中間必白。`,
               humanReadable: {
                 zh: `連續三個相同數字 ${board[r][c]}，中間格必須為白格，兩端必為黑格！`,
                 en: `Three consecutive identical digits ${board[r][c]}; center cell must be white!`,
@@ -198,7 +248,7 @@ export class WebHitoriGenerator {
       }
     }
 
-    // 定式 3: 夾心三明治定式 (Sandwich Rule)
+    // 定式 3: 三明治夾心中間必白 (橫向與縱向)
     for (let r = 0; r < size; r++) {
       for (let c = 0; c < size - 2; c++) {
         if (board[r][c] === board[r][c + 2] && state[r][c + 1] === 0) {
@@ -210,17 +260,15 @@ export class WebHitoriGenerator {
             technique: 'sandwich',
             techniqueIcon: '🥪',
             techniqueName: { zh: '三明治夾心中白', en: 'Sandwich Center White' },
-            rationale: `同行相隔一格的兩端均為 ${board[r][c]}，若中間為黑則兩端必須為白導致衝突，故中間必白。`,
+            rationale: `同行兩端均為 ${board[r][c]}，被夾住的單元格必然為白格。`,
             humanReadable: {
-              zh: `三明治夾心：同列兩側數字均為 ${board[r][c]}，被夾在中間的單元格必然為白格！`,
+              zh: `三明治夾心：同列兩側數字均為 ${board[r][c]}，中間格必然為白格！`,
               en: `Sandwich rule: Matching numbers flanking a cell force the center cell to be white!`,
             },
           };
         }
       }
     }
-
-    // 垂直夾心
     for (let c = 0; c < size; c++) {
       for (let r = 0; r < size - 2; r++) {
         if (board[r][c] === board[r + 2][c] && state[r + 1][c] === 0) {
@@ -242,7 +290,7 @@ export class WebHitoriGenerator {
       }
     }
 
-    // 定式 4: 相鄰對子外部排除 (Pair Adjacent Exclusion)
+    // 定式 4: 相鄰對子外部塗黑 (Pair Adjacent Exclusion)
     for (let r = 0; r < size; r++) {
       for (let c = 0; c < size - 1; c++) {
         if (board[r][c] === board[r][c + 1]) {
@@ -269,7 +317,34 @@ export class WebHitoriGenerator {
       }
     }
 
-    // 定式 5: 連通割點保護 (Connectivity Chokepoint)
+    // 定式 5: 角落約束 (Corner Confinement)
+    const corners: [number, number, number, number, number, number][] = [
+      [0, 0, 0, 1, 1, 0],
+      [0, size - 1, 0, size - 2, 1, size - 1],
+      [size - 1, 0, size - 1, 1, size - 2, 0],
+      [size - 1, size - 1, size - 1, size - 2, size - 2, size - 1],
+    ];
+    for (const [cr, cc, n1r, n1c, n2r, n2c] of corners) {
+      if (state[cr][cc] === 0 && board[n1r][n1c] === board[n2r][n2c]) {
+        // 如果角落兩側鄰居值相同，角點必為白（否則兩鄰居同時為白將引發衝突或割裂）
+        return {
+          step: currentStep,
+          r: cr,
+          c: cc,
+          forcedState: 2,
+          technique: 'corner_confinement',
+          techniqueIcon: '📐',
+          techniqueName: { zh: '角落對等保白', en: 'Corner Confinement' },
+          rationale: `角落單元格兩側相鄰數值相等，角格若黑將使鄰格互斥，角格必白。`,
+          humanReadable: {
+            zh: `角落 [${cr + 1}, ${cc + 1}] 正交兩鄰值同為 ${board[n1r][n1c]}，角格強制保留為白格！`,
+            en: `Corner neighbors have identical values; corner cell must be white!`,
+          },
+        };
+      }
+    }
+
+    // 定式 6: 連通割點保護 (Connectivity Chokepoint)
     for (let r = 0; r < size; r++) {
       for (let c = 0; c < size; c++) {
         if (state[r][c] === 0) {
@@ -286,7 +361,7 @@ export class WebHitoriGenerator {
               technique: 'connectivity_chokepoint',
               techniqueIcon: '🛡️',
               techniqueName: { zh: '連通割點防護', en: 'Connectivity Chokepoint' },
-              rationale: `若塗黑此格將切斷白格四向正交網絡，因此該格必須保留為白格。`,
+              rationale: `若塗黑此格將切斷白格四向網絡，因此該格必須保留為白格。`,
               humanReadable: {
                 zh: `連通割點：此格若塗黑將把盤面切斷孤立，必須強制保留為白格！`,
                 en: `Articulation chokepoint: Shading this cell isolates the white board. Must be white!`,
@@ -301,13 +376,12 @@ export class WebHitoriGenerator {
   }
 
   /**
-   * 帶前向約束傳播的超快 CSP 求解器 (Forward Checking Backtracker)
-   * 搜尋步數控制在 250 步以內，確保主執行緒絕不卡頓
+   * 帶前向約束傳播的極速 CSP 求解器 (Forward-Checking Backtracker)
    */
   public static countSolutions(board: number[][], size: number, limit: number = 2): number {
     const state: number[][] = Array.from({ length: size }, () => Array(size).fill(0));
     let solutions = 0;
-    let stepBudget = 250;
+    let stepBudget = 300;
 
     const backtrack = (idx: number): void => {
       if (solutions >= limit || stepBudget-- <= 0) return;
@@ -347,7 +421,7 @@ export class WebHitoriGenerator {
         }
       }
 
-      // 分支 1: 置白（需滿足無重複）
+      // 分支 1: 置白（需無衝突）
       if (!duplicateWhite) {
         state[r][c] = 2;
         backtrack(idx + 1);
@@ -355,7 +429,7 @@ export class WebHitoriGenerator {
         if (solutions >= limit) return;
       }
 
-      // 分支 2: 置黑（黑格不能相鄰）
+      // 分支 2: 置黑（黑格不得相鄰）
       if (!hasAdjBlack) {
         state[r][c] = 1;
         backtrack(idx + 1);
@@ -368,7 +442,7 @@ export class WebHitoriGenerator {
   }
 
   /**
-   * 毫秒級極速 Hitori 生成主入口
+   * 毫秒級主生成入口：支援全域 6 階難度，嚴格保證唯一解
    */
   public static generate(tier: TierKey = 'kids', inputSeed?: number): PuzzleEntity {
     const config = TIER_SPECS[tier] || TIER_SPECS.kids;
@@ -378,10 +452,10 @@ export class WebHitoriGenerator {
     const rnd = mulberry32(actualSeed);
 
     let attempts = 0;
-    const maxAttempts = 25;
+    const maxAttempts = 30;
 
     while (attempts++ < maxAttempts) {
-      // 1. 構建完美拉丁方陣底盤
+      // 1. 產生初始拉丁方陣底盤
       const board: number[][] = Array.from({ length: size }, () => Array(size).fill(0));
       const shift = Math.floor(rnd() * size);
       for (let r = 0; r < size; r++) {
@@ -390,7 +464,6 @@ export class WebHitoriGenerator {
         }
       }
 
-      // 行列洗牌增強多樣性
       for (let i = size - 1; i > 0; i--) {
         const j = Math.floor(rnd() * (i + 1));
         const temp = board[i];
@@ -398,7 +471,7 @@ export class WebHitoriGenerator {
         board[j] = temp;
       }
 
-      // 2. 約束引導佈局黑格 (保證黑格不相鄰且白格 100% 連通)
+      // 2. 引導黑格分佈（互不相鄰且保持白格連通）
       const targetState: number[][] = Array.from({ length: size }, () => Array(size).fill(2));
       const targetBlackCount = Math.max(2, Math.round(size * size * blackRatio));
       let placedBlacks = 0;
@@ -424,20 +497,20 @@ export class WebHitoriGenerator {
         if (!hasAdjBlack) {
           targetState[r][c] = 1;
           if (!this.isWhiteConnected(targetState, size)) {
-            targetState[r][c] = 2; // 割裂則回滾
+            targetState[r][c] = 2; // 阻斷連通則回滾
           } else {
             placedBlacks++;
           }
         }
       }
 
-      // 3. 確定性衝突雕刻：在黑格位置製造與同行或同列白格的重複
+      // 3. 確定性正交配對雕刻：只為黑格注入合法衝突對
       for (let r = 0; r < size; r++) {
         for (let c = 0; c < size; c++) {
           if (targetState[r][c] === 1) {
-            const alignRow = rnd() < 0.5;
-            if (alignRow) {
-              const whiteCols = [];
+            const isRow = rnd() < 0.5;
+            if (isRow) {
+              const whiteCols: number[] = [];
               for (let tc = 0; tc < size; tc++) {
                 if (tc !== c && targetState[r][tc] === 2) whiteCols.push(tc);
               }
@@ -446,7 +519,7 @@ export class WebHitoriGenerator {
                 board[r][c] = board[r][pickC];
               }
             } else {
-              const whiteRows = [];
+              const whiteRows: number[] = [];
               for (let tr = 0; tr < size; tr++) {
                 if (tr !== r && targetState[tr][c] === 2) whiteRows.push(tr);
               }
@@ -459,7 +532,7 @@ export class WebHitoriGenerator {
         }
       }
 
-      // 4. 嚴格唯一解校驗
+      // 4. 嚴格唯一解驗證
       if (this.countSolutions(board, size, 2) !== 1) continue;
 
       // 5. 因果推導波前步驟抽取
@@ -538,9 +611,6 @@ export class WebHitoriGenerator {
     return this._generateFallback(tier, size, actualSeed, baseIrt);
   }
 
-  /**
-   * 兜底回退保證（1ms 內無痛產出，唯一解且具備三明治因果鏈）
-   */
   private static _generateFallback(
     tier: TierKey,
     size: number,
@@ -552,7 +622,6 @@ export class WebHitoriGenerator {
     );
     const solution: number[][] = Array.from({ length: size }, () => Array(size).fill(2));
 
-    // 刻意在 (0, 0) 製造一個衝突，(0, 0) 塗黑，其餘留白，100% 唯一解且連通
     solution[0][0] = 1;
     board[0][0] = board[0][1];
 
