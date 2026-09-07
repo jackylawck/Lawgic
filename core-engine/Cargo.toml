@@ -9,25 +9,23 @@ description = "World-class zero-copy deterministic Sudoku propagation engine"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+# 鎖定成熟穩定的 wasm-bindgen 綁定庫
 wasm-bindgen = "0.2.92"
 
-# 🌟 引入純前端無鎖輕量隨機發生器（比標準庫更輕、更可重現、零系統調用）
-rand_core = "0.6.4"
-
 [profile.release]
-# 🌟 極限效能優化等級
+# 🌟 極限速度優化 (針對數獨 CSP 位元回溯徹底內聯)
 opt-level = 3
-# 🌟 跨 Crate 全局胖連結優化 (Fat LTO)，徹底內聯 81 格 Peer Table
+# 🌟 肥大跨 Crate 全局連結時優化 (Fat LTO)
 lto = "fat"
-# 🌟 單代碼生成單元，最大化暫存器排程與死碼消除
+# 🌟 單代碼生成單元，最大化全域暫存器排程與死碼消除
 codegen-units = 1
-# 🌟 中止異常展開，縮小 WASM 體積並消除分支跳轉損耗
+# 🌟 移除 unwinding 展開機制，體積驟降且消除分支預測損耗
 panic = "abort"
-# 🌟 完全剝離符號與除錯資訊
+# 🌟 徹底剝離所有除錯符號
 strip = "symbols"
-# 🌟 開啟溢位檢查以內聯算術運算，release 模式下消除邊界檢查
+# 🌟 關閉 release 模式下的溢位安全檢查以完全消除邊界開銷
 overflow-checks = false
 
 [package.metadata.wasm-pack.profile.release]
-# 🌟 關閉外掛 wasm-opt，杜絕 CI 環境 validator feature 衝突
+# 🌟 核心：由 rustc 自身全權接管優化，完全關閉外掛 wasm-opt，杜絕 validator 錯誤
 wasm-opt = false
