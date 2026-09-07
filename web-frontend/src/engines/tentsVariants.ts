@@ -1,5 +1,5 @@
 // web-frontend/src/engines/tentsVariants.ts
-import { PuzzleEntity } from '../generated';
+import { PuzzleEntity, TierKey } from '../generated';
 
 export interface CellCoord {
   r: number;
@@ -11,7 +11,6 @@ export interface ITentsRuleStrategy {
   readonly displayNameZh: string;
   readonly displayNameEn: string;
   getAvailableCampNeighbors(tree: CellCoord, rows: number, cols: number): CellCoord[];
-  // 兼顧舊版呼叫 hasCollision 與新版 hasTentCollision
   hasCollision(r: number, c: number, board: number[][], rows: number, cols: number): boolean;
   hasTentCollision(r: number, c: number, board: number[][], rows: number, cols: number): boolean;
   getRequiredTentsPerTree(tree: CellCoord): number;
@@ -19,19 +18,27 @@ export interface ITentsRuleStrategy {
 }
 
 /**
- * 經典正交帳篷規則：帳篷必須在樹木上下左右 4 格，帳篷間 8 向（包含對角）互不接觸
+ * 經典正交帳篷規則：帳篷必須在樹木正交 4 鄰格，帳篷間 8 向（含對角）嚴禁相碰
  */
 export class StandardTentsStrategy implements ITentsRuleStrategy {
   readonly variantName: 'standard' | 'diagonal' = 'standard';
   readonly displayNameZh: string = '經典正交帳篷';
   readonly displayNameEn: string = 'Classic Orthogonal';
 
+  private static readonly ORTH_DIRS: [number, number][] = [
+    [-1, 0], [1, 0], [0, -1], [0, 1]
+  ];
+
   getAvailableCampNeighbors(tree: CellCoord, rows: number, cols: number): CellCoord[] {
-    return [
-      [-1, 0], [1, 0], [0, -1], [0, 1]
-    ]
-      .map(([dr, dc]) => ({ r: tree.r + dr, c: tree.c + dc }))
-      .filter((p) => p.r >= 0 && p.r < rows && p.c >= 0 && p.c < cols);
+    const coords: CellCoord[] = [];
+    for (const [dr, dc] of StandardTentsStrategy.ORTH_DIRS) {
+      const nr = tree.r + dr;
+      const nc = tree.c + dc;
+      if (nr >= 0 && nr < rows && nc >= 0 && nc < cols) {
+        coords.push({ r: nr, c: nc });
+      }
+    }
+    return coords;
   }
 
   hasCollision(r: number, c: number, board: number[][], rows: number, cols: number): boolean {
@@ -56,9 +63,6 @@ export class StandardTentsStrategy implements ITentsRuleStrategy {
     return 1;
   }
 
-  /**
-   * WPF 標準答案鍵：每行第一頂帳篷所在的 1-based 欄號；第 10 欄記為 '0'，若整行無帳篷記為 '-'
-   */
   generateWpfAnswerKey(solutionTents: CellCoord[], rows: number, cols: number): string {
     let key = '';
     for (let r = 0; r < rows; r++) {
@@ -84,12 +88,16 @@ export class StandardTentsStrategy implements ITentsRuleStrategy {
 }
 
 /**
- * 全向對角帳篷變體：帳篷可置於樹木 8 鄰格；但帳篷與帳篷之間僅允許對角接觸，正交嚴禁相碰
+ * 全向對角帳篷變體：帳篷可置於樹木 8 鄰格；帳篷間僅允許對角接觸，正交嚴禁相碰
  */
 export class DiagonalTentsStrategy implements ITentsRuleStrategy {
   readonly variantName: 'standard' | 'diagonal' = 'diagonal';
   readonly displayNameZh: string = '全向對角帳篷';
   readonly displayNameEn: string = 'Diagonal Allowed';
+
+  private static readonly ORTH_DIRS: [number, number][] = [
+    [-1, 0], [1, 0], [0, -1], [0, 1]
+  ];
 
   getAvailableCampNeighbors(tree: CellCoord, rows: number, cols: number): CellCoord[] {
     const coords: CellCoord[] = [];
@@ -107,8 +115,7 @@ export class DiagonalTentsStrategy implements ITentsRuleStrategy {
   }
 
   hasCollision(r: number, c: number, board: number[][], rows: number, cols: number): boolean {
-    const orthogonalDirs = [[-1, 0], [1, 0], [0, -1], [0, 1]];
-    for (const [dr, dc] of orthogonalDirs) {
+    for (const [dr, dc] of DiagonalTentsStrategy.ORTH_DIRS) {
       const nr = r + dr;
       const nc = c + dc;
       if (nr >= 0 && nr < rows && nc >= 0 && nc < cols && board[nr][nc] === 1) {
@@ -127,12 +134,24 @@ export class DiagonalTentsStrategy implements ITentsRuleStrategy {
   }
 
   generateWpfAnswerKey(solutionTents: CellCoord[], rows: number, cols: number): string {
-    return new StandardTentsStrategy().generateWpfAnswerKey(solutionTents, rows, cols);
+    return TentsStrategyFactory.get('standard').generateWpfAnswerKey(solutionTents, rows, cols);
   }
 }
 
 /**
- * 健壯的謎題跨平台傳輸文字編解碼器 (URL-Safe / WPF Competition Format)
+ * 帳篷策略工廠單例
+ */
+export class TentsStrategyFactory {
+  private static standard = new StandardTentsStrategy();
+  private static diagonal = new DiagonalTentsStrategy();
+
+  public static get(variant: 'standard' | 'diagonal' = 'standard'): ITentsRuleStrategy {
+    return variant === 'diagonal' ? this.diagonal : this.standard;
+  }
+}
+
+/**
+ * 跨平台文字編解碼器 (相容 WPF/WPC 規格與自訂種子協議)
  */
 export class TentsInterchangeCodec {
   public static exportToText(puzzle: PuzzleEntity): string {
@@ -140,6 +159,8 @@ export class TentsInterchangeCodec {
     const variant = spec.variant || 'standard';
     const rows = spec.rows || 0;
     const cols = spec.cols || 0;
+    const seed = spec.seed ?? 1000;
+    const tier = puzzle.tier || 'kids';
 
     const treeStr = (spec.trees || [])
       .map((t: any) => (Array.isArray(t) ? `${t[0]},${t[1]}` : `${t.r},${t.c}`))
@@ -147,13 +168,15 @@ export class TentsInterchangeCodec {
     const rowStr = (spec.rowCounts || spec.rowClues || []).join(',');
     const colStr = (spec.colCounts || spec.colClues || []).join(',');
 
-    return `TENTS_V2|${rows}x${cols}|${variant}|T=${treeStr}|R=${rowStr}|C=${colStr}`;
+    return `TENTS_V3|${rows}x${cols}|${variant}|${tier}|S=${seed}|T=${treeStr}|R=${rowStr}|C=${colStr}`;
   }
 
   public static importFromText(text: string): {
     rows: number;
     cols: number;
     variant: 'standard' | 'diagonal';
+    tier: TierKey;
+    seed: number;
     trees: CellCoord[];
     rowCounts: number[];
     colCounts: number[];
@@ -170,7 +193,19 @@ export class TentsInterchangeCodec {
 
       const variant = parts[2] === 'diagonal' ? 'diagonal' : 'standard';
 
-      const treeSegment = parts[3].replace(/^T=/, '');
+      // 支援 V3 (含 tier 與 seed) 與舊版 V2
+      let tier: TierKey = 'kids';
+      let seed = 1000;
+      let treePartIdx = 3;
+
+      if (parts[0] === 'TENTS_V3') {
+        tier = (parts[3] as TierKey) || 'kids';
+        const seedPart = parts[4].replace(/^S=/, '');
+        seed = parseInt(seedPart, 10) || 1000;
+        treePartIdx = 5;
+      }
+
+      const treeSegment = parts[treePartIdx].replace(/^T=/, '');
       const trees: CellCoord[] = treeSegment.length > 0
         ? treeSegment.split(';').map((pair) => {
             const [r, c] = pair.split(',').map((n) => parseInt(n, 10));
@@ -178,59 +213,64 @@ export class TentsInterchangeCodec {
           })
         : [];
 
-      const rowSegment = parts[4].replace(/^R=/, '');
+      const rowSegment = parts[treePartIdx + 1].replace(/^R=/, '');
       const rowCounts = rowSegment.length > 0
         ? rowSegment.split(',').map((n) => parseInt(n, 10))
         : [];
 
-      const colSegment = parts[5].replace(/^C=/, '');
+      const colSegment = parts[treePartIdx + 2].replace(/^C=/, '');
       const colCounts = colSegment.length > 0
         ? colSegment.split(',').map((n) => parseInt(n, 10))
         : [];
 
       if (rowCounts.length !== rows || colCounts.length !== cols) return null;
 
-      return { rows, cols, variant, trees, rowCounts, colCounts };
+      return { rows, cols, variant, tier, seed, trees, rowCounts, colCounts };
     } catch {
       return null;
     }
   }
 }
 
-const STORAGE_KEY = 'logicore_saved_puzzles_v2';
+const STORAGE_KEY = 'logicore_saved_tents_vault';
 
 /**
- * 具備容量防護與自動精簡的本地題庫管理器
+ * 具有完整深度還原與容量配額防護的帳篷本地金庫
  */
 export class LocalPuzzleLibrary {
   public static savePuzzle(puzzle: PuzzleEntity): boolean {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
-      const list: any[] = raw ? JSON.parse(raw) : [];
+      const list: PuzzleEntity[] = raw ? JSON.parse(raw) : [];
 
-      // 補回 cognitiveLoad 解決 TS2741，並補齊相容欄位
+      const spec = puzzle.puzzle as any;
       const compactSnapshot: PuzzleEntity = {
         id: puzzle.id,
-        category: puzzle.category,
-        engine_type: puzzle.engine_type,
+        category: 'spatial_logic',
+        engine_type: 'tents',
         tier: puzzle.tier,
         checksum: puzzle.checksum,
         puzzle: {
-          rows: (puzzle.puzzle as any).rows,
-          cols: (puzzle.puzzle as any).cols,
-          trees: (puzzle.puzzle as any).trees,
-          rowCounts: (puzzle.puzzle as any).rowCounts,
-          colCounts: (puzzle.puzzle as any).colCounts,
-          rowClues: (puzzle.puzzle as any).rowClues || (puzzle.puzzle as any).rowCounts,
-          colClues: (puzzle.puzzle as any).colClues || (puzzle.puzzle as any).colCounts,
-          variant: (puzzle.puzzle as any).variant || 'standard',
-          seed: (puzzle.puzzle as any).seed,
+          rows: spec.rows,
+          cols: spec.cols,
+          trees: spec.trees,
+          rowCounts: spec.rowCounts,
+          colCounts: spec.colCounts,
+          rowClues: spec.rowClues || spec.rowCounts,
+          colClues: spec.colClues || spec.colCounts,
+          solutionTents: spec.solutionTents,
+          treeTentPairs: spec.treeTentPairs,
+          hintCascades: spec.hintCascades || [],
+          solvingSteps: spec.solvingSteps || [],
+          variant: spec.variant || 'standard',
+          seed: spec.seed,
+          tier: puzzle.tier,
         } as any,
         solution: puzzle.solution,
         metrics: puzzle.metrics,
         cognitiveLoad: puzzle.cognitiveLoad || {
           spatial: 0.8,
-          numeric: 0.5,
+          numeric: 0.4,
           workingMemory: 0.6,
           inhibition: 0.8,
         },
@@ -243,7 +283,7 @@ export class LocalPuzzleLibrary {
         list.unshift(compactSnapshot);
       }
 
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(list.slice(0, 40)));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(list.slice(0, 30)));
       return true;
     } catch (e) {
       console.warn('LocalStorage quota exceeded or unavailable:', e);
