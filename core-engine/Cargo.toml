@@ -9,23 +9,25 @@ description = "World-class zero-copy deterministic Sudoku propagation engine"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-# 鎖定成熟穩定的 wasm-bindgen 綁定庫
 wasm-bindgen = "0.2.92"
 
+# 🌟 引入純前端無鎖輕量隨機發生器（比標準庫更輕、更可重現、零系統調用）
+rand_core = "0.6.4"
+
 [profile.release]
-# 🌟 極限速度優化 (針對數獨 CSP 位元回溯徹底內聯)
+# 🌟 極限效能優化等級
 opt-level = 3
-# 🌟 肥大跨 Crate 全局連結時優化 (LTO)
+# 🌟 跨 Crate 全局胖連結優化 (Fat LTO)，徹底內聯 81 格 Peer Table
 lto = "fat"
-# 🌟 單代碼生成單元，最大化全域暫存器排程與死碼消除
+# 🌟 單代碼生成單元，最大化暫存器排程與死碼消除
 codegen-units = 1
-# 🌟 移除 unwinding 展開機制，體積驟降且杜絕異常跳轉分支預測損耗
+# 🌟 中止異常展開，縮小 WASM 體積並消除分支跳轉損耗
 panic = "abort"
-# 🌟 徹底剝離所有除錯符號
+# 🌟 完全剝離符號與除錯資訊
 strip = "symbols"
+# 🌟 開啟溢位檢查以內聯算術運算，release 模式下消除邊界檢查
+overflow-checks = false
 
 [package.metadata.wasm-pack.profile.release]
-# 🌟 根治 CI 跨環境 wasm-validator 衝突的最穩解法：
-# 由 rustc 自身的 opt-level=3 與 lto="fat" 全權接管二進制優化，
-# 禁用外掛 wasm-opt，秒級建置且杜絕 feature 不匹配錯誤。
+# 🌟 關閉外掛 wasm-opt，杜絕 CI 環境 validator feature 衝突
 wasm-opt = false
