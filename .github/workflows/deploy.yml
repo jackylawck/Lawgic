@@ -45,7 +45,7 @@ jobs:
         with:
           version: 'latest'
 
-      # 🌟 2. 確定性 WASM 核心構建（移除違法參數 --no-wasm-opt，依賴 Cargo.toml 自動生效）
+      # 🌟 2. 確定性 WASM 核心構建
       - name: Build & Optimize WASM Core
         run: |
           mkdir -p web-frontend/src/wasm
@@ -53,13 +53,11 @@ jobs:
           wasm-pack build --target web --release --out-dir ../web-frontend/src/wasm
           rm -f ../web-frontend/src/wasm/.gitignore
 
-      # 🌟 3. 配置 Node.js 與 npm 快取
+      # 🌟 3. 配置 Node.js 24
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 24
-          cache: 'npm'
-          cache-dependency-path: 'web-frontend/package-lock.json'
 
       # 🌟 4. 前端依賴自適應安裝
       - name: Install & Verify Frontend Dependencies
@@ -80,7 +78,7 @@ jobs:
           NODE_ENV: production
         run: |
           npm run build
-          # 禁用 GitHub Pages Jekyll 引擎（避免底線檔案被略過）
+          # 禁用 GitHub Pages Jekyll 引擎
           touch dist/.nojekyll
           # 建立 404.html 支援 SPA 深層連結刷新
           cp dist/index.html dist/404.html
