@@ -3,9 +3,11 @@ import { PuzzleEntity, TierKey } from '../generated';
 
 export type ExtendedTierKey = TierKey;
 
-export type DominoBorderState = 'none' | 'boundary' | 'connected';
+// 0: 無/未定, 1: 相連成骨牌 (connected), 2: 阻斷牆 (boundary)
+export type DominoBorderState = 0 | 1 | 2;
 
 export interface Domino {
+  id?: number;
   val1: number;
   val2: number;
 }
@@ -34,7 +36,7 @@ export interface DominoHintStep {
   c2: number;
   val1: number;
   val2: number;
-  forcedType: 'connected' | 'boundary';
+  forcedType: 1 | 2; // 1: 必然連成骨牌, 2: 必然劃分隔離牆
   evidenceCells: [number, number][];
   technique: DominoTechnique;
   techniqueIcon: string;
@@ -54,10 +56,10 @@ export interface DominoesSpec {
   cols: number;
   maxPip: number;
   grid: number[][];
-  dominoes: Domino[];
+  dominoes: (Domino & { id: number })[];
   solutionBorders: {
-    hBorders: boolean[][]; // (rows - 1) x cols
-    vBorders: boolean[][]; // rows x (cols - 1)
+    hBorders: boolean[][]; // 水平邊界陣列
+    vBorders: boolean[][]; // 垂直邊界陣列
   };
   totalDominoes: number;
   solutionDominoes: PlacedDomino[];
@@ -94,11 +96,12 @@ function mulberry32(a: number) {
 }
 
 export class WebDominoesGenerator {
-  public static generateDominoSet(maxPip: number): Domino[] {
-    const set: Domino[] = [];
+  public static generateDominoSet(maxPip: number): (Domino & { id: number })[] {
+    const set: (Domino & { id: number })[] = [];
+    let id = 1;
     for (let i = 0; i <= maxPip; i++) {
       for (let j = i; j <= maxPip; j++) {
-        set.push({ val1: i, val2: j });
+        set.push({ id: id++, val1: i, val2: j });
       }
     }
     return set;
@@ -108,28 +111,36 @@ export class WebDominoesGenerator {
     return v1 <= v2 ? `${v1}-${v2}` : `${v2}-${v1}`;
   }
 
+  /**
+   * 精準對齊 DominoesBoard.tsx 調用簽名:
+   * WebDominoesGenerator.getNextForcedDeduction(rows, cols, grid, hBorders, vBorders, dominoes)
+   */
   public static getNextForcedDeduction(
+    rows: number,
+    cols: number,
     grid: number[][],
     hBorders: DominoBorderState[][],
     vBorders: DominoBorderState[][],
-    rows: number,
-    cols: number,
-    maxPip: number,
+    dominoes: Domino[] | (Domino & { id: number })[],
     stepIndex: number = 1
   ): DominoHintStep | null {
+    if (!grid || !hBorders || !vBorders) return null;
+
     const placedGrid = Array.from({ length: rows }, () => Array(cols).fill(-1));
     const usedDominoes = new Set<string>();
 
     let currentId = 1;
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
-        if (c + 1 < cols && vBorders[r]?.[c] === 'connected') {
+        // 水平連通骨牌（hBorders[r][c] === 1）
+        if (c < cols - 1 && hBorders[r]?.[c] === 1) {
           placedGrid[r][c] = currentId;
           placedGrid[r][c + 1] = currentId;
           usedDominoes.add(this.getDominoKey(grid[r][c], grid[r][c + 1]));
           currentId++;
         }
-        if (r + 1 < rows && hBorders[r]?.[c] === 'connected') {
+        // 垂直連通骨牌（vBorders[r][c] === 1）
+        if (r < rows - 1 && vBorders[r]?.[c] === 1) {
           placedGrid[r][c] = currentId;
           placedGrid[r + 1][c] = currentId;
           usedDominoes.add(this.getDominoKey(grid[r][c], grid[r + 1][c]));
@@ -141,8 +152,9 @@ export class WebDominoesGenerator {
     const matches = new Map<string, { r1: number; c1: number; r2: number; c2: number }[]>();
     const checkAndAdd = (r1: number, c1: number, r2: number, c2: number, isVertical: boolean) => {
       if (placedGrid[r1][c1] !== -1 || placedGrid[r2][c2] !== -1) return;
-      if (isVertical && hBorders[r1]?.[c1] === 'boundary') return;
-      if (!isVertical && vBorders[r1]?.[c1] === 'boundary') return;
+      // 狀態 2 代表隔斷牆
+      if (isVertical && vBorders[r1]?.[c1] === 2) return;
+      if (!isVertical && hBorders[r1]?.[c1] === 2) return;
 
       const key = this.getDominoKey(grid[r1][c1], grid[r2][c2]);
       if (usedDominoes.has(key)) return;
@@ -164,19 +176,23 @@ export class WebDominoesGenerator {
         if (placedGrid[r][c] !== -1) continue;
 
         const freeNeighbors: [number, number][] = [];
-        if (c + 1 < cols && vBorders[r]?.[c] !== 'boundary' && placedGrid[r][c + 1] === -1) {
+        // 右 (檢查水平邊界 hBorders[r][c])
+        if (c + 1 < cols && hBorders[r]?.[c] !== 2 && placedGrid[r][c + 1] === -1) {
           const key = this.getDominoKey(grid[r][c], grid[r][c + 1]);
           if (!usedDominoes.has(key)) freeNeighbors.push([r, c + 1]);
         }
-        if (c - 1 >= 0 && vBorders[r]?.[c - 1] !== 'boundary' && placedGrid[r][c - 1] === -1) {
+        // 左
+        if (c - 1 >= 0 && hBorders[r]?.[c - 1] !== 2 && placedGrid[r][c - 1] === -1) {
           const key = this.getDominoKey(grid[r][c], grid[r][c - 1]);
           if (!usedDominoes.has(key)) freeNeighbors.push([r, c - 1]);
         }
-        if (r + 1 < rows && hBorders[r]?.[c] !== 'boundary' && placedGrid[r + 1][c] === -1) {
+        // 下 (檢查垂直邊界 vBorders[r][c])
+        if (r + 1 < rows && vBorders[r]?.[c] !== 2 && placedGrid[r + 1][c] === -1) {
           const key = this.getDominoKey(grid[r][c], grid[r + 1][c]);
           if (!usedDominoes.has(key)) freeNeighbors.push([r + 1, c]);
         }
-        if (r - 1 >= 0 && hBorders[r - 1]?.[c] !== 'boundary' && placedGrid[r - 1][c] === -1) {
+        // 上
+        if (r - 1 >= 0 && vBorders[r - 1]?.[c] !== 2 && placedGrid[r - 1][c] === -1) {
           const key = this.getDominoKey(grid[r][c], grid[r - 1][c]);
           if (!usedDominoes.has(key)) freeNeighbors.push([r - 1, c]);
         }
@@ -191,7 +207,7 @@ export class WebDominoesGenerator {
             c2: nc,
             val1: grid[r][c],
             val2: grid[nr][nc],
-            forcedType: 'connected',
+            forcedType: 1, // 1: connected (必然連成骨牌)
             evidenceCells: [[r, c], [nr, nc]],
             technique: 'corner_dead_end_forcing',
             techniqueIcon: '🎯',
@@ -219,7 +235,7 @@ export class WebDominoesGenerator {
           c2,
           val1: v1,
           val2: v2,
-          forcedType: 'connected',
+          forcedType: 1, // 1: connected (必然連成骨牌)
           evidenceCells: [[r1, c1], [r2, c2]],
           technique: 'unique_pair_localization',
           techniqueIcon: '💎',
@@ -289,8 +305,9 @@ export class WebDominoesGenerator {
       const grid = Array.from({ length: rows }, () => Array(cols).fill(-1));
       const solutionDominoes: PlacedDomino[] = [];
 
-      const hBorders = Array.from({ length: rows - 1 }, () => Array(cols).fill(true));
-      const vBorders = Array.from({ length: rows }, () => Array(cols - 1).fill(true));
+      // 構建標準解答邊界
+      const hBorders = Array.from({ length: rows }, () => Array(cols - 1).fill(false));
+      const vBorders = Array.from({ length: rows - 1 }, () => Array(cols).fill(false));
 
       for (let i = 0; i < totalCount; i++) {
         const tile = tiling[i];
@@ -305,14 +322,14 @@ export class WebDominoesGenerator {
 
         if (tile.r1 === tile.r2) {
           const minC = Math.min(tile.c1, tile.c2);
-          vBorders[tile.r1][minC] = false;
+          hBorders[tile.r1][minC] = true; // 水平相連
         } else {
           const minR = Math.min(tile.r1, tile.r2);
-          hBorders[minR][tile.c1] = false;
+          vBorders[minR][tile.c1] = true; // 垂直相連
         }
 
         solutionDominoes.push({
-          id: i + 1,
+          id: dom.id,
           val1,
           val2,
           r1: tile.r1,
@@ -323,23 +340,23 @@ export class WebDominoesGenerator {
       }
 
       const solvingSteps: DominoHintStep[] = [];
-      const curHBorders: DominoBorderState[][] = Array.from({ length: rows - 1 }, () => Array(cols).fill('none'));
-      const curVBorders: DominoBorderState[][] = Array.from({ length: rows }, () => Array(cols - 1).fill('none'));
+      const curHBorders: DominoBorderState[][] = Array.from({ length: rows }, () => Array(cols - 1).fill(0));
+      const curVBorders: DominoBorderState[][] = Array.from({ length: rows - 1 }, () => Array(cols).fill(0));
 
       let stepNum = 1;
-      let nextStep = this.getNextForcedDeduction(grid, curHBorders, curVBorders, rows, cols, maxPip, stepNum);
+      let nextStep = this.getNextForcedDeduction(rows, cols, grid, curHBorders, curVBorders, allDominoes, stepNum);
 
       while (nextStep && stepNum <= totalCount) {
         solvingSteps.push(nextStep);
         if (nextStep.r1 === nextStep.r2) {
           const minC = Math.min(nextStep.c1, nextStep.c2);
-          curVBorders[nextStep.r1][minC] = 'connected';
+          curHBorders[nextStep.r1][minC] = 1;
         } else {
           const minR = Math.min(nextStep.r1, nextStep.r2);
-          curHBorders[minR][nextStep.c1] = 'connected';
+          curVBorders[minR][nextStep.c1] = 1;
         }
         stepNum++;
-        nextStep = this.getNextForcedDeduction(grid, curHBorders, curVBorders, rows, cols, maxPip, stepNum);
+        nextStep = this.getNextForcedDeduction(rows, cols, grid, curHBorders, curVBorders, allDominoes, stepNum);
       }
 
       const pureDeductionRate = Number((solvingSteps.length / totalCount).toFixed(2));
@@ -411,8 +428,8 @@ export class WebDominoesGenerator {
     const grid = Array.from({ length: rows }, () => Array(cols).fill(0));
     const solutionDominoes: PlacedDomino[] = [];
 
-    const hBorders = Array.from({ length: rows - 1 }, () => Array(cols).fill(true));
-    const vBorders = Array.from({ length: rows }, () => Array(cols - 1).fill(true));
+    const hBorders = Array.from({ length: rows }, () => Array(cols - 1).fill(false));
+    const vBorders = Array.from({ length: rows - 1 }, () => Array(cols).fill(false));
 
     let domIdx = 0;
     for (let r = 0; r < rows; r++) {
@@ -421,9 +438,9 @@ export class WebDominoesGenerator {
           const dom = allDominoes[domIdx];
           grid[r][c] = dom.val1;
           grid[r][c + 1] = dom.val2;
-          vBorders[r][c] = false;
+          hBorders[r][c] = true;
           solutionDominoes.push({
-            id: domIdx + 1,
+            id: dom.id,
             val1: dom.val1,
             val2: dom.val2,
             r1: r,
