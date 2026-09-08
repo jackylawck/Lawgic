@@ -84,7 +84,6 @@ interface TierConfig {
   timeLimitSec: number;
 }
 
-// 支援完整 6 階 Tier 配置，對齊全域常模標準
 const TIER_SPECS: Record<TierKey, TierConfig> = {
   kids: { rows: 4, cols: 4, clueRemovalRate: 0.15, minForcedChain: 4, baseIrt: 0.65, timeLimitSec: 90 },
   intermediate: { rows: 5, cols: 5, clueRemovalRate: 0.28, minForcedChain: 6, baseIrt: 1.45, timeLimitSec: 150 },
@@ -94,7 +93,7 @@ const TIER_SPECS: Record<TierKey, TierConfig> = {
   ultimate: { rows: 10, cols: 10, clueRemovalRate: 0.58, minForcedChain: 15, baseIrt: 4.35, timeLimitSec: 600 },
 };
 
-export function mulberry32(a: number) {
+function mulberry32(a: number) {
   return function () {
     let t = (a += 0x6d2b79f5);
     t = Math.imul(t ^ (t >>> 15), t | 1);
@@ -190,9 +189,6 @@ export class WebSlitherlinkGenerator {
     return visitedEdges === totalEdges;
   }
 
-  /**
-   * 拓撲引導非自交連續環生長演算法（確保內部元胞連通且無對角自切點）
-   */
   private static generateValidLoopSymmetric(
     rows: number,
     cols: number,
@@ -225,7 +221,6 @@ export class WebSlitherlinkGenerator {
       });
 
       if (hasAdj) {
-        // 防止 2x2 對角自接觸破壞單一連續環
         let diagConflict = false;
         const diagOffsets = [[-1, -1], [-1, 1], [1, -1], [1, 1]];
         for (const [dr, dc] of diagOffsets) {
@@ -319,9 +314,6 @@ export class WebSlitherlinkGenerator {
     return Number(((turnRatio * 0.7) + (density * 0.3)).toFixed(3));
   }
 
-  /**
-   * 帶 300 步短路熔斷的前向剪枝唯一解求解器（杜絕搜尋樹無序展開）
-   */
   public static countSolutions(
     rows: number,
     cols: number,
@@ -335,7 +327,6 @@ export class WebSlitherlinkGenerator {
     let solutions = 0;
     let stepBudget = 300;
 
-    // 優先決策有線索單元格周圍的邊（線索優先級排序）
     const edgePrioritySet = new Set<string>();
     const allEdges: { type: EdgeType; r: number; c: number }[] = [];
 
@@ -359,7 +350,6 @@ export class WebSlitherlinkGenerator {
       }
     }
 
-    // 補齊其餘邊界
     for (let r = 0; r <= rows; r++) {
       for (let c = 0; c < cols; c++) {
         const k = `h_${r}_${c}`;
@@ -409,7 +399,6 @@ export class WebSlitherlinkGenerator {
       const p1: [number, number] = [e.r, e.c];
       const p2: [number, number] = e.type === 'h' ? [e.r, e.c + 1] : [e.r + 1, e.c];
 
-      // 分支 1: 置為連線
       if (ptDeg[p1[0]][p1[1]] < 2 && ptDeg[p2[0]][p2[1]] < 2) {
         if (e.type === 'h') curH[e.r][e.c] = true;
         else curV[e.r][e.c] = true;
@@ -465,7 +454,6 @@ export class WebSlitherlinkGenerator {
         ptDeg[p2[0]][p2[1]]--;
       }
 
-      // 分支 2: 置為空白 / 標叉
       backtrack(idx + 1);
     };
 
@@ -513,11 +501,11 @@ export class WebSlitherlinkGenerator {
     }
 
     // 2. 角落 3 定式 (Corner 3)
-    const corners: [number, number, [EdgeType, number, number][], [EdgeType, number, number][]][] = [
-      [0, 0, [['h', 0, 0], ['v', 0, 0]], [['h', 1, 0], ['v', 0, 1]]],
-      [0, cols - 1, [['h', 0, cols - 1], ['v', 0, cols]], [['h', 1, cols - 1], ['v', 0, cols - 1]]],
-      [rows - 1, 0, [['h', rows, 0], ['v', rows - 1, 0]], [['h', rows - 1, 0], ['v', rows - 1, 1]]],
-      [rows - 1, cols - 1, [['h', rows, cols - 1], ['v', rows - 1, cols]], [['h', rows - 1, cols - 1], ['v', rows - 1, cols - 1]]],
+    const corners: [number, number, [EdgeType, number, number][]][] = [
+      [0, 0, [['h', 0, 0], ['v', 0, 0]]],
+      [0, cols - 1, [['h', 0, cols - 1], ['v', 0, cols]]],
+      [rows - 1, 0, [['h', rows, 0], ['v', rows - 1, 0]]],
+      [rows - 1, cols - 1, [['h', rows, cols - 1], ['v', rows - 1, cols]]],
     ];
 
     for (const [cr, cc, outerEdges] of corners) {
@@ -787,9 +775,6 @@ export class WebSlitherlinkGenerator {
     return { hEdges, vEdges };
   }
 
-  /**
-   * 毫秒級主生成入口：支援全域 6 階難度，嚴格保證唯一解
-   */
   public static generate(tier: TierKey = 'kids', inputSeed?: number): PuzzleEntity {
     const config = TIER_SPECS[tier] || TIER_SPECS.kids;
     const { rows, cols, clueRemovalRate, minForcedChain, baseIrt, timeLimitSec } = config;
@@ -833,7 +818,6 @@ export class WebSlitherlinkGenerator {
       }
       if (!hasAnchor) puzzleClues[0][0] = fullClues[0][0];
 
-      // 嚴格驗證唯一解（限制 300 步短路熔斷，杜絕多解盤面）
       if (this.countSolutions(rows, cols, puzzleClues, 2) !== 1) {
         continue;
       }
@@ -898,7 +882,6 @@ export class WebSlitherlinkGenerator {
       };
     }
 
-    // 尺寸適配的健全 Fallback
     return this._generateFallback(tier, rows, cols, seed, config.baseIrt, config.timeLimitSec);
   }
 
