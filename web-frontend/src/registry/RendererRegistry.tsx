@@ -17,67 +17,120 @@ export interface BaseBoardProps {
   [key: string]: any;
 }
 
-// 輔助函式：相容 named export 與 default export，防範動態載入失敗
-const safeLazy = (importFn: () => Promise<any>, exportName: string) => {
-  return lazy(() =>
-    importFn().then((m) => {
-      const Component = m[exportName] || m.default;
-      if (!Component) {
-        throw new Error(`Component ${exportName} not exported properly.`);
-      }
-      return { default: Component };
-    })
-  );
+/**
+ * 健壯的動態載入器：
+ * 1. 相容 named export 與 default export
+ * 2. 內建 3 次指數退避重試，抵抗弱網與 Service Worker 快取更新造成的 Chunk 載入中斷
+ */
+const safeLazyWithRetry = (importFn: () => Promise<any>, exportName: string, retries = 3) => {
+  return lazy(() => {
+    const run = (attemptsLeft: number): Promise<{ default: React.ComponentType<any> }> => {
+      return importFn()
+        .then((m) => {
+          const Component = m[exportName] || m.default;
+          if (!Component) {
+            throw new Error(`Component "${exportName}" is not properly exported.`);
+          }
+          return { default: Component };
+        })
+        .catch((err) => {
+          if (attemptsLeft <= 1) {
+            console.error(`[RendererRegistry] Failed to load chunk for "${exportName}" after retries:`, err);
+            throw err;
+          }
+          return new Promise((resolve) => {
+            setTimeout(() => {
+              resolve(run(attemptsLeft - 1));
+            }, 300 * (4 - attemptsLeft));
+          });
+        });
+    };
+    return run(retries);
+  });
 };
 
-// 代碼分割載入全套 18 款謎題組件
-const MazeBoard = safeLazy(() => import('../components/MazeBoard'), 'MazeBoard');
-const SudokuBoard = safeLazy(() => import('../components/SudokuBoard'), 'SudokuBoard');
-const NonogramBoard = safeLazy(() => import('../components/NonogramBoard'), 'NonogramBoard');
-const NurikabeBoard = safeLazy(() => import('../components/NurikabeBoard'), 'NurikabeBoard');
-const SkyscraperBoard = safeLazy(() => import('../components/SkyscraperBoard'), 'SkyscraperBoard');
-const HashiBoard = safeLazy(() => import('../components/HashiBoard'), 'HashiBoard');
-const KropkiBoard = safeLazy(() => import('../components/KropkiBoard'), 'KropkiBoard');
-const SlitherlinkBoard = safeLazy(() => import('../components/SlitherlinkBoard'), 'SlitherlinkBoard');
-const TentsBoard = safeLazy(() => import('../components/TentsBoard'), 'TentsBoard');
-const LightUpBoard = safeLazy(() => import('../components/LightUpBoard'), 'LightUpBoard');
-const FutoshikiBoard = safeLazy(() => import('../components/FutoshikiBoard'), 'FutoshikiBoard');
-const HitoriBoard = safeLazy(() => import('../components/HitoriBoard'), 'HitoriBoard');
-const KakuroBoard = safeLazy(() => import('../components/KakuroBoard'), 'KakuroBoard');
-const MasyuBoard = safeLazy(() => import('../components/MasyuBoard'), 'MasyuBoard');
-const DominoesBoard = safeLazy(() => import('../components/DominoesBoard'), 'DominoesBoard');
-const HeyawakeBoard = safeLazy(() => import('../components/HeyawakeBoard'), 'HeyawakeBoard');
-const YajilinBoard = safeLazy(() => import('../components/YajilinBoard'), 'YajilinBoard');
-const ShikakuBoard = safeLazy(() => import('../components/ShikakuBoard'), 'ShikakuBoard');
+// 代碼分割載入全套 18 款謎題組件（精確包含副檔名，防範 Rollup 解析歧義）
+const MazeBoard = safeLazyWithRetry(() => import('../components/MazeBoard'), 'MazeBoard');
+const SudokuBoard = safeLazyWithRetry(() => import('../components/SudokuBoard'), 'SudokuBoard');
+const NonogramBoard = safeLazyWithRetry(() => import('../components/NonogramBoard'), 'NonogramBoard');
+const NurikabeBoard = safeLazyWithRetry(() => import('../components/NurikabeBoard'), 'NurikabeBoard');
+const SkyscraperBoard = safeLazyWithRetry(() => import('../components/SkyscraperBoard'), 'SkyscraperBoard');
+const HashiBoard = safeLazyWithRetry(() => import('../components/HashiBoard'), 'HashiBoard');
+const KropkiBoard = safeLazyWithRetry(() => import('../components/KropkiBoard'), 'KropkiBoard');
+const SlitherlinkBoard = safeLazyWithRetry(() => import('../components/SlitherlinkBoard'), 'SlitherlinkBoard');
+const TentsBoard = safeLazyWithRetry(() => import('../components/TentsBoard'), 'TentsBoard');
+const LightUpBoard = safeLazyWithRetry(() => import('../components/LightUpBoard'), 'LightUpBoard');
+const FutoshikiBoard = safeLazyWithRetry(() => import('../components/FutoshikiBoard'), 'FutoshikiBoard');
+const HitoriBoard = safeLazyWithRetry(() => import('../components/HitoriBoard'), 'HitoriBoard');
+const KakuroBoard = safeLazyWithRetry(() => import('../components/KakuroBoard'), 'KakuroBoard');
+const MasyuBoard = safeLazyWithRetry(() => import('../components/MasyuBoard'), 'MasyuBoard');
+const DominoesBoard = safeLazyWithRetry(() => import('../components/DominoesBoard'), 'DominoesBoard');
+const HeyawakeBoard = safeLazyWithRetry(() => import('../components/HeyawakeBoard'), 'HeyawakeBoard');
+const YajilinBoard = safeLazyWithRetry(() => import('../components/YajilinBoard'), 'YajilinBoard');
+const ShikakuBoard = safeLazyWithRetry(() => import('../components/ShikakuBoard'), 'ShikakuBoard');
 
-export const CognitiveDashboard = safeLazy(
+export const CognitiveDashboard = safeLazyWithRetry(
   () => import('../components/CognitiveDashboard'),
   'CognitiveDashboard'
 );
 
+// 國際賽事全別名註冊矩陣 (Alias Mapping)
 export const RENDERERS: Record<string, React.ComponentType<any>> = {
   maze: MazeBoard,
+
   sudoku: SudokuBoard,
+
   nonogram: NonogramBoard,
   picross: NonogramBoard,
+  griddlers: NonogramBoard,
+
   nurikabe: NurikabeBoard,
+
   skyscraper: SkyscraperBoard,
+  skyscrapers: SkyscraperBoard,
+
   hashi: HashiBoard,
   hashiwokakero: HashiBoard,
+  bridges: HashiBoard,
+
   kropki: KropkiBoard,
+  kropki_dots: KropkiBoard,
+
   slitherlink: SlitherlinkBoard,
+  fences: SlitherlinkBoard,
+  loop: SlitherlinkBoard,
+
   tents: TentsBoard,
   tentstrees: TentsBoard,
+  'tents-and-trees': TentsBoard,
+  tents_and_trees: TentsBoard,
+
   lightup: LightUpBoard,
   akari: LightUpBoard,
+
   futoshiki: FutoshikiBoard,
+  futo: FutoshikiBoard,
+  hutosiki: FutoshikiBoard,
+
   hitori: HitoriBoard,
+
   kakuro: KakuroBoard,
+  cross_sums: KakuroBoard,
+
   masyu: MasyuBoard,
+  pearl: MasyuBoard,
+
   dominoes: DominoesBoard,
+  domino: DominoesBoard,
+
   heyawake: HeyawakeBoard,
+  heya: HeyawakeBoard,
+
   yajilin: YajilinBoard,
+  arrow_loop: YajilinBoard,
+
   shikaku: ShikakuBoard,
+  divide_by_squares: ShikakuBoard,
 };
 
 interface PuzzleRendererProps {
@@ -95,35 +148,39 @@ const BoardLoadingFallback: React.FC = () => (
 );
 
 export const PuzzleRenderer: React.FC<PuzzleRendererProps> = ({ puzzle, tournamentMode = false }) => {
-  const normalizedType = puzzle?.engine_type?.toLowerCase().trim() || '';
-  const Component = RENDERERS[normalizedType];
+  const normalizedType = useMemo(() => {
+    return puzzle?.engine_type?.toLowerCase().trim().replace(/[\s-_]+/g, '_') || '';
+  }, [puzzle?.engine_type]);
 
-  // 全方位規格轉接與資料歸一化 (Normalization)
+  // 支援直接映射與底線/破折號通用降級查詢
+  const Component = useMemo(() => {
+    return RENDERERS[normalizedType] || RENDERERS[normalizedType.replace(/_/g, '')];
+  }, [normalizedType]);
+
+  // 規格歸一化 (Normalization)
   const normalizedProps = useMemo(() => {
     if (!puzzle) return null;
 
     const rawAny = puzzle as any;
-    const spec = (puzzle.puzzle && typeof puzzle.puzzle === 'object') ? (puzzle.puzzle as any) : {};
-    
-    // 萃取維度 (安全相容 spec 與 raw 上的屬性)
+    const spec = puzzle.puzzle && typeof puzzle.puzzle === 'object' ? (puzzle.puzzle as any) : {};
+
+    // 萃取維度
     const rows = Number(spec.rows || spec.height || spec.size || rawAny.size || 6);
     const cols = Number(spec.cols || spec.width || spec.size || rawAny.size || 6);
     const size = Math.max(rows, cols);
 
-    // 萃取難度標籤，優先使用最外層確認過的 tier
+    // 難度標籤萃取
     const activeTier = String(puzzle.tier || spec.tier || spec.difficulty || 'kids');
 
-    // 萃取題目數據 (同時相容 clues 與 grid)
+    // 題目與解答數據抽取 (確保陣列或物件非 undefined)
     const clues = spec.clues !== undefined ? spec.clues : (rawAny.clues !== undefined ? rawAny.clues : spec.grid);
     const grid = spec.grid !== undefined ? spec.grid : (rawAny.grid !== undefined ? rawAny.grid : spec.clues);
     const solution = puzzle.solution !== undefined ? puzzle.solution : spec.solution;
 
     return {
-      // 展開原始 spec
       ...spec,
-      // 確保基礎核心欄位精準覆蓋，不被 spec 內部的 undefined 污染
       puzzleData: puzzle,
-      puzzle: spec, // 許多 Board 習慣以 props.puzzle 取用內部數據
+      puzzle: spec,
       rawEntity: puzzle,
       clues,
       grid,
@@ -133,7 +190,7 @@ export const PuzzleRenderer: React.FC<PuzzleRendererProps> = ({ puzzle, tourname
       size,
       tier: activeTier,
       difficulty: activeTier,
-      tournamentMode: !!tournamentMode,
+      tournamentMode: Boolean(tournamentMode),
       seed: spec.seed || (puzzle.metrics as any)?.seed,
     };
   }, [puzzle, tournamentMode]);
@@ -144,12 +201,14 @@ export const PuzzleRenderer: React.FC<PuzzleRendererProps> = ({ puzzle, tourname
         <div className="text-base mb-1">⚠️</div>
         <div className="font-bold uppercase tracking-wider mb-1">[Engine Missing]</div>
         <div className="text-[11px] text-slate-300">
-          Renderer not found for engine type: <span className="text-rose-300 font-bold">&quot;{puzzle?.engine_type}&quot;</span>
+          Renderer not found for engine type:{' '}
+          <span className="text-rose-300 font-bold">&quot;{puzzle?.engine_type}&quot;</span>
         </div>
       </div>
     );
   }
 
+  // 以 puzzle.id 作為核心 key，確保題目切換時組件狀態完整重新掛載
   return (
     <Suspense fallback={<BoardLoadingFallback />}>
       <Component key={puzzle.id || `${normalizedType}_${normalizedProps.tier}`} {...normalizedProps} />
