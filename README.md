@@ -38,12 +38,13 @@
 ### 架構特色
 * **WASM 零拷貝記憶體與查表常數加速**：核心數獨運算模組全面以 Rust 編寫並編譯為 WebAssembly，具備編譯期預算靜態鄰居查表（LUT）與共享記憶體視圖（Zero-Copy Memory View），實現超低功耗與次毫秒級狀態收斂。
 * **零等待啟動 + 漸進時間切片（Time-Sliced Engine）**：首屏啟動 0ms 秒開，背景透過非同步時間切片（Time-Slicing）平滑合成高階題目，徹底杜絕主執行緒掉幀。
-* **數學級唯一解證書（Exact Cover Uniqueness Engine）**：拒絕「算力不夠即判定唯一」的偽科學。數獨、數織與多米諾全面實裝基於回溯剪枝與二分匹配的約束求解器，數學證明解空間基數精確為 1，杜絕多解殘局。
-* **二維全域泛洪與遞迴前瞻反證（Lookahead Deductive Chains）**：數織與多米諾導入多層級沙盒遞迴推導，數獨實裝雙向 X-Wing、全向數對與純定式反證探針，提供真實因果軌跡，拒絕黑盒子暴力 DFS。
+* **數學級唯一解證書（Exact Cover Uniqueness Engine）**：拒絕「算力不夠即判定唯一」的偽科學。數獨、數織、多米諾與數橋全面實裝基於 MRV 啟發式回溯剪枝與二分匹配的約束求解器，數學證明解空間基數精確為 1，杜絕多解殘局與超時作弊。
+* **圖論咽喉連通性與前向容量擠壓（Deep Topological & Arithmetic Forcing）**：數橋實裝正統 Tarjan $O(V+E)$ 割邊滿配雙橋強制，多米諾引入數值感知二分匹配與行列雙重殘餘容量檢驗；數獨實裝雙向 X-Wing 與全向數對，數織導入二維泛洪反證探針。
+* **結構化棋譜反證因果樹（Structured Contradiction Trees）**：反證法不再是黑盒子！在數橋與多米諾中完整輸出「假設前提 ➔ 連鎖演繹 ➔ 容量崩潰/圖分裂死鎖」的對局譜級結構節點，支援前端動態高亮連動。
 * **後設認知對抗與心流波浪（Metacognitive Resistance & Cognitive Wave）**：空間迷宮導入質數碎形、雙入口時間黑洞、心智流血量（Visual Regret）與視覺-最優重疊率驗證（$<40\%$），中段難度具備 $\ge 1.45\times$ 嚴格相位增益，徹底打破貪婪直覺與超節點圖論壓縮。
 * **空間推理綜合指數（Spatial Composite Index, SCI）**：依據 CHC 認知架構量化「拓撲迴路掌控力（Eulerian Loop Control）」、「平面分割適應力（Planar Partitioning）」與「正交射線覆蓋力（Ray Tracing）」，輸出臨床常模標度分（Scaled 1~19）與個人化弱點訓練建議。
-* **神經回饋賽後病理切片（Post-Mortem Analytics）**：賽後不僅記錄成績，更提供「迷宮悔恨熱力圖」、「致命欺騙航點（Deception Waypoints）」高亮檢視，以及對比「雙軌最優幽靈（Optimal Ghost）」，將解題轉化為自我學習迴路。
-* **三階因果提示鏈（Causal Hint Ladder）**：拒絕直接揭曉答案，依序提供「Level 1 焦點啟發 ➔ Level 2 拓撲因果/反鏈分支 ➔ Level 3 必然步驟鎖定」，保留完整的認知頓悟（Aha! Moment）。
+* **神經回饋賽後病理切片（Post-Mortem Analytics）**：賽後不僅記錄成績，更提供「迷宮悔恨熱力圖」、「致命欺騙航點（Deception Waypoints）」高亮檢視、數橋「首度猜測錨點標記」，以及對比「雙軌最優幽靈（Optimal Ghost）」，將解題轉化為自我學習迴路。
+* **三階因果提示鏈與自由無猜模式（Causal Hint Ladder & Free Pure-Logic Mode）**：提示依序提供「焦點啟發 ➔ 拓撲因果 ➔ 必然鎖定」；無猜模式解綁機器固定順序，允許選手在當前所有合法強制步驟中自由擇一，兼顧純邏輯與自主心流。
 * **WPF 規範賽事模式與零信任防偽簽章（Zero-Trust Receipt）**：一鍵開啟賽事模式，鎖定盤面禁止重新生成與提示，通關後透過 Web Crypto API 原生硬體加速生成 SHA-256 數位簽章與常數時間核驗，確保賽事防偽與成績公信力。
 * **全封閉離線 PWA 體驗**：整合具備 1.8 秒超時熔斷保護與 WebAssembly 二進制快取特化之 Service Worker，配合 iOS 動態島與底部 Safe Area 邊界適配，支援手機、平板與桌面端原生全螢幕離線遊玩。
 
@@ -53,13 +54,13 @@
 
 | 代號 | 遊戲名稱 | 核心能力維度 (CHC) | 演算法與賽事級特點 |
 | :--- | :--- | :--- | :--- |
-| `maze` | **空間迷宮** | 空間導航、心智心圖 | 質數動態網格碎形、雙入口時間黑洞、視覺直線性後悔值、雙胞胎地標悖論、重疊率 $<40\%$ 逆向驗證、Boss 二階段精神污染 |
+| `maze` | **空間迷宮** | 空間導航、心智心圖 | **v8 終極屠神版**：質數動態網格碎形、雙入口時間黑洞、視覺直線性後悔值、雙胞胎地標悖論、重疊率 $<40\%$ 逆向驗證、Boss 二階段精神污染 |
 | `sudoku` | **數獨魔陣** | 約束傳播、工作記憶 | Rust/WASM 零拷貝引擎、MRV 位元剪枝、全向 Naked/Hidden Pairs、雙向 X-Wing 魚形定式、純定式 Lookahead-3 演繹反證探針 |
-| `nonogram` | **像素數織** | 離散斷面掃描、衝動抑制 | 全向量化 Bitmask DP 單行交集、二維全域泛洪反證、DAG 依賴樹、Master Key 咽喉雪崩、400px 逐行光波斜向綻放、50 步 Undo 堆疊 |
-| `dominoes` | **骨牌矩陣** | 二維鋪砌、全域配對覆蓋 | 圖論二分圖最大匹配奇偶排除、動態遞迴反證鏈（DFS Dynamic Chains）、全域唯一解證明、漸進邊界釘定備援 |
+| `nonogram` | **像素數織** | 離散斷面掃描、衝動抑制 | **v5.5 WPC 認證版**：全向量化 Bitmask DP 單行交集、二維全域泛洪反證、DAG 依賴樹、Master Key 咽喉雪崩、400px 逐行光波斜向綻放、50 步 Undo 堆疊 |
+| `dominoes` | **骨牌矩陣** | 二維鋪砌、全域配對覆蓋 | **v6 Gold 終極公理版**：數值感知二分匹配瓶頸割裂、MRV 前置剪枝無預算作弊、結構化棋譜反證鏈、行列雙重殘餘容量檢驗、邊角優先釘定與 32px 擴展抗干擾熱區 |
+| `hashi` | **星際數橋** | 拓撲連通、生成樹度數 | **v4 命題官微雕版**：泊松圓盤四向張力均勻度、真 Tarjan 割邊雙橋暴力美學、前向最大容量擠壓（Max Capacity Fail）吃滿深度反證探針、連續純度光譜、42px 防漂移觸控外圈 |
 | `nurikabe` | **暗夜數牆** | 平面連通、圖論割點 | 多聯骨牌自由擴散（面積 1~7）、2×2 黑池紅色脈衝定位、點點候選標記 |
 | `skyscraper` | **摩天透視** | 3D 心理旋轉、空間透視 | 4 面邊界視線滿足度即時反饋、立體高度推演 |
-| `hashi` | **星際數橋** | 拓撲連通、生成樹度數 | 180° 點對稱盤面、正交防交叉剪枝、孤島閉環檢測 |
 | `kropki` | **黑白雙星** | 相鄰差比、數理關係 | 白點連續數（差 1）與黑點倍數（2:1）交叉約束傳播 |
 | `slitherlink` | **迴路封閉** | 歐拉迴路、頂點度數約束 | 點網格拖曳畫線、0/3 經典定式推進、子環防早斷檢測 |
 | `tents` | **帳篷扎營** | 二分圖匹配、8-鄰域幾何 | 雙向抽屜原理閉鎖器、雙子樹角隅互斥破局器、Kuhn-Munkres 雙射唯一驗證 |
@@ -78,11 +79,12 @@
 
 ### Architecture Highlights
 * **Zero-Copy WASM Core**: Computationally intensive solvers are written in Rust and compiled to WebAssembly, featuring compile-time static lookup tables (PEERS_TABLE) and zero-copy shared array memory mapping.
-* **Exact Cover Uniqueness Engine**: Mathematical certainty replacing heuristic timeouts. Sudoku, Nonogram, and Dominoes feature exact backtracking solvers and bipartite matching proofs ensuring puzzle solution cardinality equals exactly 1.
-* **Recursive Lookahead Proofs**: Multilevel sandbox contradiction probing across Nonogram and Dominoes, paired with bidirectional X-Wing and Naked/Hidden Pairs in Sudoku, eliminating opaque brute-force solvers.
+* **Exact Cover Uniqueness Engine**: Mathematical certainty replacing heuristic timeouts. Sudoku, Nonogram, Dominoes, and Hashi feature exact MRV backtracking solvers and value-constrained bipartite matching proofs ensuring puzzle solution cardinality equals exactly 1.
+* **Topological Chokepoints & Arithmetic Squeezing**: Hashi incorporates true Tarjan $O(V+E)$ cut-edge double-bridge enforcement, while Dominoes leverages value-constrained bipartite matching and line-sum dual capacity checks.
+* **Structured Contradiction Proof Trees**: Moving beyond opaque solvers to generate chess-like notation: Assumption ➔ Forward Derivation ➔ Capacity/Disconnection Collapse, coupled with dynamic board highlighting.
 * **Metacognitive Resistance & Cognitive Waves**: The Maze generator enforces prime-mixed fractal symmetry, bi-entrance deceptive loops, visual confidence regret metrics, and $<40\%$ visual-optimal overlap, backed by strict $\ge 1.45\times$ mid-phase cognitive gains.
-* **Neurofeedback Post-Mortem Diagnostics**: Beyond win/loss records, users access post-mortem Regret Heatmaps, clickable Deception Waypoints, and 2x speed Optimal Ghost replays.
-* **Pedagogical 3-Tier Hint Ladder**: Step-by-step guidance preserving cognitive insight: Level 1 Observation ➔ Level 2 Topological Causality / Antichain Branching ➔ Level 3 Forced Cell Placement.
+* **Neurofeedback Post-Mortem Diagnostics**: Beyond win/loss records, users access post-mortem Regret Heatmaps, clickable Deception Waypoints, first-guess branch anchors in Hashi, and 2x speed Optimal Ghost replays.
+* **Pedagogical 3-Tier Hint Ladder & Unbound Pure Mode**: Step-by-step guidance preserving cognitive insight (Observation ➔ Topology/Antichain ➔ Forced Placement), while the pure-logic mode unbinds robotic ordering to allow choosing any valid forced deduction.
 * **Zero-Latency Startup & Time-Sliced Pool**: Instant synchronous seed generation on startup, paired with smooth, non-blocking asynchronous time-slicing to build a boundless puzzle reserve.
 * **WPF-Standard Tournament Mode & Zero-Trust Verification**: Hard locks board generation and hints during official attempts; generates cryptographic SHA-256 receipts via Web Crypto API with constant-time equality checks.
 
@@ -105,6 +107,7 @@ flowchart TD
     Gv --> M3["Nurikabe (平面分割)"]
     Gv --> M4["Light Up (射線投射)"]
     Gv --> M5["Nonogram (斷面掃描 / DAG關鍵深度)"]
+    Gv --> M6["Hashi (泊松張力 / Tarjan割邊)"]
 
     Nq --> N1["Sudoku (交叉排他 / 魚定式)"]
     Nq --> N2["Kakuro (整數分割)"]
@@ -112,7 +115,7 @@ flowchart TD
     Nq --> N4["Dominoes (二分匹配 / 鋪砌全集)"]
 
     Gwm --> W1["候選數動態保留與筆記"]
-    Gwm --> W2["多步前瞻矛盾鏈沙盒"]
+    Gwm --> W2["結構化前瞻反證樹沙盒"]
     Gwm --> W3["錯誤類型學與時序監測"]
 
 ```
@@ -131,7 +134,7 @@ flowchart TD
 ┌──────────────────────────────┐ ┌────────────────────────────┐
 │      WASM Core (Rust)        │ │  Procedural TS Generators  │
 │  • Compile-time PEERS LUT    │ │ • Exact Bipartite Matching │
-│  • Bitmask MRV Propagation   │ │ • Bitmask DP Intersections │
+│  • Bitmask MRV Propagation   │ │ • Tarjan Bridge Lowlink    │
 │  • O(1) Backtrack Snapshot   │ │ • Metacognitive Wave Engine│
 └──────────────┬───────────────┘ └─────────────┬──────────────┘
                │                               │
@@ -192,8 +195,8 @@ Lawgic/
 ├── web-frontend/
 │   ├── public/              # PWA manifest、安全 Service Worker (sw.js) 與靜態資源
 │   ├── src/
-│   │   ├── components/      # 15 款遊戲駕駛艙 (Board)、悔恨熱力圖、幽靈重播與互動元件
-│   │   ├── engines/         # 競技級演算法 (v8 Maze, v5.5 Nonogram, v3 Dominoes 等)
+│   │   ├── components/      # 15 款遊戲駕駛艙 (Board)、反證因果樹高亮、悔恨熱力圖與互動元件
+│   │   ├── engines/         # 競技級演算法 (v8 Maze, v5.5 Nonogram, v6 Dominoes, v4 Hashi 等)
 │   │   ├── hooks/           # useLearnerProfile (心理測量指標、SCI、常模對照)
 │   │   ├── registry/        # RendererRegistry (動態分發與渲染註冊中心)
 │   │   ├── utils/           # Web Crypto 完整性驗證 (integrity.ts)、安全儲存
