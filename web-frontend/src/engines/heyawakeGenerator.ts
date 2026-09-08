@@ -13,11 +13,11 @@ export type HeyawakeTechnique =
 
 export interface HeyawakeRoom {
   id: number;
-  r: number;          // 最小外接矩形左上角行（僅供線索 UI 排版）
-  c: number;          // 最小外接矩形左上角列（僅供線索 UI 排版）
-  w: number;          // 最小外接矩形寬度
-  h: number;          // 最小外接矩形高度
-  cells: [number, number][]; // 精確單元格座標集合，前端 SVG/Canvas 必須依此繪製邊界
+  r: number;
+  c: number;
+  w: number;
+  h: number;
+  cells: [number, number][];
   clue: number | null;
 }
 
@@ -25,6 +25,7 @@ export interface HeyawakeHintStep {
   step: number;
   r: number;
   c: number;
+  targetCell: [number, number]; // 支援前端 targetCell 介面
   forcedState: 1 | 2; // 1: 黑, 2: 白
   technique: HeyawakeTechnique;
   dagDepth: number;
@@ -39,9 +40,11 @@ export interface HeyawakeHintStep {
 export interface HeyawakeSpec {
   rows: number;
   cols: number;
-  grid: number[][];   // 1: 黑, 0: 白
+  grid: number[][];           // 1: 黑, 0: 白
+  solution: number[][];       // 兼容前端別名
   rooms: HeyawakeRoom[];
   cellRoomMap: number[][];
+  gridRooms: number[][];      // 兼容前端別名
   solvingSteps: HeyawakeHintStep[];
   highestTechnique: HeyawakeTechnique;
   logicalComplexityScore: number;
@@ -104,18 +107,14 @@ export class WebHeyawakeGenerator {
 
     const maxAttempts = 60;
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      // 1. BSP + 互補咬合凹角切割
       const { rooms, cellRoomMap, internalWallCount, interlockingRoomCount } =
         this._partitionRoomsInterlocking(rows, cols, minRooms, maxRooms, rnd);
 
-      // 2. 有機集群種子骨架生成
       const solution = this._synthesizeClusteredBackboneSolution(rows, cols, rooms, cellRoomMap, rnd);
       if (!solution) continue;
 
-      // 3. 審美留白線索指派
       this._assignRoomClues(rooms, solution, rnd);
 
-      // 4. 冠軍級推演模擬（含真分歧熵與互鎖拓撲加權）
       const sim = this._simulateChampionshipSolving(
         rows, cols, rooms, cellRoomMap, maxLookaheadDepth, allowContradiction, interlockingRoomCount
       );
@@ -123,7 +122,6 @@ export class WebHeyawakeGenerator {
       if (sim.pureRate < 0.95) continue;
       if (tier !== 'kids' && sim.logicalComplexityScore < minComplexityScore) continue;
 
-      // 5. 唯一解硬性防禦（剪枝計數器，Limit = 2）
       const solutionCount = this._countHeyawakeSolutionsFast(rooms, cellRoomMap, rows, cols, 2);
       if (solutionCount !== 1) continue;
 
@@ -148,8 +146,10 @@ export class WebHeyawakeGenerator {
         rows,
         cols,
         grid: solution,
+        solution,
         rooms,
         cellRoomMap,
+        gridRooms: cellRoomMap,
         solvingSteps: sim.steps,
         highestTechnique: sim.highestTechnique,
         logicalComplexityScore: sim.logicalComplexityScore,
@@ -167,9 +167,9 @@ export class WebHeyawakeGenerator {
         category: 'spatial_logic',
         engine_type: 'heyawake',
         tier,
-        checksum: `HEYAWAKE_V6_PERFECTION_${rows}x${cols}_S${actualSeed}`,
-        puzzle: spec as unknown as Record<string, unknown>,
-        solution: solution as unknown as Record<string, unknown>,
+        checksum: `HEYAWAKE_V6_${rows}x${cols}_S${actualSeed}`,
+        puzzle: spec as any,
+        solution: solution as any,
         cognitiveLoad: {
           spatial: Number(Math.min(0.98, 0.55 + (internalWallCount / totalCells) * 0.40).toFixed(2)),
           numeric: 0.80,
@@ -192,11 +192,135 @@ export class WebHeyawakeGenerator {
           highest_technique: sim.highestTechnique,
           seed: actualSeed,
           actualTier: tier,
-        } as unknown as Record<string, unknown>,
+        } as any,
       };
     }
 
     return this._generateGracefulFallback(tier, config, actualSeed, rnd);
+  }
+
+  /**
+   * 提供前端動態查詢當前盤面下的下一步必然推導
+   */
+  public static getNextForcedDeduction(
+    rows: number,
+    cols: number,
+    rooms: HeyawakeRoom[],
+    gridRooms: number[][],
+    currentBoard: number[][]
+  ): HeyawakeHintStep | null {
+    const board = currentBoard.map(r => [...r]);
+    const dirs = [[0, 1], [1, 0], [0, -1], [-1, 0]];
+
+    // 1. 黑格互斥留白
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        if (board[r][c] === 1) {
+          for (const [dr, dc] of dirs) {
+            const nr = r + dr;
+            const nc = c + dc;
+            if (nr >= 0 && nr < rows && nc >= 0 && nc < cols && board[nr][nc] === 0) {
+              return {
+                step: 1, r: nr, c: nc, targetCell: [nr, nc], forcedState: 2,
+                technique: 'adjacent_black_isolation', dagDepth: 1,
+                rationale: `正交相鄰於黑格 [${r + 1}, ${c + 1}]，黑格互斥強制留白`,
+                humanReadable: {
+                  zh: `【黑格互斥】坐標 [${nr + 1}, ${nc + 1}] 緊鄰黑格，強制留白！`,
+                  en: `[Black Isolation] Touching black cell; forced white!`,
+                },
+              };
+            }
+          }
+        }
+      }
+    }
+
+    // 2. 配額飽和留白
+    for (const room of rooms) {
+      if (room.clue === null) continue;
+      const currentBlack = room.cells.filter(([r, c]) => board[r][c] === 1).length;
+      if (currentBlack === room.clue) {
+        const remaining = room.cells.filter(([r, c]) => board[r][c] === 0);
+        if (remaining.length > 0) {
+          const [ur, uc] = remaining[0];
+          return {
+            step: 1, r: ur, c: uc, targetCell: [ur, uc], forcedState: 2,
+            technique: 'room_quota_exhausted', dagDepth: 1,
+            rationale: `房間 #${room.id + 1} 黑格配額已滿 (${room.clue}/${room.clue})`,
+            humanReadable: {
+              zh: `【配額飽和】房間 #${room.id + 1} 黑格配額已滿，強制留白！`,
+              en: `[Quota Exhausted] Room quota satisfied; forced white!`,
+            },
+          };
+        }
+      }
+    }
+
+    // 3. 配額飢餓塗黑
+    for (const room of rooms) {
+      if (room.clue === null) continue;
+      const currentBlack = room.cells.filter(([r, c]) => board[r][c] === 1).length;
+      const remaining = room.cells.filter(([r, c]) => board[r][c] === 0);
+      const needed = room.clue - currentBlack;
+      if (needed > 0 && remaining.length === needed) {
+        const [br, bc] = remaining[0];
+        return {
+          step: 1, r: br, c: bc, targetCell: [br, bc], forcedState: 1,
+          technique: 'room_quota_starved', dagDepth: 1,
+          rationale: `房間 #${room.id + 1} 尚需 ${needed} 個黑格，僅剩 ${needed} 空格`,
+          humanReadable: {
+            zh: `【配額飢餓】房間 #${room.id + 1} 剩餘空格剛好滿足線索，必然塗黑！`,
+            en: `[Quota Starvation] Remaining slots equal needed blacks; forced black!`,
+          },
+        };
+      }
+    }
+
+    // 4. 雙牆射線阻斷
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        if (board[r][c] === 0) {
+          board[r][c] = 2;
+          const causesDouble = this._checkLocalDoubleWallViolation(board, rows, cols, gridRooms, r, c);
+          board[r][c] = 0;
+          if (causesDouble) {
+            return {
+              step: 1, r, c, targetCell: [r, c], forcedState: 1,
+              technique: 'ray_boundary_blocker', dagDepth: 2,
+              rationale: `坐標 [${r + 1}, ${c + 1}] 留白將導致直通視線穿透兩道房間隔牆，違規強制塗黑`,
+              humanReadable: {
+                zh: `【雙牆阻斷】若留白將連續穿透兩道隔牆，違反硬規則，強制塗黑！`,
+                en: `[Ray Blocker] White cell causes double-wall violation; forced black!`,
+              },
+            };
+          }
+        }
+      }
+    }
+
+    // 5. 白格連通割點防護
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        if (board[r][c] === 0) {
+          board[r][c] = 1;
+          const broken = !this._isPotentialWhiteConnected(board, rows, cols);
+          board[r][c] = 0;
+          if (broken) {
+            return {
+              step: 1, r, c, targetCell: [r, c], forcedState: 2,
+              technique: 'white_connectivity_preservation', dagDepth: 2,
+              rationale: `坐標 [${r + 1}, ${c + 1}] 為拓撲割點，塗黑將切斷白格連通通道`,
+              humanReadable: {
+                zh: `【白格連通】坐標 [${r + 1}, ${c + 1}] 為空間咽喉割點，強制留白！`,
+                en: `[White Connectivity] Cut-point severs white graph; forced white!`,
+              },
+            };
+          }
+        }
+      }
+    }
+
+    return null;
   }
 
   private static _partitionRoomsInterlocking(
@@ -352,7 +476,6 @@ export class WebHeyawakeGenerator {
         }
       }
     }
-
     if (expectedCount <= 1) return true;
 
     const visited = new Uint8Array(rows * cols);
@@ -577,10 +700,6 @@ export class WebHeyawakeGenerator {
     }
   }
 
-  /**
-   * 強化型極速剪枝唯一解求解器
-   * 預約束傳播 + MRV（最少剩餘數值啟發式）動態選點，避免 12x12 回溯爆炸
-   */
   private static _countHeyawakeSolutionsFast(
     rooms: HeyawakeRoom[],
     cellRoomMap: number[][],
@@ -589,15 +708,12 @@ export class WebHeyawakeGenerator {
     limit: number = 2
   ): number {
     let count = 0;
-    const board: number[][] = Array.from({ length: rows }, () => Array(cols).fill(0)); // 0:未知, 1:黑, 2:白
+    const board: number[][] = Array.from({ length: rows }, () => Array(cols).fill(0));
     const dirs = [[0, 1], [1, 0], [0, -1], [-1, 0]];
 
-    // 預傳播：如果房間 clue === 0，全部強制留白
     for (const room of rooms) {
       if (room.clue === 0) {
-        for (const [r, c] of room.cells) {
-          board[r][c] = 2;
-        }
+        for (const [r, c] of room.cells) board[r][c] = 2;
       }
     }
 
@@ -732,7 +848,7 @@ export class WebHeyawakeGenerator {
       }
       candidates.sort((a, b) => b.priority - a.priority);
 
-      // 1. 黑格互斥強制留白
+      // 1. 黑格互斥
       outer1: for (let r = 0; r < rows; r++) {
         for (let c = 0; c < cols; c++) {
           if (board[r][c] === 1) {
@@ -745,13 +861,13 @@ export class WebHeyawakeGenerator {
                 criticalPathDepth++;
                 usedTechniques.add('adjacent_black_isolation');
                 steps.push({
-                  step: placedCount, r: nr, c: nc, forcedState: 2,
+                  step: placedCount, r: nr, c: nc, targetCell: [nr, nc], forcedState: 2,
                   technique: 'adjacent_black_isolation',
                   dagDepth: criticalPathDepth,
                   rationale: `正交相鄰於黑格 [${r + 1}, ${c + 1}]，強制留白`,
                   humanReadable: {
-                    zh: `【黑格互斥】坐標 [${nr + 1}, ${nc + 1}] 緊鄰黑格 [${r + 1}, ${c + 1}]，強制留白！`,
-                    en: `[Black Isolation] Cell [${nr + 1}, ${nc + 1}] touches black [${r + 1}, ${c + 1}]; forced white!`,
+                    zh: `【黑格互斥】坐標 [${nr + 1}, ${nc + 1}] 緊鄰黑格，強制留白！`,
+                    en: `[Black Isolation] Touching black cell; forced white!`,
                   },
                 });
                 progressed = true;
@@ -778,13 +894,13 @@ export class WebHeyawakeGenerator {
               highestTech = 'white_connectivity_preservation';
             }
             steps.push({
-              step: placedCount, r, c, forcedState: 2,
+              step: placedCount, r, c, targetCell: [r, c], forcedState: 2,
               technique: 'white_connectivity_preservation',
               dagDepth: criticalPathDepth,
-              rationale: `坐標 [${r + 1}, ${c + 1}] 為拓撲割點，塗黑將切斷白格通道`,
+              rationale: `坐標 [${r + 1}, ${c + 1}] 為拓撲割點，強制留白`,
               humanReadable: {
                 zh: `【白格連通】坐標 [${r + 1}, ${c + 1}] 為咽喉割點，強制留白！`,
-                en: `[White Connectivity] Cell [${r + 1}, ${c + 1}] is a critical cut-point; forced white!`,
+                en: `[White Connectivity] Critical cut-point; forced white!`,
               },
             });
             progressed = true;
@@ -794,26 +910,26 @@ export class WebHeyawakeGenerator {
       }
       if (progressed) continue;
 
-      // 3. 配額飽和 -> 剩餘全白
+      // 3. 配額飽和
       for (const room of rooms) {
         if (room.clue === null) continue;
         const currentBlack = room.cells.filter(([r, c]) => board[r][c] === 1).length;
         if (currentBlack === room.clue) {
-          const remainingUnknowns = room.cells.filter(([r, c]) => board[r][c] === 0);
-          if (remainingUnknowns.length > 0) {
-            const [ur, uc] = remainingUnknowns[0];
+          const remaining = room.cells.filter(([r, c]) => board[r][c] === 0);
+          if (remaining.length > 0) {
+            const [ur, uc] = remaining[0];
             board[ur][uc] = 2;
             placedCount++;
             criticalPathDepth++;
             usedTechniques.add('room_quota_exhausted');
             steps.push({
-              step: placedCount, r: ur, c: uc, forcedState: 2,
+              step: placedCount, r: ur, c: uc, targetCell: [ur, uc], forcedState: 2,
               technique: 'room_quota_exhausted',
               dagDepth: criticalPathDepth,
               rationale: `房間 #${room.id + 1} 黑格配額已滿 (${room.clue}/${room.clue})`,
               humanReadable: {
                 zh: `【配額飽和】房間 #${room.id + 1} 已達標，坐標 [${ur + 1}, ${uc + 1}] 強制留白！`,
-                en: `[Quota Exhausted] Room #${room.id + 1} quota fulfilled; [${ur + 1}, ${uc + 1}] forced white!`,
+                en: `[Quota Exhausted] Room #${room.id + 1} quota met; forced white!`,
               },
             });
             progressed = true;
@@ -823,7 +939,7 @@ export class WebHeyawakeGenerator {
       }
       if (progressed) continue;
 
-      // 4. 配額飢餓 -> 剩餘全黑
+      // 4. 配額飢餓
       for (const room of rooms) {
         if (room.clue === null) continue;
         const currentBlack = room.cells.filter(([r, c]) => board[r][c] === 1).length;
@@ -839,13 +955,13 @@ export class WebHeyawakeGenerator {
             highestTech = 'room_quota_starved';
           }
           steps.push({
-            step: placedCount, r: br, c: bc, forcedState: 1,
+            step: placedCount, r: br, c: bc, targetCell: [br, bc], forcedState: 1,
             technique: 'room_quota_starved',
             dagDepth: criticalPathDepth,
             rationale: `房間 #${room.id + 1} 尚缺 ${needed} 個黑格，僅剩 ${needed} 空格`,
             humanReadable: {
-              zh: `【配額飢餓】房間 #${room.id + 1} 尚需 ${needed} 黑格，坐標 [${br + 1}, ${bc + 1}] 必然塗黑！`,
-              en: `[Quota Starvation] Room #${room.id + 1} needs ${needed} black cells; [${br + 1}, ${bc + 1}] forced black!`,
+              zh: `【配額飢餓】房間 #${room.id + 1} 尚需 ${needed} 黑格，必然塗黑！`,
+              en: `[Quota Starvation] Room needs ${needed} black cells; forced black!`,
             },
           });
           progressed = true;
@@ -869,13 +985,13 @@ export class WebHeyawakeGenerator {
               highestTech = 'ray_boundary_blocker';
             }
             steps.push({
-              step: placedCount, r, c, forcedState: 1,
+              step: placedCount, r, c, targetCell: [r, c], forcedState: 1,
               technique: 'ray_boundary_blocker',
               dagDepth: criticalPathDepth,
-              rationale: `留白將導致穿透兩道以上房間隔牆，依規則強制塗黑`,
+              rationale: `留白將導致穿透兩道以上房間隔牆，強制塗黑阻斷`,
               humanReadable: {
                 zh: `【雙牆阻斷】坐標 [${r + 1}, ${c + 1}] 若留白將貫穿雙牆，強制塗黑！`,
-                en: `[Ray Blocker] White cell creates double-wall violation; forced black!`,
+                en: `[Ray Blocker] White cell triggers double-wall violation; forced black!`,
               },
             });
             progressed = true;
@@ -885,7 +1001,7 @@ export class WebHeyawakeGenerator {
       }
       if (progressed) continue;
 
-      // 6. 二階自適應深度反證（完全沙盒閉包 + 飢餓傳播）
+      // 6. 二階自適應深度反證
       if (allowContradiction) {
         outerContradiction: for (const { r, c } of candidates) {
           if (board[r][c] === 0) {
@@ -899,7 +1015,7 @@ export class WebHeyawakeGenerator {
               usedTechniques.add('hypothesis_contradiction');
               highestTech = 'hypothesis_contradiction';
               steps.push({
-                step: placedCount, r, c, forcedState: 2,
+                step: placedCount, r, c, targetCell: [r, c], forcedState: 2,
                 technique: 'hypothesis_contradiction',
                 dagDepth: criticalPathDepth,
                 hypothesisTrace: blackContradiction.trace,
@@ -923,7 +1039,7 @@ export class WebHeyawakeGenerator {
               usedTechniques.add('hypothesis_contradiction');
               highestTech = 'hypothesis_contradiction';
               steps.push({
-                step: placedCount, r, c, forcedState: 1,
+                step: placedCount, r, c, targetCell: [r, c], forcedState: 1,
                 technique: 'hypothesis_contradiction',
                 dagDepth: criticalPathDepth,
                 hypothesisTrace: whiteContradiction.trace,
@@ -1088,7 +1204,7 @@ export class WebHeyawakeGenerator {
     for (let depth = 1; depth <= maxDepth; depth++) {
       let progressed = false;
 
-      // 1. 黑格相鄰強制塗白傳播
+      // 1. 黑格相鄰強制塗白
       for (let sr = 0; sr < rows; sr++) {
         for (let sc = 0; sc < cols; sc++) {
           if (sandbox[sr][sc] === 1) {
@@ -1109,7 +1225,7 @@ export class WebHeyawakeGenerator {
         }
       }
 
-      // 2. 配額溢出/飢餓雙向傳播
+      // 2. 配額溢出與飢餓傳播
       for (const room of rooms) {
         if (room.clue === null) continue;
         const currentBlack = room.cells.filter(([cr, cc]) => sandbox[cr][cc] === 1).length;
@@ -1124,7 +1240,6 @@ export class WebHeyawakeGenerator {
           return { reason: `房間 #${room.id + 1} 剩餘槽位不足 (${availableSlots} < ${room.clue})`, depth, trace };
         }
 
-        // 飽和留白
         if (currentBlack === room.clue) {
           for (const [cr, cc] of unknownCells) {
             sandbox[cr][cc] = 2;
@@ -1132,7 +1247,6 @@ export class WebHeyawakeGenerator {
           }
         }
 
-        // 飢餓塗黑
         if (needed > 0 && unknownCells.length === needed) {
           for (const [cr, cc] of unknownCells) {
             sandbox[cr][cc] = 1;
@@ -1141,7 +1255,7 @@ export class WebHeyawakeGenerator {
         }
       }
 
-      // 3. 射線阻斷主動寫入塗黑
+      // 3. 射線阻斷主動塗黑
       for (let sr = 0; sr < rows; sr++) {
         for (let sc = 0; sc < cols; sc++) {
           if (sandbox[sr][sc] === 0) {
@@ -1156,12 +1270,10 @@ export class WebHeyawakeGenerator {
         }
       }
 
-      // 4. 連通度實時判定
       if (!WebHeyawakeGenerator._isPotentialWhiteConnected(sandbox, rows, cols)) {
         return { reason: `連鎖導致白格割裂`, depth, trace };
       }
 
-      // 5. 全域雙牆檢驗
       if (WebHeyawakeGenerator._hasDoubleWallViolation(sandbox, rows, cols, cellRoomMap)) {
         return { reason: `產生雙牆貫穿射線`, depth, trace };
       }
@@ -1199,10 +1311,12 @@ export class WebHeyawakeGenerator {
       rows,
       cols,
       grid: solution,
+      solution,
       rooms,
       cellRoomMap,
+      gridRooms: cellRoomMap,
       solvingSteps: [{
-        step: 1, r: 0, c: 0,
+        step: 1, r: 0, c: 0, targetCell: [0, 0],
         forcedState: solution[0][0] === 1 ? 1 : 2,
         technique: 'room_quota_exhausted',
         dagDepth: 1,
@@ -1226,8 +1340,8 @@ export class WebHeyawakeGenerator {
       engine_type: 'heyawake',
       tier,
       checksum: `HEYAWAKE_FB_V6_${rows}x${cols}_S${seed}`,
-      puzzle: spec as unknown as Record<string, unknown>,
-      solution: solution as unknown as Record<string, unknown>,
+      puzzle: spec as any,
+      solution: solution as any,
       cognitiveLoad: { spatial: 0.85, numeric: 0.75, workingMemory: 0.65, inhibition: 0.70 },
       metrics: {
         grid_size: rows * cols,
@@ -1244,7 +1358,7 @@ export class WebHeyawakeGenerator {
         highest_technique: 'room_quota_exhausted',
         seed,
         actualTier: tier,
-      } as unknown as Record<string, unknown>,
+      } as any,
     };
   }
 }
