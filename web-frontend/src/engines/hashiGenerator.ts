@@ -31,13 +31,20 @@ export interface HashiHintStep {
   forcedBridges: 1 | 2;
   technique: HashiTechnique;
   dagDepth: number;
-  isFirstGuessAnchor?: boolean; // 顯微鏡 4：明確標記首個迫使猜測的分歧節點
+  isFirstGuessAnchor?: boolean;
   structuredContradiction?: ContradictionNode;
   rationale: string;
   humanReadable: {
     zh: string;
     en: string;
   };
+  // 向前相容舊版屬性
+  u?: HashiIsland;
+  v?: HashiIsland;
+  forcedCount?: 1 | 2;
+  evidenceIslands?: [number, number][];
+  techniqueName?: { zh: string; en: string };
+  techniqueIcon?: string;
 }
 
 export interface HashiIsland {
@@ -46,6 +53,9 @@ export interface HashiIsland {
   c: number;
   capacity: number;
 }
+
+// 別名導出以解決 TS2305
+export type Island = HashiIsland;
 
 export interface HashiBridge {
   r1: number;
@@ -115,6 +125,85 @@ function mulberry32(a: number) {
 }
 
 export class WebHashiGenerator {
+  /**
+   * 獲取正交視線內可見島嶼（解決 TS2339）
+   */
+  public static getOrthogonalNeighbors(
+    islands: HashiIsland[],
+    target: HashiIsland,
+    rows: number,
+    cols: number
+  ): HashiIsland[] {
+    const grid = Array.from({ length: rows }, () => Array(cols).fill(0));
+    const islandMap = new Map<string, HashiIsland>();
+    for (const isl of islands) {
+      grid[isl.r][isl.c] = isl.capacity;
+      islandMap.set(`${isl.r},${isl.c}`, isl);
+    }
+    return this._getOrthogonalVisibleIslands(grid, rows, cols, target.r, target.c, islandMap);
+  }
+
+  /**
+   * 橋樑交叉檢驗（解決 TS2339）
+   */
+  public static checkCrossing(
+    bridgeA: { r1: number; c1: number; r2: number; c2: number },
+    bridgeB: { r1: number; c1: number; r2: number; c2: number }
+  ): boolean {
+    const isVertA = bridgeA.c1 === bridgeA.c2;
+    const isVertB = bridgeB.c1 === bridgeB.c2;
+    if (isVertA === isVertB) return false;
+
+    const vert = isVertA ? bridgeA : bridgeB;
+    const horiz = isVertA ? bridgeB : bridgeA;
+
+    const vMinR = Math.min(vert.r1, vert.r2);
+    const vMaxR = Math.max(vert.r1, vert.r2);
+    const hMinC = Math.min(horiz.c1, horiz.c2);
+    const hMaxC = Math.max(horiz.c1, horiz.c2);
+
+    return (
+      horiz.r1 > vMinR &&
+      horiz.r1 < vMaxR &&
+      vert.c1 > hMinC &&
+      vert.c1 < hMaxC
+    );
+  }
+
+  /**
+   * 取得下一步強制推導（解決 TS2339，向前相容單步）
+   */
+  public static getNextForcedDeduction(
+    spec: HashiSpec,
+    currentBridges: Map<string, number>
+  ): HashiHintStep | null {
+    const all = this.getAllForcedDeductions(spec, currentBridges);
+    return all.length > 0 ? all[0] : null;
+  }
+
+  /**
+   * 取得當前所有可用強制推導列表（破除機器強迫順序）
+   */
+  public static getAllForcedDeductions(
+    spec: HashiSpec,
+    currentBridges: Map<string, number>
+  ): HashiHintStep[] {
+    const steps = spec.solvingSteps || [];
+    const getEdgeKey = (r1: number, c1: number, r2: number, c2: number): string =>
+      r1 < r2 || (r1 === r2 && c1 < c2) ? `${r1},${c1}_${r2},${c2}` : `${r2},${c2}_${r1},${c1}`;
+
+    const candidates: HashiHintStep[] = [];
+    for (let i = 0; i < steps.length; i++) {
+      const s = steps[i];
+      const key = getEdgeKey(s.r1, s.c1, s.r2, s.c2);
+      const cur = currentBridges.get(key) || 0;
+      if (cur < s.forcedBridges) {
+        candidates.push(s);
+      }
+    }
+    return candidates;
+  }
+
   public static generate(tier: TierKey = 'kids', inputSeed?: number): PuzzleEntity {
     const config = TIER_SPECS[tier] || TIER_SPECS.kids;
     const { rows, cols, targetIslands, minDistance, maxDegree2Chain, minComplexityScore, maxLookaheadDepth, baseIrt, timeLimitSec } = config;
@@ -126,11 +215,8 @@ export class WebHashiGenerator {
     const maxAttempts = 50;
 
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      // 顯微鏡 3：5000ms 硬超時熔斷保護
       const elapsed = (typeof performance !== 'undefined' ? performance.now() : Date.now()) - startTimePerf;
-      if (elapsed > 5000) {
-        break;
-      }
+      if (elapsed > 5000) break;
 
       const topology = this._generateBalancedChordalTopology(rows, cols, targetIslands, minDistance, maxDegree2Chain, rnd);
       if (!topology) continue;
@@ -162,13 +248,31 @@ export class WebHashiGenerator {
         ? 1.0
         : Number(Math.max(0.10, 1.0 - guessDepthNormalized * 0.70).toFixed(2));
 
+      // 補齊向前相容欄位
+      const formattedSteps = sim.steps.map((st) => {
+        const u = islands.find((isl) => isl.r === st.r1 && isl.c === st.c1);
+        const v = islands.find((isl) => isl.r === st.r2 && isl.c === st.c2);
+        return {
+          ...st,
+          u,
+          v,
+          forcedCount: st.forcedBridges,
+          evidenceIslands: [[st.r1, st.c1], [st.r2, st.c2]] as [number, number][],
+          techniqueName: {
+            zh: st.technique === 'corner_capacity_forced' ? '角隅極限飽和' : st.technique === 'tarjan_cut_edge_isolation' ? 'Tarjan 割邊連通' : '度數唯一確定',
+            en: st.technique,
+          },
+          techniqueIcon: st.technique === 'tarjan_cut_edge_isolation' ? '🌉' : '⚡',
+        };
+      });
+
       const spec: HashiSpec = {
         rows,
         cols,
         grid,
         islands,
         solutionBridges,
-        solvingSteps: sim.steps,
+        solvingSteps: formattedSteps,
         highestTechnique: sim.highestTechnique,
         logicalComplexityScore: sim.logicalComplexityScore,
         criticalPathDepth: sim.criticalPathDepth,
@@ -225,9 +329,6 @@ export class WebHashiGenerator {
     return this._generateChampionFallback(tier, config, actualSeed, rnd);
   }
 
-  /**
-   * 泊松圓盤採樣 + 雙層圖拓撲 + 顯微鏡 2（極端均勻度邊界裁剪與缺席張力）
-   */
   private static _generateBalancedChordalTopology(
     rows: number,
     cols: number,
@@ -317,7 +418,7 @@ export class WebHashiGenerator {
 
     const bridgeCounts = new Map<string, number>();
     const getEdgeKey = (r1: number, c1: number, r2: number, c2: number): string =>
-      (r1 < r2 || (r1 === r2 && c1 < c2)) ? `${r1},${c1}_${r2},${c2}` : `${r2},${c2}_${r1},${c1}`;
+      r1 < r2 || (r1 === r2 && c1 < c2) ? `${r1},${c1}_${r2},${c2}` : `${r2},${c2}_${r1},${c1}`;
 
     const hasBridgeCrossing = (u: HashiIsland, v: HashiIsland): boolean => {
       const isVert = u.c === v.c;
@@ -426,7 +527,6 @@ export class WebHashiGenerator {
       }
     }
 
-    // 顯微鏡 2：方向均勻度極端懲罰與張力裁切
     let totalUniformity = 0;
     for (const isl of activeIslands) {
       const dirCounts = [0, 0, 0, 0];
@@ -446,7 +546,6 @@ export class WebHashiGenerator {
       const total = dirCounts.reduce((a, b) => a + b, 0);
       if (total === 0) continue;
 
-      // 極端懲罰：全滿 (4方向各2橋，毫無選擇難度) 或全集中於單一方向 (零張力線段)
       const nonZeroDirs = dirCounts.filter((c) => c > 0).length;
       if (total === 8 || nonZeroDirs === 1) {
         totalUniformity += 0.05;
@@ -456,7 +555,7 @@ export class WebHashiGenerator {
       const avg = total / 4;
       const variance = dirCounts.reduce((acc, d) => acc + Math.pow(d - avg, 2), 0) / 4;
       const maxPossibleVariance = (3 * Math.pow(total - avg, 2) + Math.pow(0 - avg, 2)) / 4;
-      let uniformity = maxPossibleVariance === 0 ? 1 : (1 - variance / maxPossibleVariance);
+      let uniformity = maxPossibleVariance === 0 ? 1 : 1 - variance / maxPossibleVariance;
 
       const zeroDirsCount = 4 - nonZeroDirs;
       uniformity = Math.max(0.05, uniformity - zeroDirsCount * 0.08);
@@ -518,7 +617,7 @@ export class WebHashiGenerator {
           potentialEdges.push({
             u,
             v,
-            key: (u.r < v.r || (u.r === v.r && u.c < v.c)) ? `${u.r},${u.c}_${v.r},${v.c}` : `${v.r},${v.c}_${u.r},${u.c}`,
+            key: u.r < v.r || (u.r === v.r && u.c < v.c) ? `${u.r},${u.c}_${v.r},${v.c}` : `${v.r},${v.c}_${u.r},${u.c}`,
             isVert: u.c === v.c,
           });
         }
@@ -541,7 +640,7 @@ export class WebHashiGenerator {
         for (const e of potentialEdges) {
           if (e.u.id === isl.id || e.v.id === isl.id) {
             const current = edgeCounts.get(e.key) || 0;
-            maxPossible += (2 - current);
+            maxPossible += 2 - current;
           }
         }
         if (remaining > maxPossible) return false;
@@ -625,7 +724,7 @@ export class WebHashiGenerator {
       const curr = queue.shift()!;
       for (const isl of islands) {
         if (!visited.has(isl.id)) {
-          const key = (curr.r < isl.r || (curr.r === isl.r && curr.c < isl.c))
+          const key = curr.r < isl.r || (curr.r === isl.r && curr.c < isl.c)
             ? `${curr.r},${curr.c}_${isl.r},${isl.c}`
             : `${isl.r},${isl.c}_${curr.r},${curr.c}`;
           if ((edgeCounts.get(key) || 0) > 0) {
@@ -677,9 +776,6 @@ export class WebHashiGenerator {
     return cutEdges;
   }
 
-  /**
-   * 冠軍級推導模擬引擎（顯微鏡 4：精確捕捉首次猜測錨點）
-   */
   private static _simulateChampionshipSolving(
     rows: number,
     cols: number,
@@ -713,14 +809,13 @@ export class WebHashiGenerator {
     let firstGuessRecorded = false;
 
     const totalCapacityNeeded = islands.reduce((acc, isl) => acc + isl.capacity, 0) / 2;
-
     const getEdgeKey = (r1: number, c1: number, r2: number, c2: number): string =>
-      (r1 < r2 || (r1 === r2 && c1 < c2)) ? `${r1},${c1}_${r2},${c2}` : `${r2},${c2}_${r1},${c1}`;
+      r1 < r2 || (r1 === r2 && c1 < c2) ? `${r1},${c1}_${r2},${c2}` : `${r2},${c2}_${r1},${c1}`;
 
     while (progressed) {
       progressed = false;
 
-      // 1. 定式一：角落容量與邊界極限飽和
+      // 1. 角落容量與邊界極限飽和
       for (const isl of islands) {
         const remaining = isl.capacity - (currentCap.get(isl.id) || 0);
         if (remaining <= 0) continue;
@@ -802,7 +897,7 @@ export class WebHashiGenerator {
       }
       if (progressed) continue;
 
-      // 2. 定式二：Tarjan 割邊咽喉連通性強制（滿配雙橋）
+      // 2. Tarjan 割邊咽喉連通性強制（滿配雙橋）
       const availableNeighborsMap = new Map<number, HashiIsland[]>();
       for (const isl of islands) {
         const visible = this._getOrthogonalVisibleIslands(grid, rows, cols, isl.r, isl.c, islandMap);
@@ -832,7 +927,7 @@ export class WebHashiGenerator {
         stepCount++;
         complexityScore += TECHNIQUE_WEIGHTS.tarjan_cut_edge_isolation * (bridgesToAdd === 2 ? 1.5 : 1);
         highestTech = 'tarjan_cut_edge_isolation';
-        criticalPathDepth += (bridgesToAdd === 2 ? 4 : 2);
+        criticalPathDepth += bridgesToAdd === 2 ? 4 : 2;
 
         steps.push({
           step: stepCount,
@@ -852,7 +947,7 @@ export class WebHashiGenerator {
       }
       if (progressed) continue;
 
-      // 3. 定式三：動態前瞻反證鏈（容量擠壓 + Tarjan 割裂反證）
+      // 3. 動態前瞻反證鏈（容量擠壓 + Tarjan 割裂反證）
       outerProbe: for (const isl of islands) {
         const remaining = isl.capacity - (currentCap.get(isl.id) || 0);
         if (remaining <= 0) continue;
@@ -923,9 +1018,6 @@ export class WebHashiGenerator {
     };
   }
 
-  /**
-   * 顯微鏡 1：融合 Tarjan 割裂檢驗的反證探針沙盒
-   */
   private static _probeHypothesisContradiction(
     grid: number[][],
     rows: number,
@@ -941,7 +1033,7 @@ export class WebHashiGenerator {
     const sandboxCap = new Map<number, number>(currentCap);
     const sandboxBridges = new Map<string, number>(placedBridges);
     const getEdgeKey = (r1: number, c1: number, r2: number, c2: number): string =>
-      (r1 < r2 || (r1 === r2 && c1 < c2)) ? `${r1},${c1}_${r2},${c2}` : `${r2},${c2}_${r1},${c1}`;
+      r1 < r2 || (r1 === r2 && c1 < c2) ? `${r1},${c1}_${r2},${c2}` : `${r2},${c2}_${r1},${c1}`;
 
     const eKey = getEdgeKey(u.r, u.c, v.r, v.c);
     sandboxBridges.set(eKey, assumedBridges);
@@ -964,14 +1056,13 @@ export class WebHashiGenerator {
         let maxPossible = 0;
         for (const neigh of visible) {
           const k = getEdgeKey(isl.r, isl.c, neigh.r, neigh.c);
-          maxPossible += (2 - (sandboxBridges.get(k) || 0));
+          maxPossible += 2 - (sandboxBridges.get(k) || 0);
         }
         if (remaining > maxPossible) {
           return { feasible: false, culprit: `島 [${isl.r + 1},${isl.c + 1}] 需求 ${remaining}，但周圍最大僅能提供 ${maxPossible}` };
         }
       }
 
-      // 顯微鏡 1 核心：反證沙盒內同步檢驗是否存在提早飽和但連通孤立的閉合子圖
       const activeInSandbox = islands.filter((isl) => (sandboxCap.get(isl.id) || 0) === isl.capacity);
       if (activeInSandbox.length > 0 && activeInSandbox.length < islands.length) {
         if (WebHashiGenerator._isEntirelyConnected(activeInSandbox, sandboxBridges)) {
@@ -1054,9 +1145,6 @@ export class WebHashiGenerator {
     return null;
   }
 
-  /**
-   * 視覺平衡高熵備援生成器
-   */
   private static _generateChampionFallback(
     tier: TierKey,
     config: TierConfig,
