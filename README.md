@@ -33,15 +33,17 @@
 ## 繁體中文介紹
 
 ### 平台簡介
-**Lawgic 羅輯** 是一款依據世界謎題聯合會（WPF）、Nikoli 與國際智力運動標準打造的現代化邏輯推理平台。拒絕無意義的窮舉與死記硬背，平台將**高效能 Rust/WebAssembly 零拷貝核心**、**純前端確定性演算法（Deterministic Algorithms）**、**SMT/CSP 約束求解唯一解驗證**、**CHC 心理測量學模型**與精準觸控互動結合，提供無廣告、無干擾的職業級競技與思維訓練環境。
+**Lawgic 羅輯** 是一款依據世界謎題聯合會（WPF）、世界數獨錦標賽（WSC）與國際智力運動標準打造的現代化純邏輯競賽平台。拒絕無意義的猜題窮舉與套路記憶，平台將 **高效能 Rust/WebAssembly 零拷貝核心**、**前 0.1% 競賽級確定性演算法（Deterministic Procedural Engines）**、**離散圖論約束求解唯一解驗證**、**CHC 心理測量學模型** 與精準觸控互動結合，提供無廣告、無干擾的職業級競技與大腦心流訓練環境。
 
 ### 架構特色
-* **WASM 零拷貝記憶體與查表常數加速**：核心運算模組全面以 Rust 編寫並編譯為 WebAssembly，具備編譯期預算靜態鄰居查表（LUT）與共享記憶體視圖（Zero-Copy Memory View），實現超低功耗與次毫秒級狀態收斂。
-* **零等待啟動 + 漸進時間切片（Time-Sliced Engine）**：首屏啟動 0ms 秒開，背景透過非同步時間切片（Time-Slicing）平滑合成新題，徹底杜絕主執行緒掉幀。
-* **二面體群（$D_4$）同構雜湊去重**：內建旋轉與鏡射空間規範化算法（Canonical Hash），杜絕旋轉同構題目，保證題庫唯一性。
+* **WASM 零拷貝記憶體與查表常數加速**：核心數獨運算模組全面以 Rust 編寫並編譯為 WebAssembly，具備編譯期預算靜態鄰居查表（LUT）與共享記憶體視圖（Zero-Copy Memory View），實現超低功耗與次毫秒級狀態收斂。
+* **零等待啟動 + 漸進時間切片（Time-Sliced Engine）**：首屏啟動 0ms 秒開，背景透過非同步時間切片（Time-Slicing）平滑合成高階題目，徹底杜絕主執行緒掉幀。
+* **數學級唯一解證書（Exact Cover Uniqueness Engine）**：拒絕「算力不夠即判定唯一」的偽科學。數獨、數織與多米諾全面實裝基於回溯剪枝與二分匹配的約束求解器，數學證明解空間基數精確為 1，杜絕多解殘局。
+* **二維全域泛洪與遞迴前瞻反證（Lookahead Deductive Chains）**：數織與多米諾導入多層級沙盒遞迴推導，數獨實裝雙向 X-Wing、全向數對與純定式反證探針，提供真實因果軌跡，拒絕黑盒子暴力 DFS。
+* **後設認知對抗與心流波浪（Metacognitive Resistance & Cognitive Wave）**：空間迷宮導入質數碎形、雙入口時間黑洞、心智流血量（Visual Regret）與視覺-最優重疊率驗證（$<40\%$），中段難度具備 $\ge 1.45\times$ 嚴格相位增益，徹底打破貪婪直覺與超節點圖論壓縮。
 * **空間推理綜合指數（Spatial Composite Index, SCI）**：依據 CHC 認知架構量化「拓撲迴路掌控力（Eulerian Loop Control）」、「平面分割適應力（Planar Partitioning）」與「正交射線覆蓋力（Ray Tracing）」，輸出臨床常模標度分（Scaled 1~19）與個人化弱點訓練建議。
-* **精準錯誤類型學診斷（Error Typology）**：賽後不僅記錄對錯，更區分「衝動抑制失效（如：Kakuro 重複數字、Dominoes 重複骨牌）」、「工作記憶超載（如：和數偏差、死鎖孤島）」與「局部幾何定式違背」，實現精準賽後覆盤。
-* **三階因果提示鏈（Causal Hint Ladder）**：拒絕直接揭曉答案，依序提供「Level 1 焦點啟發 ➔ Level 2 定式反證收斂 ➔ Level 3 必然步驟鎖定」，保留完整的認知頓悟（Aha! Moment）。
+* **神經回饋賽後病理切片（Post-Mortem Analytics）**：賽後不僅記錄成績，更提供「迷宮悔恨熱力圖」、「致命欺騙航點（Deception Waypoints）」高亮檢視，以及對比「雙軌最優幽靈（Optimal Ghost）」，將解題轉化為自我學習迴路。
+* **三階因果提示鏈（Causal Hint Ladder）**：拒絕直接揭曉答案，依序提供「Level 1 焦點啟發 ➔ Level 2 拓撲因果/反鏈分支 ➔ Level 3 必然步驟鎖定」，保留完整的認知頓悟（Aha! Moment）。
 * **WPF 規範賽事模式與零信任防偽簽章（Zero-Trust Receipt）**：一鍵開啟賽事模式，鎖定盤面禁止重新生成與提示，通關後透過 Web Crypto API 原生硬體加速生成 SHA-256 數位簽章與常數時間核驗，確保賽事防偽與成績公信力。
 * **全封閉離線 PWA 體驗**：整合具備 1.8 秒超時熔斷保護與 WebAssembly 二進制快取特化之 Service Worker，配合 iOS 動態島與底部 Safe Area 邊界適配，支援手機、平板與桌面端原生全螢幕離線遊玩。
 
@@ -51,9 +53,10 @@
 
 | 代號 | 遊戲名稱 | 核心能力維度 (CHC) | 演算法與賽事級特點 |
 | :--- | :--- | :--- | :--- |
-| `maze` | **空間迷宮** | 空間導航、心智心圖 | 奇數網格完美生成樹、受控防 2×2 平原環路注入、決策路口熵與曲折率精算 |
-| `sudoku` | **數獨魔陣** | 約束傳播、工作記憶 | Rust/WASM 零拷貝引擎、靜態鄰居表加速、180° 對稱挖洞、雙解否定約束 |
-| `nonogram` | **像素數織** | 離散斷面掃描、衝動抑制 | 邊界極限定式、連續塊邏輯剪枝、雙鍵快速填色與叉叉標記 |
+| `maze` | **空間迷宮** | 空間導航、心智心圖 | **v8 終極屠神版**：質數動態網格碎形、雙入口時間黑洞、視覺直線性後悔值、雙胞胎地標悖論、重疊率 $<40\%$ 逆向驗證、Boss 二階段精神污染 |
+| `sudoku` | **數獨魔陣** | 約束傳播、工作記憶 | Rust/WASM 零拷貝引擎、MRV 位元剪枝、全向 Naked/Hidden Pairs、雙向 X-Wing 魚形定式、純定式 Lookahead-3 演繹反證探針 |
+| `nonogram` | **像素數織** | 離散斷面掃描、衝動抑制 | **v5.5 WPC 認證版**：全向量化 Bitmask DP 單行交集、二維全域泛洪反證、DAG 依賴樹、Master Key 咽喉雪崩、400px 逐行光波斜向綻放、50 步 Undo 堆疊 |
+| `dominoes` | **骨牌矩陣** | 二維鋪砌、全域配對覆蓋 | **v3 競技大師版**：圖論二分圖最大匹配奇偶排除、動態遞迴反證鏈（DFS Dynamic Chains）、全域唯一解證明、漸進邊界釘定備援 |
 | `nurikabe` | **暗夜數牆** | 平面連通、圖論割點 | 多聯骨牌自由擴散（面積 1~7）、2×2 黑池紅色脈衝定位、點點候選標記 |
 | `skyscraper` | **摩天透視** | 3D 心理旋轉、空間透視 | 4 面邊界視線滿足度即時反饋、立體高度推演 |
 | `hashi` | **星際數橋** | 拓撲連通、生成樹度數 | 180° 點對稱盤面、正交防交叉剪枝、孤島閉環檢測 |
@@ -65,24 +68,23 @@
 | `hitori` | **孤島數壹** | 負向排除、2-Edge 連通 | 網絡雙連通度保障、符號替換模式（點陣/圖形）、純推理視覺暫存區 |
 | `futoshiki` | **天平不等** | 有向無環圖 (DAG)、傳遞閉包 | 不等式拓撲排序、極值鏈傳播、數值衝突即時定位 |
 | `masyu` | **珍珠迴路** | 空間拓撲、正交折角約束 | 隨機自避蜿蜒迴路、貼邊黑白定式、相鄰黑珍珠排斥、CSP 唯一解 |
-| `dominoes` | **骨牌矩陣** | 二維鋪砌、全域配對覆蓋 | 雙 N 骨牌套裝動態生成、全域唯一牌型定式、奇數死鎖檢測、套裝核對清單 |
 
 ---
 
 ## English Introduction
 
 ### Overview
-**Lawgic** is a professional-grade competitive logic puzzle platform engineered to the standards of the World Puzzle Federation (WPF), Nikoli, and mental athletics associations. Rejecting brute-force guessing and memory drills, the platform fuses **high-performance WebAssembly kernels**, deterministic procedural generation, CSP uniqueness validation, CHC cognitive models, and precision interaction for an ad-free, pure intellectual experience.
+**Lawgic** is a professional-grade competitive logic puzzle platform engineered to the standards of the World Puzzle Federation (WPF), World Sudoku Championship (WSC), and international mental athletics associations. Rejecting brute-force guessing and memory drills, the platform fuses **high-performance WebAssembly kernels**, deterministic procedural generation, CSP uniqueness validation, CHC cognitive models, and precision interaction for an ad-free, pure intellectual experience.
 
 ### Architecture Highlights
 * **Zero-Copy WASM Core**: Computationally intensive solvers are written in Rust and compiled to WebAssembly, featuring compile-time static lookup tables (PEERS_TABLE) and zero-copy shared array memory mapping.
+* **Exact Cover Uniqueness Engine**: Mathematical certainty replacing heuristic timeouts. Sudoku, Nonogram, and Dominoes feature exact backtracking solvers and bipartite matching proofs ensuring puzzle solution cardinality equals exactly 1.
+* **Recursive Lookahead Proofs**: Multilevel sandbox contradiction probing across Nonogram and Dominoes, paired with bidirectional X-Wing and Naked/Hidden Pairs in Sudoku, eliminating opaque brute-force solvers.
+* **Metacognitive Resistance & Cognitive Waves**: The Maze generator enforces prime-mixed fractal symmetry, bi-entrance deceptive loops, visual confidence regret metrics, and $<40\%$ visual-optimal overlap, backed by strict $\ge 1.45\times$ mid-phase cognitive gains.
+* **Neurofeedback Post-Mortem Diagnostics**: Beyond win/loss records, users access post-mortem Regret Heatmaps, clickable Deception Waypoints, and 2x speed Optimal Ghost replays.
+* **Pedagogical 3-Tier Hint Ladder**: Step-by-step guidance preserving cognitive insight: Level 1 Observation ➔ Level 2 Topological Causality / Antichain Branching ➔ Level 3 Forced Cell Placement.
 * **Zero-Latency Startup & Time-Sliced Pool**: Instant synchronous seed generation on startup, paired with smooth, non-blocking asynchronous time-slicing to build a boundless puzzle reserve.
-* **D4 Dihedral Isomorphism Deduplication**: Automatically normalizes grid topologies into canonical lexicographical hashes, preventing identical puzzles under rotation and reflection.
-* **Spatial Composite Index (SCI)**: Evaluates Eulerian loop closure, planar partitioning, and orthogonal ray covering to generate clinical psychometric scaled scores (1~19) and personalized training drills.
-* **Clinical Error Typology Diagnostics**: Distinguishes between inhibitory failures, working-memory overshoots, and local geometric constraint violations for effective post-game review.
-* **Pedagogical 3-Tier Hint Ladder**: Step-by-step guidance preserving cognitive insight: Level 1 Observation ➔ Level 2 Constraint Convergence ➔ Level 3 Forced Cell Placement.
 * **WPF-Standard Tournament Mode & Zero-Trust Verification**: Hard locks board generation and hints during official attempts; generates cryptographic SHA-256 receipts via Web Crypto API with constant-time equality checks.
-* **Hardened PWA & Offline Engine**: Hardened Service Worker with network timeout fallback and explicit `.wasm` caching strategies for zero-latency offline play.
 
 ---
 
@@ -98,19 +100,20 @@ flowchart TD
     Gf --> Nq["🔢 Nq (數量推理 / Quantitative)"]
     Gf --> Gwm["⚡ Gwm (工作記憶 / Working Memory)"]
 
-    Gv --> M1["Maze (心智導航)"]
+    Gv --> M1["Maze (心智導航 / 拓撲避障)"]
     Gv --> M2["Masyu (拓撲迴路)"]
     Gv --> M3["Nurikabe (平面分割)"]
     Gv --> M4["Light Up (射線投射)"]
+    Gv --> M5["Nonogram (斷面掃描 / DAG關鍵深度)"]
 
-    Nq --> N1["Sudoku (交叉排他)"]
+    Nq --> N1["Sudoku (交叉排他 / 魚定式)"]
     Nq --> N2["Kakuro (整數分割)"]
     Nq --> N3["Futoshiki (DAG偏序)"]
-    Nq --> N4["Dominoes (鋪砌全集)"]
+    Nq --> N4["Dominoes (二分匹配 / 鋪砌全集)"]
 
-    Gwm --> W1["候選數動態保留"]
-    Gwm --> W2["前瞻路徑模擬"]
-    Gwm --> W3["錯誤時序監測"]
+    Gwm --> W1["候選數動態保留與筆記"]
+    Gwm --> W2["多步前瞻矛盾鏈沙盒"]
+    Gwm --> W3["錯誤類型學與時序監測"]
 
 ```
 
@@ -126,17 +129,17 @@ flowchart TD
                │                               │
                ▼ (Zero-Copy Pointer)           ▼ (Causal Step Stream)
 ┌──────────────────────────────┐ ┌────────────────────────────┐
-│      WASM Core (Rust)        │ │   Procedural TS Generators │
-│  • Compile-time PEERS LUT    │ │ • Bidirectional Pigeonhole │
-│  • Incremental Propagation   │ │ • Dynamic Corner Dilemma   │
-│  • O(1) Backtrack Snapshot   │ │ • Dual-Graph Max Matching  │
+│      WASM Core (Rust)        │ │  Procedural TS Generators  │
+│  • Compile-time PEERS LUT    │ │ • Exact Bipartite Matching │
+│  • Bitmask MRV Propagation   │ │ • Bitmask DP Intersections │
+│  • O(1) Backtrack Snapshot   │ │ • Metacognitive Wave Engine│
 └──────────────┬───────────────┘ └─────────────┬──────────────┘
                │                               │
                └───────────────┬───────────────┘
                                ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                     Zero-Trust Core                         │
-│   Web Crypto SHA-256 Digest  +  Constant-Time Verification   │
+│                      Zero-Trust Core                        │
+│    Web Crypto SHA-256 Digest  +  Constant-Time Verification │
 └─────────────────────────────────────────────────────────────┘
 
 ```
@@ -189,8 +192,8 @@ Lawgic/
 ├── web-frontend/
 │   ├── public/              # PWA manifest、安全 Service Worker (sw.js) 與靜態資源
 │   ├── src/
-│   │   ├── components/      # 15 款遊戲棋盤 (Board)、計時面板與互動元件
-│   │   ├── engines/         # 純前端演算法、抽屜定式推進器與變體規則 (Variants)
+│   │   ├── components/      # 15 款遊戲駕駛艙 (Board)、悔恨熱力圖、幽靈重播與互動元件
+│   │   ├── engines/         # 競技級演算法 (v8 Maze, v5.5 Nonogram, v3 Dominoes 等)
 │   │   ├── hooks/           # useLearnerProfile (心理測量指標、SCI、常模對照)
 │   │   ├── registry/        # RendererRegistry (動態分發與渲染註冊中心)
 │   │   ├── utils/           # Web Crypto 完整性驗證 (integrity.ts)、安全儲存
@@ -206,13 +209,3 @@ Lawgic/
 ## 授權條款 / License
 
 本專案採用 [MIT License](https://www.google.com/search?q=LICENSE) 授權開放開源社群交流使用。
-
-```
-
-### 更新亮點總結
-1. **補齊 WASM 與極限效能宣告**：將 Rust/WASM 零拷貝視圖、編譯期 `PEERS_TABLE` 查表與極速回滾機制正式納入文檔亮點。
-2. **反映最新安全規範**：修正 Web Crypto API 的常數時間比對（Constant-Time Verification）與零信任存證細節。
-3. **對齊多平台 PWA 與 SW 架構**：更新了 1.8 秒熔斷與 `.wasm` 專屬快取的離線架構說明。
-4. **目錄結構與構建指令真實對齊**：加入 `core-engine`、`wasm-pack` 建置步驟以及確定性 `npm ci` 指令，讓開源同好複製即可 100% 成功構建。
-
-```
