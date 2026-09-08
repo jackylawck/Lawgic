@@ -3,7 +3,7 @@ import { PuzzleEntity, TierKey } from '../generated';
 
 export type ExtendedTierKey = TierKey;
 export type EdgeType = 'h' | 'v';
-export type EdgeState = 0 | 1 | 2; // 0: 未決, 1: 實線 (連線), 2: 標叉 (x)
+export type EdgeState = 0 | 1 | 2;
 
 export type SlitherDeductionType =
   | 'zero_cross'
@@ -118,14 +118,15 @@ export class WebSlitherlinkGenerator {
     rows: number,
     cols: number
   ): boolean {
-    const pointDegree: number[][] = Array.from({ length: rows + 1 }, () => Array(cols + 1).fill(0));
+    const ptCols = cols + 1;
+    const pointDegree = new Uint8Array((rows + 1) * ptCols);
     let totalEdges = 0;
 
     for (let r = 0; r <= rows; r++) {
       for (let c = 0; c < cols; c++) {
         if (hEdges[r]?.[c]) {
-          pointDegree[r][c]++;
-          pointDegree[r][c + 1]++;
+          pointDegree[r * ptCols + c]++;
+          pointDegree[r * ptCols + c + 1]++;
           totalEdges++;
         }
       }
@@ -134,8 +135,8 @@ export class WebSlitherlinkGenerator {
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c <= cols; c++) {
         if (vEdges[r]?.[c]) {
-          pointDegree[r][c]++;
-          pointDegree[r + 1][c]++;
+          pointDegree[r * ptCols + c]++;
+          pointDegree[(r + 1) * ptCols + c]++;
           totalEdges++;
         }
       }
@@ -143,20 +144,24 @@ export class WebSlitherlinkGenerator {
 
     if (totalEdges < 4) return false;
 
-    let startPoint: [number, number] | null = null;
+    let startR = -1;
+    let startC = -1;
     for (let r = 0; r <= rows; r++) {
       for (let c = 0; c <= cols; c++) {
-        const deg = pointDegree[r][c];
+        const deg = pointDegree[r * ptCols + c];
         if (deg !== 0 && deg !== 2) return false;
-        if (deg === 2 && !startPoint) startPoint = [r, c];
+        if (deg === 2 && startR === -1) {
+          startR = r;
+          startC = c;
+        }
       }
     }
 
-    if (!startPoint) return false;
+    if (startR === -1) return false;
 
     let visitedEdges = 0;
-    let currR = startPoint[0];
-    let currC = startPoint[1];
+    let currR = startR;
+    let currC = startC;
     let prevR = -1;
     let prevC = -1;
 
@@ -183,7 +188,7 @@ export class WebSlitherlinkGenerator {
       }
 
       if (!found) break;
-      if (currR === startPoint[0] && currC === startPoint[1]) break;
+      if (currR === startR && currC === startC) break;
     }
 
     return visitedEdges === totalEdges;
@@ -194,7 +199,7 @@ export class WebSlitherlinkGenerator {
     cols: number,
     rnd: () => number
   ): { hEdges: boolean[][]; vEdges: boolean[][] } {
-    const inside: boolean[][] = Array.from({ length: rows }, () => Array(cols).fill(false));
+    const inside = Array.from({ length: rows }, () => Array(cols).fill(false));
     const midR = Math.floor(rows / 2);
     const midC = Math.floor(cols / 2);
     inside[midR][midC] = true;
@@ -204,9 +209,9 @@ export class WebSlitherlinkGenerator {
     let currentCells = (midR === rows - 1 - midR && midC === cols - 1 - midC) ? 1 : 2;
     let attempts = 0;
 
-    const dirs = [[-1, 0], [1, 0], [0, -1], [0, 1]];
+    const dirs: [number, number][] = [[-1, 0], [1, 0], [0, -1], [0, 1]];
 
-    while (currentCells < targetCells && attempts++ < 180) {
+    while (currentCells < targetCells && attempts++ < 160) {
       const r = Math.floor(rnd() * rows);
       const c = Math.floor(rnd() * cols);
       const symR = rows - 1 - r;
@@ -222,8 +227,9 @@ export class WebSlitherlinkGenerator {
 
       if (hasAdj) {
         let diagConflict = false;
-        const diagOffsets = [[-1, -1], [-1, 1], [1, -1], [1, 1]];
-        for (const [dr, dc] of diagOffsets) {
+        const diagOffsets: [number, number][] = [[-1, -1], [-1, 1], [1, -1], [1, 1]];
+        for (let i = 0; i < 4; i++) {
+          const [dr, dc] = diagOffsets[i];
           const nr = r + dr;
           const nc = c + dc;
           if (nr >= 0 && nr < rows && nc >= 0 && nc < cols && inside[nr][nc]) {
@@ -235,14 +241,20 @@ export class WebSlitherlinkGenerator {
         }
 
         if (!diagConflict) {
-          if (!inside[r][c]) { inside[r][c] = true; currentCells++; }
-          if (!inside[symR][symC]) { inside[symR][symC] = true; currentCells++; }
+          if (!inside[r][c]) {
+            inside[r][c] = true;
+            currentCells++;
+          }
+          if (!inside[symR][symC]) {
+            inside[symR][symC] = true;
+            currentCells++;
+          }
         }
       }
     }
 
-    const hEdges: boolean[][] = Array.from({ length: rows + 1 }, () => Array(cols).fill(false));
-    const vEdges: boolean[][] = Array.from({ length: rows }, () => Array(cols + 1).fill(false));
+    const hEdges = Array.from({ length: rows + 1 }, () => Array(cols).fill(false));
+    const vEdges = Array.from({ length: rows }, () => Array(cols + 1).fill(false));
 
     for (let r = 0; r <= rows; r++) {
       for (let c = 0; c < cols; c++) {
@@ -306,12 +318,20 @@ export class WebSlitherlinkGenerator {
       }
     }
 
-    for (let r = 0; r <= rows; r++) for (let c = 0; c < cols; c++) if (hEdges[r]?.[c]) totalActive++;
-    for (let r = 0; r < rows; r++) for (let c = 0; c <= cols; c++) if (vEdges[r]?.[c]) totalActive++;
+    for (let r = 0; r <= rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        if (hEdges[r]?.[c]) totalActive++;
+      }
+    }
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c <= cols; c++) {
+        if (vEdges[r]?.[c]) totalActive++;
+      }
+    }
 
     const turnRatio = totalActive > 0 ? turns / totalActive : 0.5;
     const density = totalActive / ((rows + 1) * cols + rows * (cols + 1));
-    return Number(((turnRatio * 0.7) + (density * 0.3)).toFixed(3));
+    return Number((turnRatio * 0.7 + density * 0.3).toFixed(3));
   }
 
   public static countSolutions(
@@ -320,51 +340,54 @@ export class WebSlitherlinkGenerator {
     clues: (number | null)[][],
     limit: number = 2
   ): number {
-    const curH: boolean[][] = Array.from({ length: rows + 1 }, () => Array(cols).fill(false));
-    const curV: boolean[][] = Array.from({ length: rows }, () => Array(cols + 1).fill(false));
-    const ptDeg: number[][] = Array.from({ length: rows + 1 }, () => Array(cols + 1).fill(0));
+    const ptCols = cols + 1;
+    const curH = Array.from({ length: rows + 1 }, () => Array(cols).fill(false));
+    const curV = Array.from({ length: rows }, () => Array(cols + 1).fill(false));
+    const ptDeg = new Uint8Array((rows + 1) * ptCols);
 
     let solutions = 0;
-    let stepBudget = 300;
+    let stepBudget = 250;
 
-    const edgePrioritySet = new Set<string>();
     const allEdges: { type: EdgeType; r: number; c: number }[] = [];
 
+    // 線索邊優先排程
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         if (clues[r][c] !== null) {
-          const neighbors: { type: EdgeType; r: number; c: number }[] = [
-            { type: 'h', r, c },
-            { type: 'h', r: r + 1, c },
-            { type: 'v', r, c },
-            { type: 'v', r, c + 1 },
-          ];
-          for (const edge of neighbors) {
-            const k = `${edge.type}_${edge.r}_${edge.c}`;
-            if (!edgePrioritySet.has(k)) {
-              edgePrioritySet.add(k);
-              allEdges.push(edge);
-            }
-          }
+          allEdges.push({ type: 'h', r, c });
+          allEdges.push({ type: 'h', r: r + 1, c });
+          allEdges.push({ type: 'v', r, c });
+          allEdges.push({ type: 'v', r, c + 1 });
         }
+      }
+    }
+
+    // 去重並補齊其餘邊界
+    const seen = new Set<string>();
+    const orderedEdges: { type: EdgeType; r: number; c: number }[] = [];
+    for (const e of allEdges) {
+      const k = `${e.type}_${e.r}_${e.c}`;
+      if (!seen.has(k)) {
+        seen.add(k);
+        orderedEdges.push(e);
       }
     }
 
     for (let r = 0; r <= rows; r++) {
       for (let c = 0; c < cols; c++) {
         const k = `h_${r}_${c}`;
-        if (!edgePrioritySet.has(k)) {
-          edgePrioritySet.add(k);
-          allEdges.push({ type: 'h', r, c });
+        if (!seen.has(k)) {
+          seen.add(k);
+          orderedEdges.push({ type: 'h', r, c });
         }
       }
     }
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c <= cols; c++) {
         const k = `v_${r}_${c}`;
-        if (!edgePrioritySet.has(k)) {
-          edgePrioritySet.add(k);
-          allEdges.push({ type: 'v', r, c });
+        if (!seen.has(k)) {
+          seen.add(k);
+          orderedEdges.push({ type: 'v', r, c });
         }
       }
     }
@@ -372,7 +395,7 @@ export class WebSlitherlinkGenerator {
     const backtrack = (idx: number): void => {
       if (solutions >= limit || stepBudget-- <= 0) return;
 
-      if (idx === allEdges.length) {
+      if (idx === orderedEdges.length) {
         let allCluesSatisfied = true;
         for (let r = 0; r < rows; r++) {
           for (let c = 0; c < cols; c++) {
@@ -383,7 +406,10 @@ export class WebSlitherlinkGenerator {
               if (curH[r + 1][c]) count++;
               if (curV[r][c]) count++;
               if (curV[r][c + 1]) count++;
-              if (count !== cl) { allCluesSatisfied = false; break; }
+              if (count !== cl) {
+                allCluesSatisfied = false;
+                break;
+              }
             }
           }
           if (!allCluesSatisfied) break;
@@ -395,16 +421,17 @@ export class WebSlitherlinkGenerator {
         return;
       }
 
-      const e = allEdges[idx];
-      const p1: [number, number] = [e.r, e.c];
-      const p2: [number, number] = e.type === 'h' ? [e.r, e.c + 1] : [e.r + 1, e.c];
+      const e = orderedEdges[idx];
+      const p1Idx = e.r * ptCols + e.c;
+      const p2Idx = e.type === 'h' ? e.r * ptCols + (e.c + 1) : (e.r + 1) * ptCols + e.c;
 
-      if (ptDeg[p1[0]][p1[1]] < 2 && ptDeg[p2[0]][p2[1]] < 2) {
+      // 分支 1: 置為實線
+      if (ptDeg[p1Idx] < 2 && ptDeg[p2Idx] < 2) {
         if (e.type === 'h') curH[e.r][e.c] = true;
         else curV[e.r][e.c] = true;
 
-        ptDeg[p1[0]][p1[1]]++;
-        ptDeg[p2[0]][p2[1]]++;
+        ptDeg[p1Idx]++;
+        ptDeg[p2Idx]++;
 
         let validClue = true;
         if (e.type === 'h') {
@@ -450,10 +477,11 @@ export class WebSlitherlinkGenerator {
         if (e.type === 'h') curH[e.r][e.c] = false;
         else curV[e.r][e.c] = false;
 
-        ptDeg[p1[0]][p1[1]]--;
-        ptDeg[p2[0]][p2[1]]--;
+        ptDeg[p1Idx]--;
+        ptDeg[p2Idx]--;
       }
 
+      // 分支 2: 不選此邊
       backtrack(idx + 1);
     };
 
@@ -473,7 +501,7 @@ export class WebSlitherlinkGenerator {
       { edge: SlitherEdge; state: 1 | 2; type: SlitherDeductionType; rationale: string; humanReadable: { zh: string; en: string } }
     >();
 
-    // 1. Clue 0
+    // 定式 1: 線索 0 周邊標叉
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         if (clues[r][c] === 0) {
@@ -486,8 +514,8 @@ export class WebSlitherlinkGenerator {
                 type: 'zero_cross',
                 rationale: '線索 0 周圍禁絕一切線段',
                 humanReadable: {
-                  zh: '因為 0 的四周不能有任何線段，所以這條邊必須標記叉號 (×)。',
-                  en: 'Zero clues forbid any surrounding lines; mark with a cross (×).',
+                  zh: '因為 0 的四周不能有任何線段，所以這條邊必須標記叉號 (x)。',
+                  en: 'Zero clues forbid any surrounding lines; mark with a cross (x).',
                 },
               });
             }
@@ -500,7 +528,7 @@ export class WebSlitherlinkGenerator {
       }
     }
 
-    // 2. 角落 3 定式 (Corner 3)
+    // 定式 2: 角落 3 定式
     const corners: [number, number, [EdgeType, number, number][]][] = [
       [0, 0, [['h', 0, 0], ['v', 0, 0]]],
       [0, cols - 1, [['h', 0, cols - 1], ['v', 0, cols]]],
@@ -508,9 +536,11 @@ export class WebSlitherlinkGenerator {
       [rows - 1, cols - 1, [['h', rows, cols - 1], ['v', rows - 1, cols]]],
     ];
 
-    for (const [cr, cc, outerEdges] of corners) {
+    for (let i = 0; i < 4; i++) {
+      const [cr, cc, outerEdges] = corners[i];
       if (clues[cr][cc] === 3) {
-        for (const [t, er, ec] of outerEdges) {
+        for (let j = 0; j < outerEdges.length; j++) {
+          const [t, er, ec] = outerEdges[j];
           if ((t === 'h' ? curH[er][ec] : curV[er][ec]) === 0) {
             deductions.set(`${t}_${er}_${ec}`, {
               edge: { type: t, r: er, c: ec },
@@ -518,8 +548,8 @@ export class WebSlitherlinkGenerator {
               type: 'corner_three',
               rationale: '角落 3 兩條外邊界必須強制通線',
               humanReadable: {
-                zh: `盤面角落的線索 3：兩側靠邊的軌道必須強制連線！`,
-                en: `Corner 3 pattern forces outer boundaries to connect.`,
+                zh: '盤面角落的線索 3：兩側靠邊的軌道必須強制連線！',
+                en: 'Corner 3 pattern forces outer boundaries to connect.',
               },
             });
           }
@@ -527,7 +557,7 @@ export class WebSlitherlinkGenerator {
       }
     }
 
-    // 3. Adjacent 3s
+    // 定式 3: 相鄰雙 3 定式
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         if (c + 1 < cols && clues[r][c] === 3 && clues[r][c + 1] === 3) {
@@ -536,7 +566,8 @@ export class WebSlitherlinkGenerator {
             ['v', r, c + 1],
             ['v', r, c + 2],
           ];
-          for (const [t, er, ec] of targets) {
+          for (let i = 0; i < targets.length; i++) {
+            const [t, er, ec] = targets[i];
             if ((t === 'h' ? curH[er][ec] : curV[er][ec]) === 0) {
               deductions.set(`${t}_${er}_${ec}`, {
                 edge: { type: t, r: er, c: ec },
@@ -557,7 +588,8 @@ export class WebSlitherlinkGenerator {
             ['h', r + 1, c],
             ['h', r + 2, c],
           ];
-          for (const [t, er, ec] of targets) {
+          for (let i = 0; i < targets.length; i++) {
+            const [t, er, ec] = targets[i];
             if ((t === 'h' ? curH[er][ec] : curV[er][ec]) === 0) {
               deductions.set(`${t}_${er}_${ec}`, {
                 edge: { type: t, r: er, c: ec },
@@ -575,7 +607,7 @@ export class WebSlitherlinkGenerator {
       }
     }
 
-    // 4. Degree Saturation & Extension
+    // 定式 4: 頂點度數飽和與延伸
     for (let r = 0; r <= rows; r++) {
       for (let c = 0; c <= cols; c++) {
         const edges: { type: EdgeType; er: number; ec: number; val: number }[] = [];
@@ -586,7 +618,8 @@ export class WebSlitherlinkGenerator {
 
         const activeCount = edges.filter((e) => e.val === 1).length;
         if (activeCount === 2) {
-          for (const e of edges) {
+          for (let i = 0; i < edges.length; i++) {
+            const e = edges[i];
             if (e.val === 0) {
               deductions.set(`${e.type}_${e.er}_${e.ec}`, {
                 edge: { type: e.type, r: e.er, c: e.ec },
@@ -594,7 +627,7 @@ export class WebSlitherlinkGenerator {
                 type: 'degree_saturation',
                 rationale: '頂點度數已滿 (2)，其餘邊標叉防分支',
                 humanReadable: {
-                  zh: '這個交叉點已經有兩條線進出，其餘方向必須標記叉號 (×)。',
+                  zh: '這個交叉點已經有兩條線進出，其餘方向必須標記叉號 (x)。',
                   en: 'Vertex already has 2 connecting lines; remaining paths must be crossed out.',
                 },
               });
@@ -619,7 +652,7 @@ export class WebSlitherlinkGenerator {
       }
     }
 
-    // 5. Clue Completion
+    // 定式 5: 線索完成與剩餘邊補齊
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         const clue = clues[r][c];
@@ -636,20 +669,22 @@ export class WebSlitherlinkGenerator {
           const open = edges.filter((e) => e.val === 0);
 
           if (active === clue && open.length > 0) {
-            for (const op of open) {
+            for (let i = 0; i < open.length; i++) {
+              const op = open[i];
               deductions.set(`${op.type}_${op.er}_${op.ec}`, {
                 edge: { type: op.type, r: op.er, c: op.ec },
                 state: 2,
                 type: 'clue_completion',
                 rationale: `線索 ${clue} 已滿足，剩餘邊全數標叉`,
                 humanReadable: {
-                  zh: `格子周圍已經剛好有 ${clue} 條線了，其餘空白邊全部標記叉號 (×)。`,
+                  zh: `格子周圍已經剛好有 ${clue} 條線了，其餘空白邊全部標記叉號 (x)。`,
                   en: `Cell has reached its clue of ${clue}; all other edges around it must be crossed.`,
                 },
               });
             }
           } else if (4 - blocked === clue && open.length > 0) {
-            for (const op of open) {
+            for (let i = 0; i < open.length; i++) {
+              const op = open[i];
               deductions.set(`${op.type}_${op.er}_${op.ec}`, {
                 edge: { type: op.type, r: op.er, c: op.ec },
                 state: 1,
@@ -703,8 +738,8 @@ export class WebSlitherlinkGenerator {
     cols: number,
     clues: (number | null)[][]
   ) {
-    const curH: number[][] = Array.from({ length: rows + 1 }, () => Array(cols).fill(0));
-    const curV: number[][] = Array.from({ length: rows }, () => Array(cols + 1).fill(0));
+    const curH = Array.from({ length: rows + 1 }, () => Array(cols).fill(0));
+    const curV = Array.from({ length: rows }, () => Array(cols + 1).fill(0));
     const steps: SlitherStep[] = [];
 
     let progressed = true;
@@ -754,14 +789,14 @@ export class WebSlitherlinkGenerator {
       pureRate: Math.min(1.0, pureRate),
       hypothesisCount: 0,
       style: 'pure_logic' as HumanSolvingStyle,
-      diagnosticTitleZh: '🧠 純邏輯推導大師（100% 幾何定式直覺）',
+      diagnosticTitleZh: '純邏輯推導大師（100% 幾何定式直覺）',
       diagnosticTitleEn: 'Pure Logic Mastery (100% Theorem Driven)',
     };
   }
 
   private static createSafeFallbackLoop(rows: number, cols: number): { hEdges: boolean[][]; vEdges: boolean[][] } {
-    const hEdges: boolean[][] = Array.from({ length: rows + 1 }, () => Array(cols).fill(false));
-    const vEdges: boolean[][] = Array.from({ length: rows }, () => Array(cols + 1).fill(false));
+    const hEdges = Array.from({ length: rows + 1 }, () => Array(cols).fill(false));
+    const vEdges = Array.from({ length: rows }, () => Array(cols + 1).fill(false));
 
     for (let c = 0; c < cols; c++) {
       hEdges[0][c] = true;
@@ -824,8 +859,8 @@ export class WebSlitherlinkGenerator {
 
       const simResult = this.simulateHumanSolving(rows, cols, puzzleClues);
 
-      if ((tier === 'master' || tier === 'legendary' || tier === 'ultimate') && 
-          (simResult.maxForcedChain < Math.min(minForcedChain, 8))) {
+      if ((tier === 'master' || tier === 'legendary' || tier === 'ultimate') &&
+          simResult.maxForcedChain < Math.min(minForcedChain, 8)) {
         continue;
       }
 
@@ -913,7 +948,7 @@ export class WebSlitherlinkGenerator {
       humanProfile: {
         style: 'pure_logic',
         hypothesisCount: 0,
-        diagnosticTitleZh: '🧠 純邏輯推導大師（100% 幾何定式直覺）',
+        diagnosticTitleZh: '純邏輯推導大師（100% 幾何定式直覺）',
         diagnosticTitleEn: 'Pure Logic Mastery (100% Theorem Driven)',
       },
     };
