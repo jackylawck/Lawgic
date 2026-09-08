@@ -3,6 +3,8 @@ import { PuzzleEntity, TierKey } from '../generated';
 
 export type ExtendedTierKey = TierKey;
 
+export type DominoBorderState = 'unknown' | 'open' | 'wall';
+
 export type DominoTechnique =
   | 'dead_end_forcing'
   | 'unique_pair_localization'
@@ -12,9 +14,9 @@ export type DominoTechnique =
 
 export interface ContradictionNode {
   depth: number;
-  assumption: string;      // 例如："假設連接 [1,1] 與 [1,2] 形成骨牌 [0|1]"
-  derived: string;         // 例如："迫使度數為 1 的單元格 [1,3] 連接 [2,3] 形成 [1|2]"
-  conflictReason: string;  // 例如："單元格 [2,4] 周圍骨牌庫存耗盡或被隔牆完全孤立，度數歸零"
+  assumption: string;
+  derived: string;
+  conflictReason: string;
 }
 
 export interface DominoHintStep {
@@ -29,7 +31,9 @@ export interface DominoHintStep {
   val2: number;
   technique: DominoTechnique;
   dagDepth: number;
-  structuredContradiction?: ContradictionNode[]; // 棋譜化結構因果鏈
+  evidenceCells?: [number, number][];
+  forcedType?: 'connect' | 'wall';
+  structuredContradiction?: ContradictionNode[];
   rationale: string;
   humanReadable: {
     zh: string;
@@ -44,7 +48,7 @@ export interface DominoPlacement {
   c2: number;
   val1: number;
   val2: number;
-  isPinnedClue?: boolean; // 邊界預置線索標記
+  isPinnedClue?: boolean;
 }
 
 export interface DominoesSpec {
@@ -52,7 +56,12 @@ export interface DominoesSpec {
   cols: number;
   maxPip: number;
   grid: number[][];
+  dominoes: [number, number][];
   solutionPlacements: DominoPlacement[];
+  solutionBorders: {
+    horizontal: boolean[][]; // true 代表隔牆，false 代表相連骨牌內部
+    vertical: boolean[][];
+  };
   pinnedPlacements: DominoPlacement[];
   solvingSteps: DominoHintStep[];
   highestTechnique: DominoTechnique;
@@ -102,6 +111,10 @@ function mulberry32(a: number) {
 }
 
 export class WebDominoesGenerator {
+  public static getDominoKey(v1: number, v2: number): string {
+    return `${Math.min(v1, v2)}_${Math.max(v1, v2)}`;
+  }
+
   public static generate(tier: TierKey = 'kids', inputSeed?: number): PuzzleEntity {
     const config = TIER_SPECS[tier] || TIER_SPECS.kids;
     const { maxPip, rows, cols, minComplexityScore, maxLookaheadDepth, baseIrt, timeLimitSec } = config;
@@ -110,6 +123,12 @@ export class WebDominoesGenerator {
     const rnd = mulberry32(actualSeed);
 
     const totalDominoes = ((maxPip + 1) * (maxPip + 2)) / 2;
+    const fullDeck: [number, number][] = [];
+    for (let i = 0; i <= maxPip; i++) {
+      for (let j = i; j <= maxPip; j++) {
+        fullDeck.push([i, j]);
+      }
+    }
 
     let bestAttemptTiling: { grid: number[][]; placements: DominoPlacement[] } | null = null;
     let bestSimResult: any = null;
@@ -122,12 +141,10 @@ export class WebDominoesGenerator {
 
       const { grid, placements } = tiling;
 
-      // 嚴格 MRV 驗證（含前置二分匹配早期剪枝）
       if (!this._verifyStrictUniquenessMRV(grid, rows, cols, maxPip)) {
         continue;
       }
 
-      // 多階層推導模擬（實裝結構化棋譜反證、行列殘餘容量與二分匹配閉環）
       const sim = this._simulateChampionshipSolving(grid, rows, cols, maxPip, maxLookaheadDepth);
 
       if (sim.logicalComplexityScore > highestAttemptScore) {
@@ -145,12 +162,16 @@ export class WebDominoesGenerator {
           ).toFixed(2)
         );
 
+        const solutionBorders = this._deriveSolutionBorders(rows, cols, placements);
+
         const spec: DominoesSpec = {
           rows,
           cols,
           maxPip,
           grid,
+          dominoes: fullDeck,
           solutionPlacements: placements,
+          solutionBorders,
           pinnedPlacements: [],
           solvingSteps: sim.steps,
           highestTechnique: sim.highestTechnique,
@@ -206,6 +227,61 @@ export class WebDominoesGenerator {
       bestSimResult,
       rnd
     );
+  }
+
+  private static _deriveSolutionBorders(
+    rows: number,
+    cols: number,
+    placements: DominoPlacement[]
+  ): { horizontal: boolean[][]; vertical: boolean[][] } {
+    const horizontal = Array.from({ length: Math.max(0, rows - 1) }, () => Array(cols).fill(true));
+    const vertical = Array.from({ length: rows }, () => Array(Math.max(0, cols - 1)).fill(true));
+
+    for (let i = 0; i < placements.length; i++) {
+      const p = placements[i];
+      if (p.r1 === p.r2) {
+        // 水平骨牌：垂直邊界被打通（非牆）
+        const r = p.r1;
+        const minC = Math.min(p.c1, p.c2);
+        if (r < rows && minC < cols - 1) {
+          vertical[r][minC] = false;
+        }
+      } else if (p.c1 === p.c2) {
+        // 垂直骨牌：水平邊界被打通（非牆）
+        const c = p.c1;
+        const minR = Math.min(p.r1, p.r2);
+        if (minR < rows - 1 && c < cols) {
+          horizontal[minR][c] = false;
+        }
+      }
+    }
+
+    return { horizontal, vertical };
+  }
+
+  public static getNextForcedDeduction(
+    spec: DominoesSpec,
+    currentHBorders: DominoBorderState[][],
+    currentVBorders: DominoBorderState[][]
+  ): DominoHintStep | null {
+    const steps = spec.solvingSteps || [];
+    for (let i = 0; i < steps.length; i++) {
+      const s = steps[i];
+      if (s.r1 === s.r2) {
+        const r = s.r1;
+        const minC = Math.min(s.c1, s.c2);
+        const cur = currentVBorders[r]?.[minC];
+        if (s.actionType === 'place_domino' && cur !== 'open') return s;
+        if (s.actionType === 'draw_wall' && cur !== 'wall') return s;
+      } else if (s.c1 === s.c2) {
+        const c = s.c1;
+        const minR = Math.min(s.r1, s.r2);
+        const cur = currentHBorders[minR]?.[c];
+        if (s.actionType === 'place_domino' && cur !== 'open') return s;
+        if (s.actionType === 'draw_wall' && cur !== 'wall') return s;
+      }
+    }
+    return steps.length > 0 ? steps[0] : null;
   }
 
   private static _edgeKey(r1: number, c1: number, r2: number, c2: number): string {
@@ -294,9 +370,6 @@ export class WebDominoesGenerator {
     return { grid: grid.map((r) => Array.from(r)), placements };
   }
 
-  /**
-   * MRV 啟發式驗證器（先期執行數值感知二分匹配快速剪枝，省下 40% 無謂回溯）
-   */
   private static _verifyStrictUniquenessMRV(
     grid: number[][],
     rows: number,
@@ -316,7 +389,6 @@ export class WebDominoesGenerator {
       usedDominoes[minV][maxV] = 1;
     }
 
-    // 早期剪枝：若連前置完美匹配都不存在，直接返回 false
     const emptyBlocked = new Set<string>();
     if (!this._hasPerfectDominoMatchingWithValueConstraints(grid, covered, usedDominoes, emptyBlocked, rows, cols)) {
       return false;
@@ -471,9 +543,6 @@ export class WebDominoesGenerator {
     return true;
   }
 
-  /**
-   * 錦標賽級多層級人類推導模擬引擎（v6：棋譜化因果反證與二重殘餘容量檢驗）
-   */
   private static _simulateChampionshipSolving(
     grid: number[][],
     rows: number,
@@ -513,7 +582,7 @@ export class WebDominoesGenerator {
     while (progressed && placedCount < totalDominoes) {
       progressed = false;
 
-      // 1. 定式一：死胡同唯一定向 (Dead-End Forcing)
+      // 1. 死胡同唯一定向
       for (let r = 0; r < rows; r++) {
         for (let c = 0; c < cols; c++) {
           if (placed[r][c]) continue;
@@ -545,10 +614,12 @@ export class WebDominoesGenerator {
               level: 1,
               step: placedCount,
               actionType: 'place_domino',
+              forcedType: 'connect',
               r1: r, c1: c, r2: nr, c2: nc,
               val1: v1, val2: v2,
               technique: 'dead_end_forcing',
               dagDepth: criticalPathDepth,
+              evidenceCells: [[r, c], [nr, nc]],
               rationale: `單元格 (${r + 1}, ${c + 1}) 的相容延伸唯一受迫`,
               humanReadable: {
                 zh: `【死胡同定向】單元格 [${r + 1}, ${c + 1}] 周圍僅存 [${nr + 1}, ${nc + 1}] 可相容，強制鎖定骨牌 [${v1}|${v2}]！`,
@@ -564,7 +635,7 @@ export class WebDominoesGenerator {
       }
       if (progressed) continue;
 
-      // 2. 定式二：全域唯一點對定位 (Unique Pair Localization)
+      // 2. 全域唯一點對定位
       const pairOccurrences = new Map<string, [number, number, number, number][]>();
 
       for (let r = 0; r < rows; r++) {
@@ -613,10 +684,12 @@ export class WebDominoesGenerator {
             level: 2,
             step: placedCount,
             actionType: 'place_domino',
+            forcedType: 'connect',
             r1, c1, r2, c2,
             val1: grid[r1][c1], val2: grid[r2][c2],
             technique: 'unique_pair_localization',
             dagDepth: criticalPathDepth,
+            evidenceCells: [[r1, c1], [r2, c2]],
             rationale: `骨牌 [${pA}|${pB}] 在全盤候選槽位中具唯一性`,
             humanReadable: {
               zh: `【唯一點對鎖定】全域掃描顯示骨牌 [${pA}|${pB}] 僅能在 [${r1 + 1}, ${c1 + 1}] 與 [${r2 + 1}, ${c2 + 1}] 成型，必然鎖定！`,
@@ -630,19 +703,14 @@ export class WebDominoesGenerator {
       }
       if (progressed) continue;
 
-      // 3. 定式三：行列殘餘點數總和與奇偶容量約束 (Line Residual Sum & Parity Dual-Constraint)
+      // 3. 行列殘餘容量約束
       outerLineSum: for (let r = 0; r < rows; r++) {
         const unplacedInRow: number[] = [];
-        let rowSum = 0;
         for (let c = 0; c < cols; c++) {
-          if (!placed[r][c]) {
-            unplacedInRow.push(c);
-            rowSum += grid[r][c];
-          }
+          if (!placed[r][c]) unplacedInRow.push(c);
         }
 
         if (unplacedInRow.length > 0) {
-          // 情況 A：奇數空格強迫垂直跨越
           if (unplacedInRow.length % 2 !== 0) {
             const verticalSpans: { c: number; targetR: number }[] = [];
             for (const c of unplacedInRow) {
@@ -672,10 +740,12 @@ export class WebDominoesGenerator {
                 level: 2,
                 step: placedCount,
                 actionType: 'place_domino',
+                forcedType: 'connect',
                 r1: r, c1: c, r2: targetR, c2: c,
                 val1: v1, val2: v2,
                 technique: 'line_sum_residual_constraint',
                 dagDepth: criticalPathDepth,
+                evidenceCells: [[r, c], [targetR, c]],
                 rationale: `第 ${r + 1} 行剩餘空格數為奇數 (${unplacedInRow.length})，強迫唯一跨行延伸`,
                 humanReadable: {
                   zh: `【行列奇偶約束】第 ${r + 1} 行未決空格數為奇數 (${unplacedInRow.length})，必有垂直骨牌跨行，鎖定 [${r + 1},${c + 1}] 與 [${targetR + 1},${c + 1}] 之 [${v1}|${v2}]！`,
@@ -686,12 +756,9 @@ export class WebDominoesGenerator {
               progressed = true;
               break outerLineSum;
             }
-          }
-          // 情況 B：點數總和容量閉鎖（偶數空格但點數總和無法由內部水平均分消化）
-          else if (unplacedInRow.length === 2 && Math.abs(unplacedInRow[0] - unplacedInRow[1]) === 1) {
+          } else if (unplacedInRow.length === 2 && Math.abs(unplacedInRow[0] - unplacedInRow[1]) === 1) {
             const cA = unplacedInRow[0];
             const cB = unplacedInRow[1];
-            // 若水平連接兩者骨牌不可用，則兩者必須各自往外部垂直延伸
             if (!isPairAvailable(grid[r][cA], grid[r][cB]) || isEdgeBlocked(r, cA, r, cB)) {
               blockedEdges.add(WebDominoesGenerator._edgeKey(r, cA, r, cB));
               usedTechniques.add('line_sum_residual_constraint');
@@ -703,7 +770,7 @@ export class WebDominoesGenerator {
       }
       if (progressed) continue;
 
-      // 4. 定式四：數值感知二分匹配瓶頸排除（劃定隔牆）
+      // 4. 二分匹配瓶頸隔牆劃定
       outerMatching: for (let r = 0; r < rows; r++) {
         for (let c = 0; c < cols; c++) {
           if (placed[r][c]) continue;
@@ -750,10 +817,12 @@ export class WebDominoesGenerator {
                 level: 2,
                 step: placedCount,
                 actionType: 'draw_wall',
+                forcedType: 'wall',
                 r1: r, c1: c, r2: nr, c2: nc,
                 val1: grid[r][c], val2: grid[nr][nc],
                 technique: 'bipartite_matching_parity',
                 dagDepth: criticalPathDepth,
+                evidenceCells: [[r, c], [nr, nc]],
                 rationale: `連接 [${r + 1},${c + 1}] 與 [${nr + 1},${nc + 1}] 引發子圖二分匹配瓶頸割裂`,
                 humanReadable: {
                   zh: `【隔牆劃定】若連接 [${r + 1}, ${c + 1}] 與 [${nr + 1}, ${nc + 1}] 形成 [${pA}|${pB}]，剩餘子圖無法形成完美匹配，確認為隔牆！`,
@@ -769,7 +838,7 @@ export class WebDominoesGenerator {
       }
       if (progressed) continue;
 
-      // 5. 定式五：棋譜化結構因果動態反證鏈
+      // 5. 棋譜式動態反證鏈
       outerForcing: for (let r = 0; r < rows; r++) {
         for (let c = 0; c < cols; c++) {
           if (placed[r][c]) continue;
@@ -822,10 +891,12 @@ export class WebDominoesGenerator {
                 level: 3,
                 step: placedCount,
                 actionType: 'draw_wall',
+                forcedType: 'wall',
                 r1: r, c1: c, r2: nr, c2: nc,
                 val1: grid[r][c], val2: grid[nr][nc],
                 technique: 'dynamic_forcing_chain',
                 dagDepth: criticalPathDepth,
+                evidenceCells: [[r, c], [nr, nc]],
                 structuredContradiction: structuredTrace,
                 rationale: `棋譜式反證成立：該假定經 ${structuredTrace.length} 階連鎖演繹導出衝突`,
                 humanReadable: {
@@ -863,9 +934,6 @@ export class WebDominoesGenerator {
     };
   }
 
-  /**
-   * 棋譜化結構因果演繹閉包探針
-   */
   private static _exploreStructuredForcingChain(
     grid: number[][],
     placed: Uint8Array[],
@@ -880,7 +948,6 @@ export class WebDominoesGenerator {
   ): boolean {
     if (currentDepth > maxDepth) return false;
 
-    // 1. 數值感知二分匹配檢驗
     if (!WebDominoesGenerator._hasPerfectDominoMatchingWithValueConstraints(grid, placed, usedPairs, blockedEdges, rows, cols)) {
       trace.push({
         depth: currentDepth,
@@ -891,7 +958,6 @@ export class WebDominoesGenerator {
       return true;
     }
 
-    // 2. 演繹閉包：逐格推導
     const dirs = [[0, 1], [1, 0], [0, -1], [-1, 0]];
     let localProgressed = true;
 
@@ -956,9 +1022,6 @@ export class WebDominoesGenerator {
     return false;
   }
 
-  /**
-   * 漸進邊界優先釘定備援（優先鎖定邊角線索，並主動降級難度誠信）
-   */
   private static _generateProgressivePinnedFallback(
     tier: TierKey,
     config: TierConfig,
@@ -969,11 +1032,16 @@ export class WebDominoesGenerator {
   ): PuzzleEntity {
     const { rows, cols, maxPip, baseIrt, timeLimitSec } = config;
     const totalDominoes = ((maxPip + 1) * (maxPip + 2)) / 2;
+    const fullDeck: [number, number][] = [];
+    for (let i = 0; i <= maxPip; i++) {
+      for (let j = i; j <= maxPip; j++) {
+        fullDeck.push([i, j]);
+      }
+    }
 
     const fallbackTiling = bestTiling || this._generateSpiralSymmetryBrokenTiling(rows, cols, maxPip, rnd)!;
     const { grid, placements } = fallbackTiling;
 
-    // 邊界優先排序策略（Perimeter / Corner Biased Sorting）
     const candidatePlacements = [...placements].sort((a, b) => {
       const aOnEdge = a.r1 === 0 || a.r1 === rows - 1 || a.c1 === 0 || a.c1 === cols - 1;
       const bOnEdge = b.r1 === 0 || b.r1 === rows - 1 || b.c1 === 0 || b.c1 === cols - 1;
@@ -1008,13 +1076,16 @@ export class WebDominoesGenerator {
     }
 
     const criticalDepth = isUnique ? (bestSim ? bestSim.criticalPathDepth : 14) : 8;
+    const solutionBorders = this._deriveSolutionBorders(rows, cols, placements);
 
     const spec: DominoesSpec = {
       rows,
       cols,
       maxPip,
       grid,
+      dominoes: fullDeck,
       solutionPlacements: placements,
+      solutionBorders,
       pinnedPlacements,
       solvingSteps: bestSim ? bestSim.steps : [],
       highestTechnique: 'bipartite_matching_parity',
