@@ -36,18 +36,16 @@ export const MazeBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode 
   const [startTime, setStartTime] = useState<number>(Date.now());
   const [isDarkVision, setIsDarkVision] = useState<boolean>(false);
 
-  // Boss 二階段精神污染短暫閃爍 (Phase 2 Mental Glitch)
+  // Phase 2 壓力閃爍（原精神污染，改為中性名）
   const [isGlitching, setIsGlitching] = useState<boolean>(false);
   const glitchTriggeredRef = useRef<boolean>(false);
 
-  // 雙軌幽靈與賽後病理覆盤
   const [ghostMode, setGhostMode] = useState<'none' | 'player' | 'optimal'>('none');
   const [ghostPos, setGhostPos] = useState<[number, number] | null>(null);
   const [showHeatmap, setShowHeatmap] = useState<boolean>(false);
   const [showDeceptionWaypoints, setShowDeceptionWaypoints] = useState<boolean>(false);
   const [selectedWaypoint, setSelectedWaypoint] = useState<DeceptionWaypoint | null>(null);
 
-  // 長按滑行與宏觀思考計時
   const glideIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const lastMoveTimeRef = useRef<number>(Date.now());
   const [strategicThoughtTime, setStrategicThoughtTime] = useState<number>(0);
@@ -93,7 +91,6 @@ export const MazeBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode 
         return false;
       }
 
-      // 檢查是否踏入終點門前一格：觸發 Boss 二階段 60ms 視網膜抽搐閃爍
       const distToGoal = Math.abs(nx - end[0]) + Math.abs(ny - end[1]);
       if (distToGoal === 1 && spec.hasPhase2MentalGlitch && !glitchTriggeredRef.current) {
         glitchTriggeredRef.current = true;
@@ -286,14 +283,16 @@ export const MazeBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode 
         isGlitching ? 'bg-rose-950/40 ring-4 ring-rose-500' : ''
       }`}
     >
-      {/* 數據看板 */}
+      {/* 數據看板 - 全面雙語化 */}
       <div className="w-full max-w-[340px] mb-2 flex flex-col gap-1 text-[9px]">
         <div className="flex items-center justify-between px-1 text-slate-400">
           <span className="text-cyan-400 font-bold">
-            {spec.hasPhase2MentalGlitch ? '⚔️ 深淵監視者（Phase 2 精神污染）' : '🌀 認知波浪迷宮'}
+            {spec.hasPhase2MentalGlitch
+              ? (isEn ? '⚔️ Ultimate Challenge (Phase 2 Pressure Test)' : '⚔️ 頂尖挑戰（第二階段壓力考驗）')
+              : (isEn ? '🌀 Cognitive Wave Maze' : '🌀 認知波浪迷宮')}
           </span>
           <span className="text-slate-500 text-[8px]">
-            Gain: {spec.cognitivePhaseGain || 1.45}x | Overlap: {Math.round((spec.visualOptimalOverlapRatio || 0.3) * 100)}%
+            {isEn ? 'Gain' : '增益'}: {spec.cognitivePhaseGain || 1.45}x | {isEn ? 'Overlap' : '重疊率'}: {Math.round((spec.visualOptimalOverlapRatio || 0.3) * 100)}%
           </span>
         </div>
         <div className="grid grid-cols-3 gap-1">
@@ -302,17 +301,17 @@ export const MazeBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode 
             <div className="text-slate-200 font-bold">{(elapsedMs / 1000).toFixed(1)}s</div>
           </div>
           <div className="bg-slate-950 border border-slate-800 p-1 rounded text-center">
-            <div className="text-slate-500 text-[7px]">{isEn ? 'Steps' : '步數比'}</div>
+            <div className="text-slate-500 text-[7px]">{isEn ? 'Steps / Opt' : '步數 / 最佳'}</div>
             <div className="text-cyan-300 font-bold">{playerPath.length}/{optimalSolution.length}</div>
           </div>
           <div className="bg-slate-950 border border-slate-800 p-1 rounded text-center">
-            <div className="text-slate-500 text-[7px]">{isEn ? 'Max Regret' : '心智流血量'}</div>
-            <div className="text-rose-400 font-bold">{spec.maxVisualRegretValue || 24} 步</div>
+            <div className="text-slate-500 text-[7px]">{isEn ? 'Max Penalty' : '最大代價步數'}</div>
+            <div className="text-rose-400 font-bold">{spec.maxVisualRegretValue || 24} {isEn ? 'steps' : '步'}</div>
           </div>
         </div>
       </div>
 
-      {/* 迷宮主畫布 */}
+      {/* 迷宮畫布（不變） */}
       <div className="relative p-2 bg-slate-950 border-2 border-slate-800 rounded-xl shadow-2xl flex flex-col items-center">
         <div
           className="grid gap-[1px] bg-slate-900/90 p-[2px] rounded border border-slate-800 relative"
@@ -393,26 +392,30 @@ export const MazeBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode 
         </div>
       </div>
 
-      {/* 賽後病理切片彈出卡片 */}
+      {/* 賽後病理切片 - 負面詞彙替換 */}
       {selectedWaypoint && (
         <div className="w-full max-w-[340px] mt-2 p-2 bg-slate-900 border border-purple-500/80 rounded-lg text-[8px] text-slate-200 animate-fade-in font-mono flex items-center justify-between">
           <div>
-            <div className="text-purple-300 font-bold">🎯 致命欺騙航點 [{selectedWaypoint.coordinate[0]}, {selectedWaypoint.coordinate[1]}]</div>
-            <div className="text-slate-400 text-[7.5px]">
-              類型: {selectedWaypoint.trapType} | 內部二級分岔: {selectedWaypoint.internalSubForks} 處
+            <div className="text-purple-300 font-bold">
+              {isEn ? '🎯 Critical Fork Waypoint' : '🎯 關鍵分歧航點'} [{selectedWaypoint.coordinate[0]}, {selectedWaypoint.coordinate[1]}]
             </div>
-            <div className="text-rose-400 font-bold">心智流血代價: {selectedWaypoint.regretCost} 步</div>
+            <div className="text-slate-400 text-[7.5px]">
+              {isEn ? 'Type' : '類型'}: {selectedWaypoint.trapType} | {isEn ? 'Internal Sub‑forks' : '內部二級分岔'}: {selectedWaypoint.internalSubForks || 0}
+            </div>
+            <div className="text-rose-400 font-bold">
+              {isEn ? 'Penalty Cost' : '代價步數'}: {selectedWaypoint.regretCost} {isEn ? 'steps' : '步'}
+            </div>
           </div>
           <button
             onClick={() => setSelectedWaypoint(null)}
             className="px-2 py-1 bg-slate-800 text-slate-400 rounded hover:text-white"
           >
-            關閉
+            {isEn ? 'Close' : '關閉'}
           </button>
         </div>
       )}
 
-      {/* 控制按鈕群 */}
+      {/* 控制按鈕 - 雙語化 */}
       <div className="flex items-center justify-between w-full max-w-[340px] mt-2 gap-1 text-[8.5px] font-bold">
         <button
           onClick={() => setIsDarkVision((prev) => !prev)}
@@ -422,7 +425,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode 
               : 'bg-slate-900 text-slate-400 border-slate-800'
           }`}
         >
-          {isDarkVision ? '👁️ 戰霧' : '🌐 全圖'}
+          {isDarkVision ? (isEn ? '👁️ Fog' : '👁️ 戰霧') : (isEn ? '🌐 Full Map' : '🌐 全圖')}
         </button>
 
         {isCompleted && (
@@ -435,7 +438,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode 
                   : 'bg-slate-900 text-slate-300 border-slate-800'
               }`}
             >
-              🔥 熱力
+              {isEn ? '🔥 Heatmap' : '🔥 熱力'}
             </button>
             <button
               onClick={() => setShowDeceptionWaypoints((prev) => !prev)}
@@ -445,20 +448,20 @@ export const MazeBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode 
                   : 'bg-slate-900 text-purple-300 border-slate-800'
               }`}
             >
-              🎯 航點
+              {isEn ? '🎯 Waypoints' : '🎯 航點'}
             </button>
             <button
               onClick={() => setGhostMode('optimal')}
               disabled={ghostMode !== 'none'}
               className="flex-1 py-1.5 rounded-lg border bg-slate-900 border-emerald-500/50 text-emerald-300 hover:bg-emerald-950/40 transition cursor-pointer"
             >
-              ⚡ 幽靈
+              {isEn ? '⚡ Ghost' : '⚡ 幽靈'}
             </button>
           </>
         )}
       </div>
 
-      {/* 虛擬長按連續滑行方向盤 */}
+      {/* 方向盤 - 文字雙語化 */}
       <div className="grid grid-cols-3 gap-1.5 w-full max-w-[200px] mt-2">
         <div />
         <button
@@ -478,7 +481,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode 
           onClick={() => setPlayerPos(start)}
           className="py-2.5 bg-slate-950 border border-slate-800 text-slate-500 rounded-lg text-[9px] font-bold"
         >
-          重置
+          {isEn ? 'Reset' : '重置'}
         </button>
         <button
           onPointerDown={() => startContinuousGlide(1, 0)}
@@ -496,31 +499,31 @@ export const MazeBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode 
         <div />
       </div>
 
-      {/* 通關評鑑面板 */}
+      {/* 通關評鑑 - 全面中性化 */}
       {isCompleted && (
         <div className="mt-3 p-3 bg-slate-950/95 border-2 border-emerald-500/90 rounded-2xl text-center w-full max-w-[340px] shadow-2xl animate-fade-in font-mono">
           <div className="text-emerald-400 font-black text-sm uppercase tracking-widest animate-pulse">
-            CITADEL BREACHED!
+            {isEn ? 'CITADEL BREACHED!' : '城堡突破！'}
           </div>
           <div className="text-[10px] text-slate-400 mt-0.5 mb-2">
-            Time: {(elapsedMs / 1000).toFixed(2)}s | Gf: IQ {cci.standardIQ}
+            {isEn ? 'Time' : '耗時'}: {(elapsedMs / 1000).toFixed(2)}s | Gf: IQ {cci.standardIQ}
           </div>
           <div className="bg-slate-900/90 border border-slate-800 p-2 rounded-lg text-[8px] text-slate-300 text-left space-y-1">
             <div className="flex justify-between">
-              <span className="text-slate-400">宏觀思考累積加分:</span>
+              <span className="text-slate-400">{isEn ? 'Strategic Thinking Bonus' : '策略思考獎勵'}:</span>
               <span className="text-amber-300 font-bold">{(strategicThoughtTime / 1000).toFixed(1)}s</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-slate-400">認知波浪增益 (Phase Gain):</span>
+              <span className="text-slate-400">{isEn ? 'Phase Gain' : '階段增益'}:</span>
               <span className="text-emerald-400 font-bold">{spec.cognitivePhaseGain || 1.45}x</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-slate-400">步數效率比 (Player/Opt):</span>
+              <span className="text-slate-400">{isEn ? 'Step Efficiency (Player/Opt)' : '步數效率 (玩家/最佳)'}:</span>
               <span className="text-cyan-300 font-bold">{(playerPath.length / optimalSolution.length).toFixed(2)}x</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-slate-400">深淵監視者認證:</span>
-              <span className="text-purple-400 font-bold">Phase 2 Survived ({deceptionWaypoints.length} Traps)</span>
+              <span className="text-slate-400">{isEn ? 'Phase 2 Pressure Test' : '第二階段壓力考驗'}:</span>
+              <span className="text-purple-400 font-bold">{isEn ? 'Survived' : '通過'} ({deceptionWaypoints.length} {isEn ? 'Traps' : '陷阱'})</span>
             </div>
           </div>
         </div>
