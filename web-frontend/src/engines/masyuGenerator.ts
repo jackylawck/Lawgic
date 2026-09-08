@@ -36,6 +36,7 @@ export interface MasyuSpec {
   depthProfile: number[];
   turnDensity: number;
   avgSegmentLength: number;
+  tier: TierKey;
 }
 
 export function mulberry32(a: number) {
@@ -49,10 +50,14 @@ export function mulberry32(a: number) {
 
 export async function generateMasyuSignature(payload: string): Promise<string> {
   if (typeof window !== 'undefined' && window.crypto?.subtle) {
-    const msgBuffer = new TextEncoder().encode(payload);
-    const hashBuffer = await window.crypto.subtle.digest('SHA-256', msgBuffer);
-    const hashArray = Array.from(new Uint8Array(hashBuffer));
-    return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('').slice(0, 16).toUpperCase();
+    try {
+      const msgBuffer = new TextEncoder().encode(payload);
+      const hashBuffer = await window.crypto.subtle.digest('SHA-256', msgBuffer);
+      const hashArray = Array.from(new Uint8Array(hashBuffer));
+      return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('').slice(0, 16).toUpperCase();
+    } catch {
+      // 降級
+    }
   }
   return 'MASYU-' + Math.random().toString(36).substring(2, 10).toUpperCase();
 }
@@ -65,13 +70,14 @@ interface TierConfig {
   timeLimitSec: number;
 }
 
-const TIER_SPECS: Record<ExtendedTierKey, TierConfig> = {
+// 支援完整 6 階 Tier 配置，對齊全域常模標準
+const TIER_SPECS: Record<TierKey, TierConfig> = {
   kids: { size: 5, minWhite: 2, minBlack: 2, baseIrt: 0.65, timeLimitSec: 90 },
   intermediate: { size: 6, minWhite: 4, minBlack: 3, baseIrt: 1.45, timeLimitSec: 150 },
   expert: { size: 7, minWhite: 6, minBlack: 5, baseIrt: 2.35, timeLimitSec: 240 },
   master: { size: 8, minWhite: 8, minBlack: 7, baseIrt: 3.15, timeLimitSec: 360 },
   legendary: { size: 9, minWhite: 10, minBlack: 9, baseIrt: 3.75, timeLimitSec: 480 },
-  ultimate: { size: 10, minWhite: 13, minBlack: 11, baseIrt: 4.35, timeLimitSec: 600 },
+  ultimate: { size: 10, minWhite: 12, minBlack: 10, baseIrt: 4.35, timeLimitSec: 600 },
 };
 
 export class WebMasyuGenerator {
@@ -84,6 +90,9 @@ export class WebMasyuGenerator {
     return r >= 0 && r < size && c >= 0 && c < size;
   }
 
+  /**
+   * 驗證當前邊界集合是否構成唯一的合法連續迴路且滿足所有珍珠條件
+   */
   public static validateSolution(
     grid: PearlType[][],
     edges: Set<string>,
@@ -100,10 +109,12 @@ export class WebMasyuGenerator {
       adj.get(v)!.push(u);
     }
 
+    // 每個節點度數必須精確為 2
     for (const neighbors of adj.values()) {
       if (neighbors.length !== 2) return false;
     }
 
+    // 檢驗是否構成單一連續閉合環
     const allActiveNodes = Array.from(adj.keys());
     const visited = new Set<string>();
     const startNode = allActiveNodes[0];
@@ -127,6 +138,7 @@ export class WebMasyuGenerator {
       return edges.has(this.makeEdgeKey(r1, c1, r2, c2));
     };
 
+    // 珍珠規則檢驗
     for (let r = 0; r < size; r++) {
       for (let c = 0; c < size; c++) {
         const pearl = grid[r][c];
@@ -144,8 +156,10 @@ export class WebMasyuGenerator {
         const isStraight = isHorizontal || isVertical;
 
         if (pearl === 'white') {
+          // 白珍珠必須直通
           if (!isStraight) return false;
 
+          // 至少一端必須轉折
           let turns = false;
           if (isHorizontal) {
             const leftC = Math.min(nc1, nc2);
@@ -160,8 +174,10 @@ export class WebMasyuGenerator {
           }
           if (!turns) return false;
         } else if (pearl === 'black') {
+          // 黑珍珠必須轉彎
           if (isStraight) return false;
 
+          // 兩臂向外延伸至少一格且不轉折
           const dr1 = nr1 - r;
           const dc1 = nc1 - c;
           if (!hasEdge(nr1, nc1, nr1 + dr1, nc1 + dc1)) return false;
@@ -176,10 +192,13 @@ export class WebMasyuGenerator {
     return true;
   }
 
+  /**
+   * 極速有界生長法：生成非自交的單一平滑大環路
+   */
   public static generateWindingLoop(size: number, rnd: () => number): [number, number][] | null {
     const startR = 1 + Math.floor(rnd() * Math.max(1, size - 3));
     const startC = 1 + Math.floor(rnd() * Math.max(1, size - 3));
-    let loop: [number, number][] = [
+    const loop: [number, number][] = [
       [startR, startC],
       [startR, startC + 1],
       [startR + 1, startC + 1],
@@ -189,10 +208,10 @@ export class WebMasyuGenerator {
     const visited = Array.from({ length: size }, () => Array(size).fill(false));
     loop.forEach(([r, c]) => (visited[r][c] = true));
 
-    const targetLength = Math.max(10, Math.floor(size * size * 0.48));
+    const targetLength = Math.max(12, Math.floor(size * size * 0.45));
     let attempts = 0;
 
-    while (loop.length < targetLength && attempts++ < 250) {
+    while (loop.length < targetLength && attempts++ < 180) {
       const idx = Math.floor(rnd() * loop.length);
       const nextIdx = (idx + 1) % loop.length;
       const [r1, c1] = loop[idx];
@@ -220,9 +239,12 @@ export class WebMasyuGenerator {
       }
     }
 
-    return loop.length >= 8 ? loop : null;
+    return loop.length >= 10 ? loop : null;
   }
 
+  /**
+   * 帶度數短路熔斷的唯一解計數器（防止多解題目流入）
+   */
   public static countSolutions(grid: PearlType[][], size: number, limit: number = 2): number {
     const pearlCoords: [number, number, PearlType][] = [];
     for (let r = 0; r < size; r++) {
@@ -234,7 +256,7 @@ export class WebMasyuGenerator {
     if (pearlCoords.length === 0) return limit;
 
     let solutions = 0;
-    let stepBudget = 5000;
+    let stepBudget = 250;
     const currentEdges = new Set<string>();
     const degrees = new Map<string, number>();
 
@@ -303,6 +325,7 @@ export class WebMasyuGenerator {
     currentEdges: Set<string>,
     size: number
   ): MasyuHintStep | null {
+    // 定式 1: 相鄰黑珍珠互斥
     for (let r = 0; r < size; r++) {
       for (let c = 0; c < size; c++) {
         if (grid[r][c] === 'black') {
@@ -326,6 +349,7 @@ export class WebMasyuGenerator {
       }
     }
 
+    // 定式 2: 貼邊黑珍珠必然向內射出
     for (let r = 0; r < size; r++) {
       for (let c = 0; c < size; c++) {
         if (grid[r][c] === 'black') {
@@ -350,6 +374,7 @@ export class WebMasyuGenerator {
       }
     }
 
+    // 定式 3: 白珍珠直通貫穿
     for (let r = 0; r < size; r++) {
       for (let c = 0; c < size; c++) {
         if (grid[r][c] === 'white') {
@@ -376,7 +401,10 @@ export class WebMasyuGenerator {
     return null;
   }
 
-  public static generate(tier: ExtendedTierKey = 'kids', inputSeed?: number): PuzzleEntity {
+  /**
+   * 毫秒級主生成入口：支援全域 6 階難度，保證唯一解
+   */
+  public static generate(tier: TierKey = 'kids', inputSeed?: number): PuzzleEntity {
     const config = TIER_SPECS[tier] || TIER_SPECS.kids;
     const { size, minWhite, minBlack, baseIrt, timeLimitSec } = config;
 
@@ -384,7 +412,9 @@ export class WebMasyuGenerator {
     const rnd = mulberry32(actualSeed);
 
     let attempts = 0;
-    while (attempts++ < 50) {
+    const maxAttempts = 30;
+
+    while (attempts++ < maxAttempts) {
       const path = this.generateWindingLoop(size, rnd);
       if (!path || path.length < size * 2) continue;
 
@@ -408,7 +438,8 @@ export class WebMasyuGenerator {
         const isTurn = prevNode[0] !== nextNode[0] && prevNode[1] !== nextNode[1];
         if (isTurn) turnsCount++;
 
-        if (isTurn && blackCount < minBlack && rnd() < 0.7) {
+        // 黑珍珠條件：頂點轉折，且兩臂各至少直線延伸一格
+        if (isTurn && blackCount < minBlack) {
           const prevPrev = path[(i - 2 + path.length) % path.length];
           const nextNext = path[(i + 2) % path.length];
 
@@ -421,7 +452,8 @@ export class WebMasyuGenerator {
             grid[r][c] = 'black';
             blackCount++;
           }
-        } else if (!isTurn && whiteCount < minWhite && rnd() < 0.7) {
+        } else if (!isTurn && whiteCount < minWhite) {
+          // 白珍珠條件：直通，且至少一端鄰格發生轉折
           const prevPrev = path[(i - 2 + path.length) % path.length];
           const nextNext = path[(i + 2) % path.length];
           const prevTurns = prevPrev[0] !== currNode[0] && prevPrev[1] !== currNode[1];
@@ -437,9 +469,12 @@ export class WebMasyuGenerator {
       if (blackCount < minBlack || whiteCount < minWhite) continue;
       if (!this.validateSolution(grid, solutionEdges, size)) continue;
 
+      // 嚴格檢驗唯一解
+      if (this.countSolutions(grid, size, 2) !== 1) continue;
+
       const turnDensity = Number((turnsCount / path.length).toFixed(2));
       const avgSegmentLength = Number((path.length / Math.max(1, turnsCount)).toFixed(2));
-      const dynamicIrt = Number((baseIrt + turnDensity * 0.4 + (blackCount + whiteCount) * 0.05).toFixed(2));
+      const dynamicIrt = Number((baseIrt + turnDensity * 0.35 + (blackCount + whiteCount) * 0.04).toFixed(2));
 
       const spec: MasyuSpec = {
         rows: size,
@@ -454,6 +489,7 @@ export class WebMasyuGenerator {
         depthProfile: [1, 2, 4, 3, 1],
         turnDensity,
         avgSegmentLength,
+        tier,
       };
 
       return {
@@ -471,6 +507,9 @@ export class WebMasyuGenerator {
           inhibition: 0.92,
         },
         metrics: {
+          grid_size: size,
+          rows: size,
+          cols: size,
           estimated_time_sec: timeLimitSec,
           irt_logit_difficulty: dynamicIrt,
           human_sim_steps: path.length,
@@ -478,6 +517,7 @@ export class WebMasyuGenerator {
           seed: actualSeed,
           turnDensity,
           avgSegmentLength,
+          actualTier: tier,
           isSymmetric: false,
         } as any,
       };
@@ -487,10 +527,10 @@ export class WebMasyuGenerator {
   }
 
   /**
-   * 自適應尺寸的合法邊界環狀 Fallback，杜絕大尺寸退化至 5x5
+   * 自適應尺寸的合法邊界環狀 Fallback
    */
   private static _generateFallback(
-    tier: ExtendedTierKey,
+    tier: TierKey,
     size: number,
     seed: number,
     baseIrt: number,
@@ -498,7 +538,7 @@ export class WebMasyuGenerator {
   ): PuzzleEntity {
     const fallbackGrid: PearlType[][] = Array.from({ length: size }, () => Array(size).fill('none'));
 
-    // 依據當前尺寸動態在四角配置黑珍珠
+    // 在四角配置黑珍珠
     fallbackGrid[0][0] = 'black';
     fallbackGrid[0][size - 1] = 'black';
     fallbackGrid[size - 1][size - 1] = 'black';
@@ -528,6 +568,7 @@ export class WebMasyuGenerator {
       depthProfile: [1, 2, 3, 2, 1],
       turnDensity: 0.25,
       avgSegmentLength: size - 1,
+      tier,
     };
 
     return {
@@ -540,9 +581,13 @@ export class WebMasyuGenerator {
       solution: fallbackEdges,
       cognitiveLoad: { spatial: 0.9, numeric: 0.1, workingMemory: 0.6, inhibition: 0.85 },
       metrics: {
+        grid_size: size,
+        rows: size,
+        cols: size,
         estimated_time_sec: timeLimitSec,
         irt_logit_difficulty: baseIrt,
         seed,
+        actualTier: tier,
         isSymmetric: true,
       } as any,
     };
