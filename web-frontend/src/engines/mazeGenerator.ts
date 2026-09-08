@@ -87,44 +87,33 @@ export class WebMazeGenerator {
 
     const maxAttempts = 35;
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      // 1. 純確定性黃金鹽派生
       const attemptSeed = (actualSeed + attempt * 0x9e3779b9) >>> 0;
       const rnd = mulberry32(attemptSeed);
 
-      // 2. 初始化實心網格
       const grid: number[][] = Array.from({ length: height }, () => Array(width).fill(1));
 
-      // 3. 質數動態網格碎形對稱生成
       const applyPrimeFractal = tier !== 'kids' && rnd() > 0.20;
       this._generatePrimeFractalTree(grid, width, height, personaBias, applyPrimeFractal, rnd);
 
-      // 4. 動態偽終點雙向迴路佈置 (Dynamic Pseudo-Goal Loops)
       const { start, end, pseudoGoals } = this._placeDynamicEndpointsAndLoops(grid, width, height, tier, rnd);
 
-      // 5. 迂迴偽裝宏觀捷徑
       const macroShortcuts = this._injectCamouflagedShortcuts(grid, width, height, start, end, tier, rnd);
 
-      // 6. 雙入口時間黑洞
       const biEntranceCount = this._injectBiEntranceDeceptionZones(grid, width, height, start, end, tier, rnd);
 
-      // 7. 帶拐點的深度偽分支注入 (Deep Pseudopods - 粉碎超節點壓縮濾波)
       const deepPseudopods = this._injectDeepPseudopods(grid, width, height, start, end, tier, rnd);
 
-      // 8. 零 GC 快速求解最優主路徑
       const solution = this._bfs(grid, width, height, start, end);
       if (solution.length < 2) continue;
 
-      // 9. 視覺直覺貪婪路徑模擬
       const visualGreedyPath = this._simulateVisualGreedyPath(grid, width, height, start, end);
       const baselineWallFollow = this._simulateWallFollower(grid, width, height, start, end);
 
-      // 10. 後設認知破壞：計算「視覺貪婪路徑」與「真實最優解」的重疊率
       const overlapRatio = this._computePathOverlapRatio(solution, visualGreedyPath);
       const divergenceRatio = Number((baselineWallFollow.length / Math.max(1, solution.length)).toFixed(2));
       const ambiguityIndex = this._computeLocalAmbiguityIndex(grid, width, height, solution);
       const { maxVisualRegret, avgVisualRegret } = this._computeVisualConfidenceRegret(grid, width, height, solution, end);
 
-      // 錦標賽金牌門檻：重疊率必須足夠低（直覺被嚴重欺騙），且策略分歧度與後悔值達標
       if (attempt < maxAttempts - 1 && tier !== 'kids') {
         if (
           overlapRatio > config.maxVisualOptimalOverlap ||
@@ -253,9 +242,6 @@ export class WebMazeGenerator {
     return this._generateSafeFallback(tier, size, actualSeed, config.baseIrt);
   }
 
-  /**
-   * 質數動態網格碎形對稱樹
-   */
   private static _generatePrimeFractalTree(
     grid: number[][],
     width: number,
@@ -364,10 +350,6 @@ export class WebMazeGenerator {
     }
   }
 
-  /**
-   * 動態偽終點雙向迂迴迴路佈置 (Dynamic Pseudo-Goal Loops)
-   * 偽終點位於長達 25~35 步的雙向貫通替換環中點，絕非靜態死胡同
-   */
   private static _placeDynamicEndpointsAndLoops(
     grid: number[][],
     width: number,
@@ -398,37 +380,37 @@ export class WebMazeGenerator {
       }
     }
 
-    const end = candidates.length > 0 ? candidates[Math.floor(rnd() * candidates.length)] : [width - 2, height - 2];
+    // 嚴格型別守衛：杜絕 number[] 賦值給 [number, number] 引發 TS2345/TS2322
+    const end: [number, number] =
+      candidates.length > 0
+        ? candidates[Math.floor(rnd() * candidates.length)]
+        : [width - 2, height - 2];
+
     const pseudoGoals: [number, number][] = [];
 
-    // 在主幹兩點間開闢長度為 90%~120% 的替換迂迴迴路，並在其中點懸掛偽終點
     const solution = this._bfs(grid, width, height, start, end);
     if (solution.length > 25) {
       const nodeAIndex = 6;
       const nodeBIndex = Math.min(solution.length - 6, nodeAIndex + 18);
-      const [ax, ay] = solution[nodeAIndex];
+      const [ax] = solution[nodeAIndex];
       const [bx, by] = solution[nodeBIndex];
 
-      // 尋找中繼繞行點
       const detourMidX = Math.max(1, Math.min(width - 2, (ax + bx) >> 1));
-      const detourMidY = ay > (height >> 1) ? Math.max(1, ay - 6) : Math.min(height - 2, ay + 6);
+      const detourMidY = by > (height >> 1) ? Math.max(1, by - 6) : Math.min(height - 2, by + 6);
 
-      if (grid[detourMidY][detourMidX] === 0) {
+      if (grid[detourMidY]?.[detourMidX] === 0) {
         pseudoGoals.push([detourMidX, detourMidY]);
       }
     }
 
-    // 補充 2 個幾何對偶點上的偽終點
     const alt1: [number, number] = [width - 1 - end[0], height - 1 - end[1]];
-    if (grid[alt1[1]]?.[alt1[0]] === 0) pseudoGoals.push(alt1);
+    if (grid[alt1[1]]?.[alt1[0]] === 0) {
+      pseudoGoals.push(alt1);
+    }
 
     return { start, end, pseudoGoals };
   }
 
-  /**
-   * 帶有 90° 拐點的深度偽分支 (Deep Pseudopods with Elbow Turns)
-   * 深度保證 >= 5~7 步，並帶有至少 1 次轉彎，徹底摧毀超節點壓縮演算法的雜訊過濾模組
-   */
   private static _injectDeepPseudopods(
     grid: number[][],
     width: number,
@@ -466,11 +448,9 @@ export class WebMazeGenerator {
           grid[wy][wx] === 1 &&
           grid[n1y][n1x] === 1
         ) {
-          // 第一段打通 2~3 格
           grid[wy][wx] = 0;
           grid[n1y][n1x] = 0;
 
-          // 90° 拐點延伸（Elbow Turn），再深入 3 格
           const turnDirs = [
             [dy, dx],
             [-dy, -dx],
@@ -507,9 +487,6 @@ export class WebMazeGenerator {
     return created;
   }
 
-  /**
-   * 迂迴偽裝宏觀捷徑
-   */
   private static _injectCamouflagedShortcuts(
     grid: number[][],
     width: number,
@@ -563,9 +540,6 @@ export class WebMazeGenerator {
     return shortcutsCreated;
   }
 
-  /**
-   * 雙入口時間黑洞注入
-   */
   private static _injectBiEntranceDeceptionZones(
     grid: number[][],
     width: number,
@@ -681,9 +655,6 @@ export class WebMazeGenerator {
     return zonesCreated;
   }
 
-  /**
-   * 計算視覺直覺貪婪路徑與真實最優路徑的重疊率 (Visual-Optimal Overlap Ratio)
-   */
   private static _computePathOverlapRatio(
     optimalPath: [number, number][],
     greedyPath: [number, number][]
@@ -699,9 +670,6 @@ export class WebMazeGenerator {
     return Number((sharedNodes / Math.max(1, optimalPath.length)).toFixed(3));
   }
 
-  /**
-   * 視覺直覺貪婪路徑模擬器 (Visual Greedy Path)
-   */
   private static _simulateVisualGreedyPath(
     grid: number[][],
     width: number,
@@ -767,9 +735,6 @@ export class WebMazeGenerator {
     return path;
   }
 
-  /**
-   * 計算視覺信心後悔值 (Visual Confidence Regret Metric)
-   */
   private static _computeVisualConfidenceRegret(
     grid: number[][],
     width: number,
