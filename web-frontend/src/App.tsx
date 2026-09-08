@@ -13,7 +13,6 @@ import { useLongTermScheduler } from './hooks/useLongTermScheduler';
 import { ChallengeCodec } from './utils/challengeCodec';
 import { VaultManager } from './utils/vaultStorage';
 
-// 匯入全套 18 款謎題生成器
 import { WebMazeGenerator } from './engines/mazeGenerator';
 import { WebSudokuGenerator } from './engines/sudokuGenerator';
 import { WebNonogramGenerator } from './engines/nonogramGenerator';
@@ -142,31 +141,40 @@ const PuzzleTimer: React.FC<{ activeId: string | undefined }> = memo(({ activeId
 });
 PuzzleTimer.displayName = 'PuzzleTimer';
 
-function generateEnginePuzzle(gameId: string, tier: ExtendedTierKey): PuzzleEntity | null {
+// 非同步非阻塞引擎生成分發器
+async function generateEnginePuzzleAsync(gameId: string, tier: ExtendedTierKey): Promise<PuzzleEntity | null> {
   try {
     let puzzle: any = null;
-    const invokeGen = (genClass: any) => genClass.generate(tier as TierKey);
+    const genMap: Record<string, any> = {
+      maze: WebMazeGenerator,
+      sudoku: WebSudokuGenerator,
+      nonogram: WebNonogramGenerator,
+      nurikabe: WebNurikabeGenerator,
+      skyscraper: WebSkyscraperGenerator,
+      hashi: WebHashiGenerator,
+      kropki: WebKropkiGenerator,
+      slitherlink: WebSlitherlinkGenerator,
+      tents: WebTentsGenerator,
+      lightup: WebLightUpGenerator,
+      futoshiki: WebFutoshikiGenerator,
+      hitori: WebHitoriGenerator,
+      kakuro: WebKakuroGenerator,
+      masyu: WebMasyuGenerator,
+      dominoes: WebDominoesGenerator,
+      heyawake: WebHeyawakeGenerator,
+      yajilin: WebYajilinGenerator,
+      shikaku: WebShikakuGenerator,
+    };
 
-    switch (gameId) {
-      case 'maze': puzzle = invokeGen(WebMazeGenerator); break;
-      case 'sudoku': puzzle = invokeGen(WebSudokuGenerator); break;
-      case 'nonogram': puzzle = invokeGen(WebNonogramGenerator); break;
-      case 'nurikabe': puzzle = invokeGen(WebNurikabeGenerator); break;
-      case 'skyscraper': puzzle = invokeGen(WebSkyscraperGenerator); break;
-      case 'hashi': puzzle = invokeGen(WebHashiGenerator); break;
-      case 'kropki': puzzle = invokeGen(WebKropkiGenerator); break;
-      case 'slitherlink': puzzle = invokeGen(WebSlitherlinkGenerator); break;
-      case 'tents': puzzle = invokeGen(WebTentsGenerator); break;
-      case 'lightup': puzzle = invokeGen(WebLightUpGenerator); break;
-      case 'futoshiki': puzzle = invokeGen(WebFutoshikiGenerator); break;
-      case 'hitori': puzzle = invokeGen(WebHitoriGenerator); break;
-      case 'kakuro': puzzle = invokeGen(WebKakuroGenerator); break;
-      case 'masyu': puzzle = invokeGen(WebMasyuGenerator); break;
-      case 'dominoes': puzzle = invokeGen(WebDominoesGenerator); break;
-      case 'heyawake': puzzle = invokeGen(WebHeyawakeGenerator); break;
-      case 'yajilin': puzzle = invokeGen(WebYajilinGenerator); break;
-      case 'shikaku': puzzle = invokeGen(WebShikakuGenerator); break;
-      default: return null;
+    const genClass = genMap[gameId];
+    if (!genClass) return null;
+
+    if (typeof genClass.generateAsync === 'function') {
+      puzzle = await genClass.generateAsync(tier as TierKey);
+    } else {
+      puzzle = await new Promise((resolve) => {
+        setTimeout(() => resolve(genClass.generate(tier as TierKey)), 0);
+      });
     }
 
     if (!puzzle) return null;
@@ -205,7 +213,7 @@ function generateEnginePuzzle(gameId: string, tier: ExtendedTierKey): PuzzleEnti
 const MAX_CACHED_PER_TIER = 25;
 
 const MainDashboard: React.FC = () => {
-  const { lang, t: tDict } = useLanguage();
+  const { lang } = useLanguage();
   const isEn = lang === 'en';
   const { playSound } = useAccessibility();
   const { profile, getCompositeCognitiveIndex } = useLearnerProfile();
@@ -218,8 +226,8 @@ const MainDashboard: React.FC = () => {
     prev: isEn ? '◀ Prev' : '◀ 上一題',
     next: isEn ? 'Next ▶' : '下一題 ▶',
     generate: isEn ? 'Generate' : '現場生成',
-    tierJump: isEn ? 'Tier Jump (+1)' : '升階挑戰 (+1)',
-    jumpExpert: isEn ? 'Direct Jump to Expert' : '直接跳級至專家',
+    tierJumpUp: isEn ? 'Tier Jump (+1)' : '升階挑戰 (+1)',
+    tierJumpDown: isEn ? 'Tier Step (-1)' : '降階調整 (-1)',
     puzzleProgress: isEn ? 'Puzzle' : '進度',
     loading: isEn ? 'Generating puzzles...' : '題目載入生成中...',
     titleSuffix: isEn ? 'Logic Arena' : '羅輯・遊戲',
@@ -244,7 +252,6 @@ const MainDashboard: React.FC = () => {
   const isGeneratingRef = useRef<boolean>(false);
   const boardContainerRef = useRef<HTMLDivElement>(null);
 
-  // 二維動態題目池：徹底隔離 6 階難度，防止互相覆蓋
   const [dynamicPool, setDynamicPool] = useState<Record<string, Record<ExtendedTierKey, PuzzleEntity[]>>>(() => {
     const pool: Record<string, Record<ExtendedTierKey, PuzzleEntity[]>> = {};
     ALL_GAMES.forEach((g) => {
@@ -257,16 +264,6 @@ const MainDashboard: React.FC = () => {
         ultimate: [],
       };
     });
-
-    try {
-      const initPuzzle = generateEnginePuzzle('maze', 'kids');
-      if (initPuzzle) {
-        initPuzzle.id = `maze_kids_init_0`;
-        pool.maze.kids.push(initPuzzle);
-      }
-    } catch (e) {
-      console.error('Initial puzzle bootstrap failed:', e);
-    }
     return pool;
   });
 
@@ -291,7 +288,7 @@ const MainDashboard: React.FC = () => {
       const generated: PuzzleEntity[] = [];
       for (let i = 0; i < count; i++) {
         try {
-          const p = generateEnginePuzzle(gameId, tier);
+          const p = await generateEnginePuzzleAsync(gameId, tier);
           if (p) {
             p.id = `${gameId}_${tier}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
             generated.push(p);
@@ -299,7 +296,6 @@ const MainDashboard: React.FC = () => {
         } catch (err) {
           console.warn(`Engine ${gameId} batch gen error:`, err);
         }
-        await new Promise((resolve) => setTimeout(resolve, 16));
       }
 
       if (generated.length > 0) {
@@ -332,21 +328,18 @@ const MainDashboard: React.FC = () => {
     []
   );
 
-  // 補充題庫防空機制
   useEffect(() => {
     if (activeList.length < 2 && !isGeneratingRef.current) {
       appendBatchPuzzles(selectedType, currentLevel, 3);
     }
   }, [selectedType, currentLevel, activeList.length, appendBatchPuzzles]);
 
-  // 隊尾預載
   useEffect(() => {
     if (activeList.length > 0 && puzzleIndex >= activeList.length - 1 && !isGeneratingRef.current) {
       appendBatchPuzzles(selectedType, currentLevel, 3);
     }
   }, [puzzleIndex, activeList.length, selectedType, currentLevel, appendBatchPuzzles]);
 
-  // 全域導航監聽
   useEffect(() => {
     const handleNav = (e: Event) => {
       const customEvent = e as CustomEvent<{ gameId?: string; tier?: ExtendedTierKey }>;
@@ -362,7 +355,6 @@ const MainDashboard: React.FC = () => {
     return () => window.removeEventListener('logicore:navigate-game', handleNav);
   }, []);
 
-  // 外部題目挑戰連結解碼
   useEffect(() => {
     const checkHashChallenge = () => {
       const hash = window.location.hash;
@@ -415,7 +407,6 @@ const MainDashboard: React.FC = () => {
     return () => window.removeEventListener('hashchange', checkHashChallenge);
   }, [isEn]);
 
-  // 動態網頁標題
   useEffect(() => {
     const activeGame = ALL_GAMES.find((g) => g.id === selectedType);
     const gameName = activeGame ? (isEn ? activeGame.nameEn : activeGame.nameZh) : 'Cognitive Arena';
@@ -440,14 +431,13 @@ const MainDashboard: React.FC = () => {
   }, [activeList.length, playSound]);
 
   const handleLiveGenerate = useCallback(async () => {
+    if (tournamentMode) return; // 賽事認證模式下鎖死重新生成
     playSound('click');
     if (navigator.vibrate) navigator.vibrate(20);
     setIsGenerating(true);
 
-    await new Promise((r) => setTimeout(r, 16));
-
     try {
-      const newPuzzle = generateEnginePuzzle(selectedType, currentLevel);
+      const newPuzzle = await generateEnginePuzzleAsync(selectedType, currentLevel);
       if (newPuzzle) {
         newPuzzle.id = `${selectedType}_${currentLevel}_manual_${Date.now().toString(36)}`;
         setDynamicPool((prev) => {
@@ -469,14 +459,14 @@ const MainDashboard: React.FC = () => {
       setIsGenerating(false);
       boardContainerRef.current?.focus();
     }
-  }, [selectedType, currentLevel, isEn, playSound]);
+  }, [selectedType, currentLevel, isEn, playSound, tournamentMode]);
 
   const handleTierJump = useCallback(
     (steps: number = 1) => {
       playSound('hint');
       if (navigator.vibrate) navigator.vibrate([20, 30, 20]);
       const currentIdx = LEVEL_KEYS.indexOf(currentLevel);
-      const targetIdx = Math.min(LEVEL_KEYS.length - 1, currentIdx + steps);
+      const targetIdx = Math.max(0, Math.min(LEVEL_KEYS.length - 1, currentIdx + steps));
       if (targetIdx !== currentIdx) {
         setCurrentLevel(LEVEL_KEYS[targetIdx]);
         setPuzzleIndex(0);
@@ -485,7 +475,6 @@ const MainDashboard: React.FC = () => {
     [currentLevel, playSound]
   );
 
-  // 艾賓浩斯靶向智能推薦
   const handleSmartDrill = useCallback(() => {
     const recommendation = getRecommendedSchedulePuzzle();
     if (recommendation) {
@@ -498,7 +487,6 @@ const MainDashboard: React.FC = () => {
     }
   }, [getRecommendedSchedulePuzzle, playSound]);
 
-  // 快捷分享當前題目金庫卡片
   const handleShareVaultBadge = useCallback(() => {
     if (!activePuzzle) return;
     playSound('success');
@@ -516,7 +504,6 @@ const MainDashboard: React.FC = () => {
     });
   }, [activePuzzle, currentLevel, isEn, playSound]);
 
-  // 全局快捷鍵支援（當任何彈窗打開時自動凍結，防止背景換題衝突）
   const isAnyModalOpen = showDashboardModal || showComplianceModal;
   useEffect(() => {
     const handleGlobalKey = (e: KeyboardEvent) => {
@@ -524,7 +511,12 @@ const MainDashboard: React.FC = () => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
       if (e.key === '[' || e.key === 'PageUp') { e.preventDefault(); handlePrevPuzzle(); }
       if (e.key === ']' || e.key === 'PageDown') { e.preventDefault(); handleNextPuzzle(); }
-      if ((e.key === 'r' || e.key === 'R') && !e.ctrlKey && !e.metaKey) { e.preventDefault(); handleLiveGenerate(); }
+      
+      // 錦標賽模式下封死 R 鍵刷新
+      if ((e.key === 'r' || e.key === 'R') && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault();
+        if (!tournamentMode) handleLiveGenerate();
+      }
       if ((e.key === 't' || e.key === 'T') && !e.ctrlKey && !e.metaKey) {
         e.preventDefault();
         setTournamentMode((prev) => !prev);
@@ -532,7 +524,7 @@ const MainDashboard: React.FC = () => {
     };
     window.addEventListener('keydown', handleGlobalKey);
     return () => window.removeEventListener('keydown', handleGlobalKey);
-  }, [handlePrevPuzzle, handleNextPuzzle, handleLiveGenerate, isAnyModalOpen]);
+  }, [handlePrevPuzzle, handleNextPuzzle, handleLiveGenerate, isAnyModalOpen, tournamentMode]);
 
   const lastMoveTimeRef = useRef<number>(0);
   const handleJoystickMove = useCallback((x: number, y: number) => {
@@ -690,7 +682,12 @@ const MainDashboard: React.FC = () => {
             </button>
             <button
               onClick={handleLiveGenerate}
-              className="py-2 bg-cyan-950 hover:bg-cyan-900 active:scale-95 text-cyan-300 font-bold text-[10px] border border-cyan-700/60 rounded-lg shadow-sm transition flex items-center justify-center gap-1 cursor-pointer"
+              disabled={tournamentMode}
+              className={`py-2 text-[10px] font-bold border rounded-lg shadow-sm transition flex items-center justify-center gap-1 ${
+                tournamentMode
+                  ? 'bg-slate-900/50 border-slate-800 text-slate-600 cursor-not-allowed'
+                  : 'bg-cyan-950 hover:bg-cyan-900 active:scale-95 text-cyan-300 border-cyan-700/60 cursor-pointer'
+              }`}
             >
               <span>⚡</span>
               <span>{t.generate}</span>
@@ -725,26 +722,27 @@ const MainDashboard: React.FC = () => {
             />
           )}
 
-          {currentLevel !== 'ultimate' && (
-            <div className="flex gap-1.5 mt-2 w-full">
+          {/* 雙向升降階調整通道 */}
+          <div className="flex gap-1.5 mt-2 w-full">
+            {currentLevel !== 'kids' && (
+              <button
+                onClick={() => handleTierJump(-1)}
+                className="flex-1 py-1.5 bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-400 hover:text-slate-200 text-[10px] font-bold rounded-lg transition shadow flex items-center justify-center gap-1 cursor-pointer"
+              >
+                <span>🔽</span>
+                <span>{t.tierJumpDown}</span>
+              </button>
+            )}
+            {currentLevel !== 'ultimate' && (
               <button
                 onClick={() => handleTierJump(1)}
                 className="flex-1 py-1.5 bg-gradient-to-r from-indigo-950 via-purple-950 to-slate-900 hover:from-indigo-900 border border-indigo-700/60 text-indigo-300 text-[10px] font-bold rounded-lg transition shadow flex items-center justify-center gap-1 cursor-pointer"
               >
                 <span>🚀</span>
-                <span>{t.tierJump}</span>
+                <span>{t.tierJumpUp}</span>
               </button>
-              {currentLevel === 'kids' && (
-                <button
-                  onClick={() => handleTierJump(2)}
-                  className="px-3 py-1.5 bg-rose-950/70 hover:bg-rose-900 border border-rose-700/60 text-rose-300 text-[10px] font-bold rounded-lg transition shadow cursor-pointer"
-                  title={t.jumpExpert}
-                >
-                  <span>⚡ +2</span>
-                </button>
-              )}
-            </div>
-          )}
+            )}
+          </div>
 
           {/* 謎題即時指標條 */}
           <div className="mt-2 flex items-center justify-between w-full px-1 text-[9px] text-slate-500 border-t border-slate-800/80 pt-1.5">
@@ -773,7 +771,7 @@ const MainDashboard: React.FC = () => {
         </div>
       )}
 
-      {/* 🌟 神作級全域頁尾：零信任審計、架構合規與免責聲明小連結 */}
+      {/* 零信任審計、架構合規與免責聲明頁尾 */}
       <footer className="w-full max-w-sm sm:max-w-md mt-auto pt-3 pb-2 flex flex-col items-center gap-1 border-t border-slate-900 text-[8px] text-slate-600">
         <div className="flex items-center gap-2">
           <span className="inline-flex items-center gap-1 text-emerald-500/80 font-semibold">
@@ -798,7 +796,6 @@ const MainDashboard: React.FC = () => {
         </div>
       </footer>
 
-      {/* 合規架構與法律聲明對話框 */}
       <ComplianceModal
         isOpen={showComplianceModal}
         onClose={() => setShowComplianceModal(false)}
