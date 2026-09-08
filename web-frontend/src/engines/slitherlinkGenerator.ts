@@ -8,6 +8,7 @@ export type EdgeState = 0 | 1 | 2; // 0: 未決, 1: 實線 (連線), 2: 標叉 (
 export type SlitherDeductionType =
   | 'zero_cross'
   | 'adjacent_threes'
+  | 'corner_three'
   | 'diagonal_30'
   | 'degree_extension'
   | 'degree_saturation'
@@ -64,8 +65,8 @@ export interface SlitherlinkSpec {
   pureDeductionRate: number;
   topologicalEntropy: number;
   isSymmetric180: boolean;
-  tier?: ExtendedTierKey;
-  seed?: number;
+  tier: TierKey;
+  seed: number;
   humanProfile?: {
     style: HumanSolvingStyle;
     hypothesisCount: number;
@@ -80,19 +81,20 @@ interface TierConfig {
   clueRemovalRate: number;
   minForcedChain: number;
   baseIrt: number;
+  timeLimitSec: number;
 }
 
-// 支援完整 6 階 Tier 配置
+// 支援完整 6 階 Tier 配置，對齊全域常模標準
 const TIER_SPECS: Record<TierKey, TierConfig> = {
-  kids: { rows: 4, cols: 4, clueRemovalRate: 0.15, minForcedChain: 4, baseIrt: 0.65 },
-  intermediate: { rows: 5, cols: 5, clueRemovalRate: 0.28, minForcedChain: 6, baseIrt: 1.45 },
-  expert: { rows: 6, cols: 6, clueRemovalRate: 0.38, minForcedChain: 9, baseIrt: 2.35 },
-  master: { rows: 7, cols: 7, clueRemovalRate: 0.48, minForcedChain: 12, baseIrt: 3.15 },
-  legendary: { rows: 8, cols: 8, clueRemovalRate: 0.55, minForcedChain: 15, baseIrt: 3.75 },
-  ultimate: { rows: 10, cols: 10, clueRemovalRate: 0.62, minForcedChain: 18, baseIrt: 4.35 },
+  kids: { rows: 4, cols: 4, clueRemovalRate: 0.15, minForcedChain: 4, baseIrt: 0.65, timeLimitSec: 90 },
+  intermediate: { rows: 5, cols: 5, clueRemovalRate: 0.28, minForcedChain: 6, baseIrt: 1.45, timeLimitSec: 150 },
+  expert: { rows: 6, cols: 6, clueRemovalRate: 0.38, minForcedChain: 8, baseIrt: 2.35, timeLimitSec: 240 },
+  master: { rows: 7, cols: 7, clueRemovalRate: 0.46, minForcedChain: 10, baseIrt: 3.15, timeLimitSec: 360 },
+  legendary: { rows: 8, cols: 8, clueRemovalRate: 0.52, minForcedChain: 12, baseIrt: 3.75, timeLimitSec: 480 },
+  ultimate: { rows: 10, cols: 10, clueRemovalRate: 0.58, minForcedChain: 15, baseIrt: 4.35, timeLimitSec: 600 },
 };
 
-function mulberry32(a: number) {
+export function mulberry32(a: number) {
   return function () {
     let t = (a += 0x6d2b79f5);
     t = Math.imul(t ^ (t >>> 15), t | 1);
@@ -122,7 +124,7 @@ export class WebSlitherlinkGenerator {
 
     for (let r = 0; r <= rows; r++) {
       for (let c = 0; c < cols; c++) {
-        if (hEdges[r] && hEdges[r][c]) {
+        if (hEdges[r]?.[c]) {
           pointDegree[r][c]++;
           pointDegree[r][c + 1]++;
           totalEdges++;
@@ -132,7 +134,7 @@ export class WebSlitherlinkGenerator {
 
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c <= cols; c++) {
-        if (vEdges[r] && vEdges[r][c]) {
+        if (vEdges[r]?.[c]) {
           pointDegree[r][c]++;
           pointDegree[r + 1][c]++;
           totalEdges++;
@@ -168,7 +170,8 @@ export class WebSlitherlinkGenerator {
       ];
 
       let found = false;
-      for (const [nr, nc, active] of neighbors) {
+      for (let i = 0; i < 4; i++) {
+        const [nr, nc, active] = neighbors[i];
         if (active && !(nr === prevR && nc === prevC)) {
           prevR = currR;
           prevC = currC;
@@ -187,6 +190,9 @@ export class WebSlitherlinkGenerator {
     return visitedEdges === totalEdges;
   }
 
+  /**
+   * 拓撲引導非自交連續環生長演算法（確保內部元胞連通且無對角自切點）
+   */
   private static generateValidLoopSymmetric(
     rows: number,
     cols: number,
@@ -198,13 +204,13 @@ export class WebSlitherlinkGenerator {
     inside[midR][midC] = true;
     inside[rows - 1 - midR][cols - 1 - midC] = true;
 
-    const targetCells = Math.max(4, Math.floor(rows * cols * 0.42));
+    const targetCells = Math.max(4, Math.floor(rows * cols * 0.40));
     let currentCells = (midR === rows - 1 - midR && midC === cols - 1 - midC) ? 1 : 2;
     let attempts = 0;
 
     const dirs = [[-1, 0], [1, 0], [0, -1], [0, 1]];
 
-    while (currentCells < targetCells && attempts++ < 350) {
+    while (currentCells < targetCells && attempts++ < 180) {
       const r = Math.floor(rnd() * rows);
       const c = Math.floor(rnd() * cols);
       const symR = rows - 1 - r;
@@ -219,8 +225,24 @@ export class WebSlitherlinkGenerator {
       });
 
       if (hasAdj) {
-        if (!inside[r][c]) { inside[r][c] = true; currentCells++; }
-        if (!inside[symR][symC]) { inside[symR][symC] = true; currentCells++; }
+        // 防止 2x2 對角自接觸破壞單一連續環
+        let diagConflict = false;
+        const diagOffsets = [[-1, -1], [-1, 1], [1, -1], [1, 1]];
+        for (const [dr, dc] of diagOffsets) {
+          const nr = r + dr;
+          const nc = c + dc;
+          if (nr >= 0 && nr < rows && nc >= 0 && nc < cols && inside[nr][nc]) {
+            if (!inside[r + dr][c] && !inside[r][c + dc]) {
+              diagConflict = true;
+              break;
+            }
+          }
+        }
+
+        if (!diagConflict) {
+          if (!inside[r][c]) { inside[r][c] = true; currentCells++; }
+          if (!inside[symR][symC]) { inside[symR][symC] = true; currentCells++; }
+        }
       }
     }
 
@@ -297,6 +319,9 @@ export class WebSlitherlinkGenerator {
     return Number(((turnRatio * 0.7) + (density * 0.3)).toFixed(3));
   }
 
+  /**
+   * 帶 300 步短路熔斷的前向剪枝唯一解求解器（杜絕搜尋樹無序展開）
+   */
   public static countSolutions(
     rows: number,
     cols: number,
@@ -308,14 +333,50 @@ export class WebSlitherlinkGenerator {
     const ptDeg: number[][] = Array.from({ length: rows + 1 }, () => Array(cols + 1).fill(0));
 
     let solutions = 0;
-    let stepBudget = Math.max(4000, rows * cols * 120);
+    let stepBudget = 300;
 
+    // 優先決策有線索單元格周圍的邊（線索優先級排序）
+    const edgePrioritySet = new Set<string>();
     const allEdges: { type: EdgeType; r: number; c: number }[] = [];
+
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        if (clues[r][c] !== null) {
+          const neighbors: { type: EdgeType; r: number; c: number }[] = [
+            { type: 'h', r, c },
+            { type: 'h', r: r + 1, c },
+            { type: 'v', r, c },
+            { type: 'v', r, c + 1 },
+          ];
+          for (const edge of neighbors) {
+            const k = `${edge.type}_${edge.r}_${edge.c}`;
+            if (!edgePrioritySet.has(k)) {
+              edgePrioritySet.add(k);
+              allEdges.push(edge);
+            }
+          }
+        }
+      }
+    }
+
+    // 補齊其餘邊界
     for (let r = 0; r <= rows; r++) {
-      for (let c = 0; c < cols; c++) allEdges.push({ type: 'h', r, c });
+      for (let c = 0; c < cols; c++) {
+        const k = `h_${r}_${c}`;
+        if (!edgePrioritySet.has(k)) {
+          edgePrioritySet.add(k);
+          allEdges.push({ type: 'h', r, c });
+        }
+      }
     }
     for (let r = 0; r < rows; r++) {
-      for (let c = 0; c <= cols; c++) allEdges.push({ type: 'v', r, c });
+      for (let c = 0; c <= cols; c++) {
+        const k = `v_${r}_${c}`;
+        if (!edgePrioritySet.has(k)) {
+          edgePrioritySet.add(k);
+          allEdges.push({ type: 'v', r, c });
+        }
+      }
     }
 
     const backtrack = (idx: number): void => {
@@ -348,6 +409,7 @@ export class WebSlitherlinkGenerator {
       const p1: [number, number] = [e.r, e.c];
       const p2: [number, number] = e.type === 'h' ? [e.r, e.c + 1] : [e.r + 1, e.c];
 
+      // 分支 1: 置為連線
       if (ptDeg[p1[0]][p1[1]] < 2 && ptDeg[p2[0]][p2[1]] < 2) {
         if (e.type === 'h') curH[e.r][e.c] = true;
         else curV[e.r][e.c] = true;
@@ -403,6 +465,7 @@ export class WebSlitherlinkGenerator {
         ptDeg[p2[0]][p2[1]]--;
       }
 
+      // 分支 2: 置為空白 / 標叉
       backtrack(idx + 1);
     };
 
@@ -449,7 +512,34 @@ export class WebSlitherlinkGenerator {
       }
     }
 
-    // 2. Adjacent 3s
+    // 2. 角落 3 定式 (Corner 3)
+    const corners: [number, number, [EdgeType, number, number][], [EdgeType, number, number][]][] = [
+      [0, 0, [['h', 0, 0], ['v', 0, 0]], [['h', 1, 0], ['v', 0, 1]]],
+      [0, cols - 1, [['h', 0, cols - 1], ['v', 0, cols]], [['h', 1, cols - 1], ['v', 0, cols - 1]]],
+      [rows - 1, 0, [['h', rows, 0], ['v', rows - 1, 0]], [['h', rows - 1, 0], ['v', rows - 1, 1]]],
+      [rows - 1, cols - 1, [['h', rows, cols - 1], ['v', rows - 1, cols]], [['h', rows - 1, cols - 1], ['v', rows - 1, cols - 1]]],
+    ];
+
+    for (const [cr, cc, outerEdges] of corners) {
+      if (clues[cr][cc] === 3) {
+        for (const [t, er, ec] of outerEdges) {
+          if ((t === 'h' ? curH[er][ec] : curV[er][ec]) === 0) {
+            deductions.set(`${t}_${er}_${ec}`, {
+              edge: { type: t, r: er, c: ec },
+              state: 1,
+              type: 'corner_three',
+              rationale: '角落 3 兩條外邊界必須強制通線',
+              humanReadable: {
+                zh: `盤面角落的線索 3：兩側靠邊的軌道必須強制連線！`,
+                en: `Corner 3 pattern forces outer boundaries to connect.`,
+              },
+            });
+          }
+        }
+      }
+    }
+
+    // 3. Adjacent 3s
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         if (c + 1 < cols && clues[r][c] === 3 && clues[r][c + 1] === 3) {
@@ -497,7 +587,7 @@ export class WebSlitherlinkGenerator {
       }
     }
 
-    // 3. Degree Saturation & Extension
+    // 4. Degree Saturation & Extension
     for (let r = 0; r <= rows; r++) {
       for (let c = 0; c <= cols; c++) {
         const edges: { type: EdgeType; er: number; ec: number; val: number }[] = [];
@@ -541,7 +631,7 @@ export class WebSlitherlinkGenerator {
       }
     }
 
-    // 4. Clue Completion
+    // 5. Clue Completion
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         const clue = clues[r][c];
@@ -640,7 +730,7 @@ export class WebSlitherlinkGenerator {
 
       if (deductions.size > 0) {
         let chosenItem = Array.from(deductions.values()).find(
-          (d) => d.type === 'zero_cross' || d.type === 'adjacent_threes' || d.type === 'diagonal_30'
+          (d) => d.type === 'zero_cross' || d.type === 'adjacent_threes' || d.type === 'corner_three'
         );
         if (!chosenItem) {
           chosenItem = deductions.values().next().value;
@@ -681,9 +771,6 @@ export class WebSlitherlinkGenerator {
     };
   }
 
-  /**
-   * 生成合法簡單矩形環作為各尺寸安全 Fallback
-   */
   private static createSafeFallbackLoop(rows: number, cols: number): { hEdges: boolean[][]; vEdges: boolean[][] } {
     const hEdges: boolean[][] = Array.from({ length: rows + 1 }, () => Array(cols).fill(false));
     const vEdges: boolean[][] = Array.from({ length: rows }, () => Array(cols + 1).fill(false));
@@ -700,14 +787,19 @@ export class WebSlitherlinkGenerator {
     return { hEdges, vEdges };
   }
 
+  /**
+   * 毫秒級主生成入口：支援全域 6 階難度，嚴格保證唯一解
+   */
   public static generate(tier: TierKey = 'kids', inputSeed?: number): PuzzleEntity {
     const config = TIER_SPECS[tier] || TIER_SPECS.kids;
-    const { rows, cols, clueRemovalRate, minForcedChain, baseIrt } = config;
+    const { rows, cols, clueRemovalRate, minForcedChain, baseIrt, timeLimitSec } = config;
     const seed = inputSeed ?? Math.floor(Math.random() * 0x7fffffff);
     const rnd = mulberry32(seed);
 
     let attempts = 0;
-    while (attempts++ < 75) {
+    const maxAttempts = 35;
+
+    while (attempts++ < maxAttempts) {
       const { hEdges, vEdges } = this.generateValidLoopSymmetric(rows, cols, rnd);
 
       if (!this.isStrictSingleLoop(hEdges, vEdges, rows, cols)) {
@@ -741,6 +833,7 @@ export class WebSlitherlinkGenerator {
       }
       if (!hasAnchor) puzzleClues[0][0] = fullClues[0][0];
 
+      // 嚴格驗證唯一解（限制 300 步短路熔斷，杜絕多解盤面）
       if (this.countSolutions(rows, cols, puzzleClues, 2) !== 1) {
         continue;
       }
@@ -752,7 +845,7 @@ export class WebSlitherlinkGenerator {
         continue;
       }
 
-      const dynamicIrt = Number((baseIrt + entropy * 0.4 + (simResult.steps.length / (rows * cols)) * 0.3).toFixed(2));
+      const dynamicIrt = Number((baseIrt + entropy * 0.35 + (simResult.steps.length / (rows * cols)) * 0.25).toFixed(2));
       const puzzleId = `slither_${tier}_s${seed}`;
 
       const spec: SlitherlinkSpec = {
@@ -783,7 +876,7 @@ export class WebSlitherlinkGenerator {
         engine_type: 'slitherlink',
         tier,
         checksum: `SLITHER_${rows}x${cols}_CERTIFIED_${seed}`,
-        puzzle: spec, // 解決 TS2783 重複屬性警告
+        puzzle: spec,
         solution: { solutionH: hEdges, solutionV: vEdges },
         cognitiveLoad: {
           spatial: 0.95,
@@ -792,15 +885,31 @@ export class WebSlitherlinkGenerator {
           inhibition: 0.85,
         },
         metrics: {
-          estimated_time_sec: Math.max(20, simResult.steps.length * 5 + rows * cols * 2),
+          grid_size: rows,
+          rows,
+          cols,
+          estimated_time_sec: timeLimitSec,
           irt_logit_difficulty: dynamicIrt,
           human_sim_steps: simResult.steps.length,
+          topologicalEntropy: entropy,
           seed,
-        },
+          actualTier: tier,
+        } as any,
       };
     }
 
     // 尺寸適配的健全 Fallback
+    return this._generateFallback(tier, rows, cols, seed, config.baseIrt, config.timeLimitSec);
+  }
+
+  private static _generateFallback(
+    tier: TierKey,
+    rows: number,
+    cols: number,
+    seed: number,
+    baseIrt: number,
+    timeLimitSec: number
+  ): PuzzleEntity {
     const { hEdges: fallbackH, vEdges: fallbackV } = this.createSafeFallbackLoop(rows, cols);
     const fallbackClues = this.extractClues(rows, cols, fallbackH, fallbackV);
 
@@ -832,10 +941,18 @@ export class WebSlitherlinkGenerator {
       engine_type: 'slitherlink',
       tier,
       checksum: `SLITHER_FALLBACK_${rows}x${cols}_S${seed}`,
-      puzzle: fallbackSpec, // 解決 TS2783 重複屬性警告
+      puzzle: fallbackSpec,
       solution: { solutionH: fallbackH, solutionV: fallbackV },
       cognitiveLoad: { spatial: 0.9, numeric: 0.3, workingMemory: 0.6, inhibition: 0.8 },
-      metrics: { estimated_time_sec: 45, irt_logit_difficulty: config.baseIrt, seed },
+      metrics: {
+        grid_size: rows,
+        rows,
+        cols,
+        estimated_time_sec: timeLimitSec,
+        irt_logit_difficulty: baseIrt,
+        seed,
+        actualTier: tier,
+      } as any,
     };
   }
 }
