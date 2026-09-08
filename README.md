@@ -20,16 +20,16 @@
 ### 架構特色
 
 * **WASM 零拷貝記憶體與查表常數加速**：核心數獨與密集型運算模組全面以 Rust 編寫並編譯為 WebAssembly，具備編譯期預算靜態鄰居查表（LUT）與共享記憶體視圖（Zero-Copy Memory View），實現超低功耗與次毫秒級狀態收斂。
-* **數學級唯一解證書（Exact Cover Uniqueness Engine）**：拒絕「算力不夠即判定唯一」的偽科學。全面實裝 AC-3 弧相容傳播、MRV 啟發式剪枝與二分匹配，數學證明解空間基數精確為 1，杜絕多解殘局與超時作弊。
-* **純邏輯閉環與因果推導率（100% Pure Deduction Rate）**：高難度題目（Master / Legendary / Ultimate）嚴格執行人類邏輯求解鏈模擬，唯有能被純邏輯手筋 100% 推導封頂的題面才會被產出，徹底消滅盲猜分支。
+* **數學級唯一解證書（Exact Cover Uniqueness Engine）**：拒絕「算力不夠即判定唯一」的偽科學。全面實裝 AC-3 弧相容傳播、在軌動態 MRV 啟發式剪枝、12000 節點回溯防護與二分匹配，數學證明解空間基數精確為 1，杜絕多解殘局與超時作弊。
+* **純邏輯閉環與因果推導率（100% Pure Deduction Rate & Breakpoint Ratio）**：高難度題目（Master / Legendary / Ultimate）嚴格執行人類邏輯求解鏈模擬，實裝真實邏輯斷點深度比（Breakpoint Ratio $\ge 80\%$），消滅早盤盲猜分支，確保試誤僅沈澱於尾盤收割。
 * **真實認知轉折點（$\Delta\text{Domain}$ Entropy Crux）**：告別機械式技巧標籤。以每一步手筋造成的「加權候選域熵減量（$\Delta\text{Domain}$）」與「DAG 拓撲影響半徑」精確錨定破局天王山（Crux），真實反映人類解題時的阻斷釋放感。
 * **WPC 賽場級鍵位與心流防護（Speed-Solving Ergonomics）**：
-* **黑白分明 (`heyawake`)**：方向鍵/WASD 游標磁吸縮放高亮、二態極速切換（空白 ↔ 填黑）、靜默咽喉割點雷達。
-* **天平不等 (`futoshiki`)**：T9 固定三欄盲打九宮格、雙擊數字鎖定注入模式（Injection Mode）、永久十字瞄準線、一鍵硬切無延遲渦輪模式（Turbo Mode）。
-* **隻眼獨尊 (`hitori`)**：左鍵主決策循環、右鍵紙本鉛筆草稿三態標記（Pencil Marking）、衝突與同數空間波浪底線視覺疊加、即時 APM 戰績追蹤。
-* **矢印連線 (`yajilin`) & 四角分割 (`shikaku`)**：正交迴路自避檢測、長方形面積幾何動態約束錨定。
-
-
+  * **黑白雙星 (`kropki`)**：標準數獨宮格拓撲、貫穿式負約束微結構細虛線（No-Dot Barrier）、同數戰場十字光環高亮、8ms 觸覺行程微震動反饋、可逆 Auto-Notes 快照避險、20% 分段配速條（Splits Telemetry）。
+  * **數和密碼 (`kakuro`)**：跑道局部性解空間、180° 對稱區塊侵蝕黑牆、所見即所填候選條、極限和差集合閉包、真·正交容量閉區間擠壓（Capacity Squeeze）、中盤模 9 數字根同餘剪枝。
+  * **黑白分明 (`heyawake`)**：方向鍵/WASD 游標磁吸縮放高亮、二態極速切換（空白 ↔ 填黑）、靜默咽喉割點雷達。
+  * **天平不等 (`futoshiki`)**：T9 固定三欄盲打九宮格、雙擊數字鎖定注入模式（Injection Mode）、永久十字瞄準線、一鍵硬切無延遲渦輪模式（Turbo Mode）。
+  * **隻眼獨尊 (`hitori`)**：左鍵主決策循環、右鍵紙本鉛筆草稿三態標記（Pencil Marking）、衝突與同數空間波浪底線視覺疊加、即時 APM 戰績追蹤。
+  * **矢印連線 (`yajilin`) & 四角分割 (`shikaku`)**：正交迴路自避檢測、長方形面積幾何動態約束錨定。
 * **臨床級反作弊監控與專業監考（Proctoring & Anti-Cheat）**：整合 `useAntiCheatMonitor`、`clinicalProctoring` 與硬體級輸入防漂移偵測，確保錦標賽競技數據的客觀嚴密。
 * **嚴格賽事裸裝模式（Strict Tournament Mode）**：開啟賽事模式即強制隱蔽所有即時衝突紅框、波浪輔助線與虛假標稱配額，鎖定盤面禁止提示，還原國際大賽現場的「無輔助裸裝對決」。
 * **零信任防偽存證簽章（Zero-Trust Receipt）**：通關後透過 Web Crypto API 原生硬體加速生成 SHA-256 數位簽章與常數時間核驗，確保各項賽事通關憑證與個人最佳紀錄（PB）無法篡改。
@@ -41,6 +41,8 @@
 
 | 代號 | 遊戲名稱 | 核心能力維度 (CHC) | 演算法與賽事級特點 |
 | --- | --- | --- | --- |
+| `kropki` | **黑白雙星** | 數理偏序、宮格空間排他 | 正統數獨宮格拓撲（2x2/2x3/3x3）、全相鄰無點負約束（Full Kropki）、雙向 X-Wing 魚形排除、4x 超加權樞紐錨定、真實斷點深度比（$\ge 80\%$）、貫穿虛線屏障、8ms 觸覺行程鍵盤 |
+| `kakuro` | **數和密碼** | 整數分割、數論同餘閉包 | 跑道局部性獨立去重、180° 對稱區塊侵蝕黑牆、雙向極限和差集合閉包、真·正交容量閉區間擠壓（Capacity Squeeze）、中盤模 9 數字根同餘剪枝、封閉疊代局部傳播、所見即所填候選條 |
 | `maze` | **空間迷宮** | 空間導航、心智心圖 | 質數動態網格碎形、雙入口時間黑洞、視覺直線性後悔值、雙胞胎地標悖論、重疊率 $<40\%$ 逆向驗證、Boss 二階段精神污染 |
 | `sudoku` | **數獨魔陣** | 約束傳播、工作記憶 | Rust/WASM 零拷貝引擎、MRV 位元剪枝、全向 Naked/Hidden Pairs、雙向 X-Wing 魚形定式、純定式 Lookahead-3 演繹反證探針 |
 | `nonogram` | **像素數織** | 離散斷面掃描、衝動抑制 | 全向量化 Bitmask DP 單行交集、二維全域泛洪反證、DAG 依賴樹、Master Key 咽喉雪崩、400px 逐行光波斜向綻放、50 步 Undo 堆疊 |
@@ -53,11 +55,9 @@
 | `shikaku` | **四角分割** | 幾何整除、矩形空間鋪砌 | 質因數矩形分解列舉、數字包含唯一性約束、多矩形衝突割平面演算法、非重疊平面覆蓋驗證 |
 | `nurikabe` | **暗夜數牆** | 平面連通、圖論割點 | 多聯骨牌自由擴散（面積 1~7）、2×2 黑池紅色脈衝定位、點點候選標記 |
 | `skyscraper` | **摩天透視** | 3D 心理旋轉、空間透視 | 4 面邊界視線滿足度即時反饋、立體高度推演 |
-| `kropki` | **黑白雙星** | 相鄰差比、數理關係 | 白點連續數（差 1）與黑點倍數（2:1）交叉約束傳播 |
 | `slitherlink` | **迴路封閉** | 歐拉迴路、頂點度數約束 | 點網格拖曳畫線、0/3 經典定式推進、子環防早斷檢測 |
 | `tents` | **帳篷扎營** | 二分圖匹配、8-鄰域幾何 | 雙向抽屜原理閉鎖器、雙子樹角隅互斥破局器、Kuhn-Munkres 雙射唯一驗證 |
 | `lightup` | **燈泡照明** | 視線投射、正交覆蓋 | 射線即時追蹤渲染、燈泡直視相撞警示、暗區聚焦模式 |
-| `kakuro` | **數和密碼** | 整數分割、交叉約束 | 靜態分割查詢表（Partition Table）、手動 3×3 筆記、錯誤時間序列分析 |
 | `masyu` | **珍珠迴路** | 空間拓撲、正交折角約束 | 隨機自避蜿蜒迴路、貼邊黑白定式、相鄰黑珍珠排斥、CSP 唯一解 |
 
 ---
@@ -71,16 +71,16 @@
 ### Architecture Highlights
 
 * **Zero-Copy WASM Core**: Computationally intensive solvers are written in Rust and compiled to WebAssembly, featuring compile-time static lookup tables (PEERS_TABLE) and zero-copy shared array memory mapping.
-* **Exact Cover Uniqueness Engine**: Mathematical certainty replacing heuristic timeouts. Across Sudoku, Nonogram, Dominoes, Hashi, Heyawake, Futoshiki, Hitori, Yajilin, and Shikaku, exact MRV backtracking solvers and value-constrained bipartite matching proofs guarantee puzzle solution cardinality equals exactly 1.
-* **100% Pure Deduction Rate**: Master, Legendary, and Ultimate tiers strictly enforce complete human deductive chain simulations, discarding puzzles requiring trial-and-error branching.
+* **Exact Cover Uniqueness Engine**: Mathematical certainty replacing heuristic timeouts. Across Sudoku, Nonogram, Dominoes, Hashi, Heyawake, Futoshiki, Hitori, Kakuro, Kropki, Yajilin, and Shikaku, exact MRV backtracking solvers and value-constrained bipartite matching proofs guarantee puzzle solution cardinality equals exactly 1.
+* **100% Pure Deduction Rate & Breakpoint Ratio**: Master, Legendary, and Ultimate tiers strictly enforce complete human deductive chain simulations with Breakpoint Depth Ratio $\ge 80\%$, discarding puzzles requiring trial-and-error branching during early and mid games.
 * **True Cognitive Crux via $\Delta\text{Domain}$ Reduction**: Crux points are quantified using weighted candidate domain entropy reductions and DAG topological radii rather than arbitrary heuristic weights.
 * **Speed-Solving Ergonomics**:
-* **Heyawake**: WASD/Arrow magnetic cursor scaling, dual-state speed toggle (Blank ↔ Black), silent cut-point radar.
-* **Futoshiki**: Fixed 3-column numpad, double-click number injection mode, permanent crosshair guide, zero-latency Turbo Mode.
-* **Hitori**: Primary click cycle, secondary pencil-marking (Pencil Marks), real-time action & APM metric tracker.
-* **Yajilin & Shikaku**: Closed self-avoiding loop detection, dynamic geometric factoring for rectangular tiling.
-
-
+  * **Kropki**: Standard box topology, linear dashed negative-constraint barriers, localized crosshair highlight, 8ms mechanical haptic feedback, reversible auto-notes infill, 20% pace splits.
+  * **Kakuro**: Run-local solution spaces, blocky 180° erosion layout, clickable candidate strip, extreme sum set-closures, cross-capacity squeeze, deep modulo-9 digital root congruence filters.
+  * **Heyawake**: WASD/Arrow magnetic cursor scaling, dual-state speed toggle (Blank ↔ Black), silent cut-point radar.
+  * **Futoshiki**: Fixed 3-column numpad, double-click number injection mode, permanent crosshair guide, zero-latency Turbo Mode.
+  * **Hitori**: Primary click cycle, secondary pencil-marking (Pencil Marks), real-time action & APM metric tracker.
+  * **Yajilin & Shikaku**: Closed self-avoiding loop detection, dynamic geometric factoring for rectangular tiling.
 * **Clinical Proctoring & Integrity Monitoring**: Integrates `useAntiCheatMonitor`, `clinicalProctoring`, and hardware input drift heuristics to ensure objective competitive fidelity.
 * **Strict Tournament Mode**: Completely suppresses in-game conflict glows, wave overlays, and nominal quota labels for unassisted, competition-compliant solving.
 * **Zero-Trust Verification**: Hard locks board generation and hints during official attempts; generates cryptographic SHA-256 receipts via Web Crypto API with constant-time equality checks.
@@ -110,11 +110,11 @@ flowchart TD
     Gv --> M9["Shikaku (幾何分割 / 矩形覆蓋)"]
 
     Nq --> N1["Sudoku (交叉排他 / 魚定式)"]
-    Nq --> N2["Kakuro (整數分割)"]
+    Nq --> N2["Kakuro (跑道局部性 / 數論模9同餘)"]
     Nq --> N3["Futoshiki (無偏拉丁方 / 數對鎖定)"]
     Nq --> N4["Dominoes (二分匹配 / 鋪砌全集)"]
     Nq --> N5["Hitori (視覺手筋優先 / 雙向計數強制)"]
-    Nq --> N6["Kropki (倍數差比偏序)"]
+    Nq --> N6["Kropki (宮格拓撲 / 全負約束 / 雙向魚)"]
 
     Gwm --> W1["候選數動態保留與鉛筆筆記 (Pencil Marks)"]
     Gwm --> W2["結構化前瞻反證樹沙盒"]
@@ -135,15 +135,15 @@ flowchart TD
                ▼ (Zero-Copy Pointer)           ▼ (Causal Step Stream)
 ┌──────────────────────────────┐ ┌────────────────────────────┐
 │      WASM Core (Rust)        │ │  Procedural TS Generators  │
-│  • Compile-time PEERS LUT    │ │ • Exact Bipartite Matching │
-│  • Bitmask MRV Propagation   │ │ • Tarjan Bridge Lowlink    │
-│  • O(1) Backtrack Snapshot   │ │ • Unbiased Latin / Z-Carve │
+│  • Compile-time PEERS LUT    │ │ • Full Kropki Box Topology │
+│  • Bitmask MRV Propagation   │ │ • Run-Local Modulo-9 Sieve │
+│  • O(1) Backtrack Snapshot   │ │ • Tarjan Bridge Lowlink    │
 └──────────────┬───────────────┘ └─────────────┬──────────────┘
                │                               │
                └───────────────┬───────────────┘
                                ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                   Clinical Integrity Layer                  │
+│                    Clinical Integrity Layer                 │
 │  Anti-Cheat Monitor + SMT Welder + Web Crypto SHA-256 Auth  │
 └─────────────────────────────────────────────────────────────┘
 
@@ -207,10 +207,10 @@ Lawgic/
 │   ├── src/
 │   │   ├── components/      # 18 款競速駕駛艙 (Board)、因果高亮、虛擬手把與互動元件
 │   │   ├── contexts/        # 語系切換 (LanguageContext) 與無障礙支援 (AccessibilityContext)
-│   │   ├── engines/         # 18 款競技級演算法 (Heyawake V6, Futoshiki V5, Hitori Gold 等)
+│   │   ├── engines/         # 18 款競技級演算法 (Kropki Apex, Kakuro Perfect, Heyawake V6 等)
 │   │   ├── generated/       # 靜態種子庫與題目元數據預編譯快取 (JSON)
 │   │   ├── hooks/           # useLearnerProfile、useAntiCheatMonitor、useLongTermScheduler
-│   │   ├── registry/        # RendererRegistry (動態分發與渲染註冊中心)
+│   │   ├── registry/        # RendererRegistry (動態分發與容錯重試註冊中心)
 │   │   ├── utils/           # 臨床監考、動態常模、密碼學簽章、金庫存儲與排行榜
 │   │   ├── App.tsx          # 主儀表板、非同步時間切片生成與賽事模式路由
 │   │   └── main.tsx         # 應用程式入口
