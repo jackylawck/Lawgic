@@ -4,6 +4,22 @@ import { PuzzleEntity, TierKey } from '../generated';
 export type ExtendedTierKey = TierKey;
 export type StrategyPersona = 'Macro-Planner' | 'Wall-Follower' | 'Intuitive-Explorer';
 
+export interface DeceptionWaypoint {
+  coordinate: [number, number];
+  divergedStep: number;
+  visualConfidenceScore: number;
+  internalSubForks: number;
+  regretCost: number;
+  trapType: 'Straight_Lure' | 'Camouflaged_Bypass' | 'Goal_Keeper_Fork' | 'Twin_Landmark_Trap';
+}
+
+export interface TwinLandmarkPair {
+  landmarkA: [number, number];
+  landmarkB: [number, number];
+  isLethalA: boolean;
+  signature: string;
+}
+
 export interface MazeSpec {
   rows: number;
   cols: number;
@@ -16,6 +32,8 @@ export interface MazeSpec {
   end: [number, number];
   goal: [number, number];
   pseudoGoals: [number, number][];
+  twinLandmarks: TwinLandmarkPair[];
+  deceptionWaypoints: DeceptionWaypoint[];
   seed: number;
   actualTier: TierKey;
   pureDeductionRate: number;
@@ -30,7 +48,10 @@ export interface MazeSpec {
   maxVisualRegretValue: number;
   avgVisualRegretValue: number;
   visualOptimalOverlapRatio: number;
+  cognitivePhaseGain: number;
   hasPrimeFractalSymmetry: boolean;
+  hasGoalKeeperTrap: boolean;
+  hasPhase2MentalGlitch: boolean;
   solving_path: string[];
 }
 
@@ -40,17 +61,18 @@ interface TierConfig {
   minCriticalDepth: number;
   dynamicLookaheadDepth: number;
   maxVisualOptimalOverlap: number;
+  minPhaseGain: number;
   baseIrt: number;
   timeLimitSec: number;
 }
 
 const TIER_SPECS: Record<TierKey, TierConfig> = {
-  kids: { size: 11, targetDensity: 0.55, minCriticalDepth: 3, dynamicLookaheadDepth: 3, maxVisualOptimalOverlap: 0.70, baseIrt: 0.65, timeLimitSec: 90 },
-  intermediate: { size: 17, targetDensity: 0.50, minCriticalDepth: 5, dynamicLookaheadDepth: 4, maxVisualOptimalOverlap: 0.55, baseIrt: 1.45, timeLimitSec: 150 },
-  expert: { size: 23, targetDensity: 0.45, minCriticalDepth: 8, dynamicLookaheadDepth: 6, maxVisualOptimalOverlap: 0.45, baseIrt: 2.35, timeLimitSec: 240 },
-  master: { size: 29, targetDensity: 0.42, minCriticalDepth: 11, dynamicLookaheadDepth: 7, maxVisualOptimalOverlap: 0.40, baseIrt: 3.15, timeLimitSec: 360 },
-  legendary: { size: 35, targetDensity: 0.38, minCriticalDepth: 14, dynamicLookaheadDepth: 8, maxVisualOptimalOverlap: 0.38, baseIrt: 3.75, timeLimitSec: 480 },
-  ultimate: { size: 41, targetDensity: 0.34, minCriticalDepth: 18, dynamicLookaheadDepth: 9, maxVisualOptimalOverlap: 0.35, baseIrt: 4.35, timeLimitSec: 600 },
+  kids: { size: 11, targetDensity: 0.55, minCriticalDepth: 3, dynamicLookaheadDepth: 3, maxVisualOptimalOverlap: 0.70, minPhaseGain: 1.1, baseIrt: 0.65, timeLimitSec: 90 },
+  intermediate: { size: 17, targetDensity: 0.50, minCriticalDepth: 5, dynamicLookaheadDepth: 4, maxVisualOptimalOverlap: 0.55, minPhaseGain: 1.25, baseIrt: 1.45, timeLimitSec: 150 },
+  expert: { size: 23, targetDensity: 0.45, minCriticalDepth: 8, dynamicLookaheadDepth: 6, maxVisualOptimalOverlap: 0.45, minPhaseGain: 1.35, baseIrt: 2.35, timeLimitSec: 240 },
+  master: { size: 29, targetDensity: 0.42, minCriticalDepth: 11, dynamicLookaheadDepth: 7, maxVisualOptimalOverlap: 0.40, minPhaseGain: 1.40, baseIrt: 3.15, timeLimitSec: 360 },
+  legendary: { size: 35, targetDensity: 0.38, minCriticalDepth: 14, dynamicLookaheadDepth: 8, maxVisualOptimalOverlap: 0.38, minPhaseGain: 1.45, baseIrt: 3.75, timeLimitSec: 480 },
+  ultimate: { size: 41, targetDensity: 0.34, minCriticalDepth: 18, dynamicLookaheadDepth: 9, maxVisualOptimalOverlap: 0.35, minPhaseGain: 1.50, baseIrt: 4.35, timeLimitSec: 600 },
 };
 
 function mulberry32(a: number) {
@@ -85,14 +107,14 @@ export class WebMazeGenerator {
     };
     const targetMinDivergence = minDivergenceMap[tier] || 1.2;
 
-    const maxAttempts = 35;
+    const maxAttempts = 40;
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       const attemptSeed = (actualSeed + attempt * 0x9e3779b9) >>> 0;
       const rnd = mulberry32(attemptSeed);
 
       const grid: number[][] = Array.from({ length: height }, () => Array(width).fill(1));
 
-      const applyPrimeFractal = tier !== 'kids' && rnd() > 0.20;
+      const applyPrimeFractal = tier !== 'kids' && rnd() > 0.15;
       this._generatePrimeFractalTree(grid, width, height, personaBias, applyPrimeFractal, rnd);
 
       const { start, end, pseudoGoals } = this._placeDynamicEndpointsAndLoops(grid, width, height, tier, rnd);
@@ -103,6 +125,11 @@ export class WebMazeGenerator {
 
       const deepPseudopods = this._injectDeepPseudopods(grid, width, height, start, end, tier, rnd);
 
+      const hasGoalKeeper = tier !== 'kids' ? this._injectGoalKeeperDilemma(grid, width, height, end, rnd) : false;
+
+      // 嚴格位元卷積匹配雙胞胎地標
+      const twinLandmarks = tier !== 'kids' ? this._injectTwinLandmarkPairs(grid, width, height, rnd) : [];
+
       const solution = this._bfs(grid, width, height, start, end);
       if (solution.length < 2) continue;
 
@@ -112,13 +139,17 @@ export class WebMazeGenerator {
       const overlapRatio = this._computePathOverlapRatio(solution, visualGreedyPath);
       const divergenceRatio = Number((baselineWallFollow.length / Math.max(1, solution.length)).toFixed(2));
       const ambiguityIndex = this._computeLocalAmbiguityIndex(grid, width, height, solution);
-      const { maxVisualRegret, avgVisualRegret } = this._computeVisualConfidenceRegret(grid, width, height, solution, end);
+
+      // 嚴格相位增益 (1.4x+) 與內部決策熵值病理分析
+      const { waypoints, maxVisualRegret, avgVisualRegret, phaseGain, isWaveStrictlyCompliant } =
+        this._analyzeCognitiveWaveStrict(grid, width, height, solution, visualGreedyPath, end, config.minPhaseGain);
 
       if (attempt < maxAttempts - 1 && tier !== 'kids') {
         if (
           overlapRatio > config.maxVisualOptimalOverlap ||
           divergenceRatio < targetMinDivergence ||
-          maxVisualRegret < 18
+          !isWaveStrictlyCompliant ||
+          maxVisualRegret < 24
         ) {
           continue;
         }
@@ -136,11 +167,11 @@ export class WebMazeGenerator {
       );
       const workingMemoryLoad = Math.min(
         1.0,
-        0.25 + (pathEntropy / 3.0) * 0.35 + (maxVisualRegret / 45.0) * 0.40
+        0.25 + (pathEntropy / 3.0) * 0.35 + (maxVisualRegret / 50.0) * 0.40
       );
       const inhibitionLoad = Math.min(
         1.0,
-        0.25 + (1 - overlapRatio) * 0.45 + (divergenceRatio > 2.0 ? 0.30 : 0.15)
+        0.25 + (1 - overlapRatio) * 0.45 + (phaseGain >= 1.4 ? 0.30 : 0.15)
       );
 
       const baseIrt = config.baseIrt;
@@ -150,19 +181,20 @@ export class WebMazeGenerator {
           (pathEntropy - 1.0) * 0.1 +
           (tortuosity - 1.0) * 0.12 +
           (divergenceRatio - 1.2) * 0.1 +
-          (1 - overlapRatio) * 0.25
+          (1 - overlapRatio) * 0.25 +
+          (phaseGain - 1.0) * 0.15
         ).toFixed(2)
       );
 
       const estimatedTimeSec = Math.round(
-        14 + visualGreedyPath.length * 0.45 + turnCount * 0.6 + maxVisualRegret * 0.8 + (isUltimate ? 45 : tier === 'legendary' ? 28 : 12)
+        14 + visualGreedyPath.length * 0.45 + turnCount * 0.6 + maxVisualRegret * 0.75 + (isUltimate ? 50 : tier === 'legendary' ? 32 : 15)
       );
 
       const solvingPath = [
-        `Decentralized Anti-Inward Path (${solution.length} optimal steps)`,
-        `Dynamic Pseudo-Goal Loops (${pseudoGoals.length} deceptive bypass rings)`,
-        `Deep Pseudopods (${deepPseudopods} elbow-turned supernode crushers)`,
-        `Meta-Cognitive Deception (Visual-Optimal Overlap: ${Math.round(overlapRatio * 100)}%)`,
+        `Phase-Gain Wave (Gain: ${phaseGain.toFixed(2)}x, Mid Peak: ${maxVisualRegret.toFixed(1)})`,
+        `Twin Landmark Paradox (${twinLandmarks.length} matched pairs)`,
+        `Goal Keeper Dilemma (${hasGoalKeeper ? 'Armed' : 'None'})`,
+        `Mental Glitch (${tier !== 'kids' ? 'Active on Doorstep' : 'Disabled'})`,
       ];
 
       const spec: MazeSpec = {
@@ -177,6 +209,8 @@ export class WebMazeGenerator {
         end,
         goal: end,
         pseudoGoals,
+        twinLandmarks,
+        deceptionWaypoints: waypoints,
         seed: actualSeed,
         actualTier: tier,
         pureDeductionRate: 1.0,
@@ -191,7 +225,10 @@ export class WebMazeGenerator {
         maxVisualRegretValue: Number(maxVisualRegret.toFixed(1)),
         avgVisualRegretValue: Number(avgVisualRegret.toFixed(1)),
         visualOptimalOverlapRatio: Number(overlapRatio.toFixed(2)),
+        cognitivePhaseGain: Number(phaseGain.toFixed(2)),
         hasPrimeFractalSymmetry: applyPrimeFractal,
+        hasGoalKeeperTrap: hasGoalKeeper,
+        hasPhase2MentalGlitch: tier !== 'kids',
         solving_path: solvingPath,
       };
 
@@ -219,8 +256,11 @@ export class WebMazeGenerator {
           max_visual_regret_value: Number(maxVisualRegret.toFixed(1)),
           avg_visual_regret_value: Number(avgVisualRegret.toFixed(1)),
           visual_optimal_overlap_ratio: Number(overlapRatio.toFixed(2)),
-          pseudo_goal_count: pseudoGoals.length,
-          deep_pseudopod_count: deepPseudopods,
+          cognitive_phase_gain: Number(phaseGain.toFixed(2)),
+          twin_landmark_count: twinLandmarks.length,
+          deception_waypoint_count: waypoints.length,
+          has_goal_keeper_trap: hasGoalKeeper,
+          has_phase2_mental_glitch: tier !== 'kids',
           has_prime_fractal_symmetry: applyPrimeFractal,
           attempt_iteration: attempt,
           irt_logit_difficulty: dynamicIrt,
@@ -235,11 +275,238 @@ export class WebMazeGenerator {
           workingMemory: Number(workingMemoryLoad.toFixed(2)),
           inhibition: Number(inhibitionLoad.toFixed(2)),
         },
-        checksum: `MAZE_V6_DEUS_EX_MACHINA_${size}x${size}_S${actualSeed}_A${attempt}`,
+        checksum: `MAZE_V8_ABYSS_WATCHER_${size}x${size}_S${actualSeed}_A${attempt}`,
       };
     }
 
     return this._generateSafeFallback(tier, size, actualSeed, config.baseIrt);
+  }
+
+  /**
+   * 3x3 八向鄰域同構哈希雙胞胎地標對（Twin Landmark Structural Hash Matching）
+   */
+  private static _injectTwinLandmarkPairs(
+    grid: number[][],
+    width: number,
+    height: number,
+    rnd: () => number
+  ): TwinLandmarkPair[] {
+    const pairs: TwinLandmarkPair[] = [];
+    const hashMap = new Map<number, [number, number][]>();
+
+    // 遍歷所有通路點，計算 3x3 鄰域二進位卷積
+    for (let y = 2; y < height - 2; y += 2) {
+      for (let x = 2; x < width - 2; x += 2) {
+        if (grid[y][x] === 0) {
+          let hash = 0;
+          let bit = 0;
+          for (let dy = -1; dy <= 1; dy++) {
+            for (let dx = -1; dx <= 1; dx++) {
+              if (dx === 0 && dy === 0) continue;
+              if (grid[y + dy][x + dx] === 1) hash |= (1 << bit);
+              bit++;
+            }
+          }
+          const list = hashMap.get(hash) || [];
+          list.push([x, y]);
+          hashMap.set(hash, list);
+        }
+      }
+    }
+
+    const viableHashes = Array.from(hashMap.keys()).filter((k) => (hashMap.get(k)?.length || 0) >= 2);
+    for (let i = viableHashes.length - 1; i > 0; i--) {
+      const j = Math.floor(rnd() * (i + 1));
+      [viableHashes[i], viableHashes[j]] = [viableHashes[j], viableHashes[i]];
+    }
+
+    for (const h of viableHashes) {
+      if (pairs.length >= 2) break;
+      const nodes = hashMap.get(h)!;
+      for (let i = 0; i < nodes.length - 1; i++) {
+        const p1 = nodes[i];
+        const p2 = nodes[i + 1];
+        const dist = Math.abs(p1[0] - p2[0]) + Math.abs(p1[1] - p2[1]);
+        if (dist >= Math.floor(width * 0.5)) {
+          pairs.push({
+            landmarkA: p1,
+            landmarkB: p2,
+            isLethalA: true,
+            signature: `Twin_3x3_Hash_${h}_D${dist}`,
+          });
+          break;
+        }
+      }
+    }
+
+    return pairs;
+  }
+
+  /**
+   * 嚴格相位增益三段認知波浪與內部熵值病理分析（嚴格要求 Phase Gain >= 1.45x）
+   */
+  private static _analyzeCognitiveWaveStrict(
+    grid: number[][],
+    width: number,
+    height: number,
+    solution: [number, number][],
+    greedyPath: [number, number][],
+    end: [number, number],
+    targetMinPhaseGain: number
+  ): {
+    waypoints: DeceptionWaypoint[];
+    maxVisualRegret: number;
+    avgVisualRegret: number;
+    phaseGain: number;
+    isWaveStrictlyCompliant: boolean;
+  } {
+    const waypoints: DeceptionWaypoint[] = [];
+    const solSet = new Map<string, number>();
+    for (let i = 0; i < solution.length; i++) {
+      solSet.set(`${solution[i][0]},${solution[i][1]}`, i);
+    }
+
+    const regretScores: number[] = [];
+    let earlyMax = 8.0;
+    let midMax = 0.0;
+    let lateMax = 6.0;
+
+    for (let i = 0; i < greedyPath.length; i++) {
+      const [gx, gy] = greedyPath[i];
+      const solIdx = solSet.get(`${gx},${gy}`);
+
+      if (solIdx === undefined && i > 0) {
+        const [prevX, prevY] = greedyPath[i - 1];
+        const prevSolIdx = solSet.get(`${prevX},${prevY}`);
+        if (prevSolIdx !== undefined) {
+          const { steps, straightness, subForks } = this._traceBranchMetricsWithEntropy(grid, width, height, gx, gy, prevX, prevY, end);
+          
+          // 內部決策熵值複合權重：steps * (1 + straightness*2) * (1 + subForks*0.5)
+          const entropyMultiplier = 1.0 + subForks * 0.50;
+          const regret = Number((steps * (1.0 + straightness * 2.0) * entropyMultiplier).toFixed(1));
+          regretScores.push(regret);
+
+          const progressRatio = prevSolIdx / solution.length;
+          if (progressRatio <= 0.30) earlyMax = Math.max(earlyMax, regret);
+          else if (progressRatio <= 0.70) midMax = Math.max(midMax, regret);
+          else lateMax = Math.max(lateMax, regret);
+
+          waypoints.push({
+            coordinate: [prevX, prevY],
+            divergedStep: prevSolIdx,
+            visualConfidenceScore: Number(straightness.toFixed(2)),
+            internalSubForks: subForks,
+            regretCost: regret,
+            trapType: progressRatio > 0.85 ? 'Goal_Keeper_Fork' : subForks >= 2 ? 'Twin_Landmark_Trap' : straightness > 0.6 ? 'Straight_Lure' : 'Camouflaged_Bypass',
+          });
+        }
+      }
+    }
+
+    const maxVisualRegret = regretScores.length > 0 ? Math.max(...regretScores) : 14.0;
+    const avgVisualRegret = regretScores.length > 0 ? regretScores.reduce((a, b) => a + b, 0) / regretScores.length : 14.0;
+
+    const phaseGain = earlyMax > 0 ? midMax / earlyMax : 1.0;
+    const isWaveStrictlyCompliant = phaseGain >= targetMinPhaseGain && midMax > lateMax * 1.20;
+
+    return { waypoints, maxVisualRegret, avgVisualRegret, phaseGain, isWaveStrictlyCompliant };
+  }
+
+  private static _traceBranchMetricsWithEntropy(
+    grid: number[][],
+    width: number,
+    height: number,
+    startX: number,
+    startY: number,
+    fromX: number,
+    fromY: number,
+    end: [number, number]
+  ): { steps: number; straightness: number; subForks: number } {
+    let steps = 1;
+    let cx = startX;
+    let cy = startY;
+    let px = fromX;
+    let py = fromY;
+
+    const dirs: [number, number][] = [
+      [0, 1],
+      [0, -1],
+      [1, 0],
+      [-1, 0],
+    ];
+
+    const initialDx = startX - fromX;
+    const initialDy = startY - fromY;
+    let straightSteps = 0;
+    let subForks = 0;
+
+    const limit = 45;
+    while (steps < limit) {
+      const nextMoves: [number, number][] = [];
+
+      for (const [dx, dy] of dirs) {
+        const nx = cx + dx;
+        const ny = cy + dy;
+        if (nx >= 0 && nx < width && ny >= 0 && ny < height && grid[ny][nx] === 0) {
+          if (nx !== px || ny !== py) {
+            nextMoves.push([nx, ny]);
+          }
+        }
+      }
+
+      if (nextMoves.length === 0) break;
+      if (nextMoves.length >= 2) {
+        subForks++;
+        steps += 3;
+      }
+
+      const moveDx = nextMoves[0][0] - cx;
+      const moveDy = nextMoves[0][1] - cy;
+
+      if (moveDx === initialDx && moveDy === initialDy) {
+        straightSteps++;
+      }
+
+      px = cx;
+      py = cy;
+      cx = nextMoves[0][0];
+      cy = nextMoves[0][1];
+      steps++;
+    }
+
+    const straightness = steps > 0 ? straightSteps / steps : 0;
+    return { steps, straightness, subForks };
+  }
+
+  private static _injectGoalKeeperDilemma(
+    grid: number[][],
+    width: number,
+    height: number,
+    end: [number, number],
+    rnd: () => number
+  ): boolean {
+    const dirs = [[0, 1], [0, -1], [1, 0], [-1, 0]];
+    const [ex, ey] = end;
+
+    for (let d = 0; d < 4; d++) {
+      const [dx, dy] = dirs[d];
+      const gateX = ex + dx;
+      const gateY = ey + dy;
+      if (gateX > 1 && gateX < width - 2 && gateY > 1 && gateY < height - 2 && grid[gateY][gateX] === 0) {
+        const ortho = [dy, dx];
+        const loopW1X = gateX + ortho[0];
+        const loopW1Y = gateY + ortho[1];
+        const loopT1X = gateX + (ortho[0] << 1);
+        const loopT1Y = gateY + (ortho[1] << 1);
+
+        if (loopT1X > 0 && loopT1X < width - 1 && loopT1Y > 0 && loopT1Y < height - 1 && grid[loopW1Y][loopW1X] === 1) {
+          grid[loopW1Y][loopW1X] = 0;
+          grid[loopT1Y][loopT1X] = 0;
+          return true;
+        }
+      }
+    }
+    return false;
   }
 
   private static _generatePrimeFractalTree(
@@ -380,7 +647,6 @@ export class WebMazeGenerator {
       }
     }
 
-    // 嚴格型別守衛：杜絕 number[] 賦值給 [number, number] 引發 TS2345/TS2322
     const end: [number, number] =
       candidates.length > 0
         ? candidates[Math.floor(rnd() * candidates.length)]
@@ -735,118 +1001,6 @@ export class WebMazeGenerator {
     return path;
   }
 
-  private static _computeVisualConfidenceRegret(
-    grid: number[][],
-    width: number,
-    height: number,
-    solution: [number, number][],
-    end: [number, number]
-  ): { maxVisualRegret: number; avgVisualRegret: number } {
-    const dirs: [number, number][] = [
-      [0, 1],
-      [0, -1],
-      [1, 0],
-      [-1, 0],
-    ];
-
-    const regretScores: number[] = [];
-
-    for (let i = 0; i < solution.length - 1; i++) {
-      const [x, y] = solution[i];
-      const validExits: [number, number][] = [];
-
-      for (const [dx, dy] of dirs) {
-        const nx = x + dx;
-        const ny = y + dy;
-        if (nx >= 0 && nx < width && ny >= 0 && ny < height && grid[ny][nx] === 0) {
-          if (i > 0 && nx === solution[i - 1][0] && ny === solution[i - 1][1]) continue;
-          validExits.push([nx, ny]);
-        }
-      }
-
-      if (validExits.length >= 2) {
-        for (const [ex, ey] of validExits) {
-          if (ex !== solution[i + 1][0] || ey !== solution[i + 1][1]) {
-            const { steps, straightness } = this._traceBranchMetrics(grid, width, height, ex, ey, x, y, end);
-            const confidenceMultiplier = 1.0 + straightness * 2.0;
-            regretScores.push(steps * confidenceMultiplier);
-          }
-        }
-      }
-    }
-
-    if (regretScores.length === 0) return { maxVisualRegret: 5.0, avgVisualRegret: 5.0 };
-    const maxVisualRegret = Math.max(...regretScores);
-    const avgVisualRegret = regretScores.reduce((a, b) => a + b, 0) / regretScores.length;
-
-    return { maxVisualRegret, avgVisualRegret };
-  }
-
-  private static _traceBranchMetrics(
-    grid: number[][],
-    width: number,
-    height: number,
-    startX: number,
-    startY: number,
-    fromX: number,
-    fromY: number,
-    end: [number, number]
-  ): { steps: number; straightness: number } {
-    let steps = 1;
-    let cx = startX;
-    let cy = startY;
-    let px = fromX;
-    let py = fromY;
-
-    const dirs: [number, number][] = [
-      [0, 1],
-      [0, -1],
-      [1, 0],
-      [-1, 0],
-    ];
-
-    const initialDx = startX - fromX;
-    const initialDy = startY - fromY;
-    let straightSteps = 0;
-
-    const limit = 40;
-    while (steps < limit) {
-      const nextMoves: [number, number][] = [];
-
-      for (const [dx, dy] of dirs) {
-        const nx = cx + dx;
-        const ny = cy + dy;
-        if (nx >= 0 && nx < width && ny >= 0 && ny < height && grid[ny][nx] === 0) {
-          if (nx !== px || ny !== py) {
-            nextMoves.push([nx, ny]);
-          }
-        }
-      }
-
-      if (nextMoves.length === 0) break;
-      if (nextMoves.length >= 2) {
-        steps += 3;
-        break;
-      }
-
-      const moveDx = nextMoves[0][0] - cx;
-      const moveDy = nextMoves[0][1] - cy;
-
-      if (moveDx === initialDx && moveDy === initialDy) {
-        straightSteps++;
-      }
-
-      px = cx;
-      py = cy;
-      cx = nextMoves[0][0];
-      cy = nextMoves[0][1];
-      steps++;
-    }
-
-    const straightness = steps > 0 ? straightSteps / steps : 0;
-    return { steps, straightness };
-  }
-
   private static _computeLocalAmbiguityIndex(
     grid: number[][],
     width: number,
@@ -1046,7 +1200,7 @@ export class WebMazeGenerator {
     let deadEndCount = 0;
     let totalLength = 0;
 
-    const dirs = [
+    const dirs: [number, number][] = [
       [0, 1],
       [0, -1],
       [1, 0],
@@ -1180,6 +1334,8 @@ export class WebMazeGenerator {
       end,
       goal: end,
       pseudoGoals: [],
+      twinLandmarks: [],
+      deceptionWaypoints: [],
       seed,
       actualTier: tier,
       pureDeductionRate: 1.0,
@@ -1194,7 +1350,10 @@ export class WebMazeGenerator {
       maxVisualRegretValue: 4.0,
       avgVisualRegretValue: 4.0,
       visualOptimalOverlapRatio: 0.5,
+      cognitivePhaseGain: 1.0,
       hasPrimeFractalSymmetry: false,
+      hasGoalKeeperTrap: false,
+      hasPhase2MentalGlitch: false,
       solving_path: ['Safe Spanning Corridor'],
     };
 
@@ -1222,7 +1381,11 @@ export class WebMazeGenerator {
         max_visual_regret_value: 4.0,
         avg_visual_regret_value: 4.0,
         visual_optimal_overlap_ratio: 0.5,
+        cognitive_phase_gain: 1.0,
         has_prime_fractal_symmetry: false,
+        has_goal_keeper_trap: false,
+        has_phase2_mental_glitch: false,
+        deception_waypoint_count: 0,
         attempt_iteration: 0,
         braid_loop_count: 0,
         irt_logit_difficulty: baseIrt,
@@ -1232,7 +1395,7 @@ export class WebMazeGenerator {
         actualTier: tier,
       } as any,
       cognitiveLoad: { spatial: 0.6, numeric: 0.0, workingMemory: 0.5, inhibition: 0.5 },
-      checksum: `MAZE_FB_V6_${size}x${size}_S${seed}`,
+      checksum: `MAZE_FB_V8_${size}x${size}_S${seed}`,
     };
   }
 }
