@@ -35,6 +35,8 @@ export const FutoshikiBoard: React.FC<Props> = ({ puzzle, puzzleData, tournament
 
   const [displayMode, setDisplayMode] = useState<'numeric' | 'symbolic_dots' | 'symbolic_flora'>('numeric');
   const [enableOffload, setEnableOffload] = useState<boolean>(false);
+  const [turboMode, setTurboMode] = useState<boolean>(false); // ⚡ 競速渦輪模式開關
+  const [lockedNum, setLockedNum] = useState<number | null>(null); // 🚀 數字鎖定注入模式
 
   const boardContainerRef = useRef<HTMLDivElement>(null);
   const [grid, setGrid] = useState<number[][]>(() =>
@@ -52,6 +54,7 @@ export const FutoshikiBoard: React.FC<Props> = ({ puzzle, puzzleData, tournament
   const [remainingSec, setRemainingSec] = useState<number>(timeLimit);
   const [accumulatedMs, setAccumulatedMs] = useState<number>(0);
   const lastActiveTimestamp = useRef<number>(performance.now());
+  const lastWheelTimestamp = useRef<number>(0);
   const isSuspended = useRef<boolean>(false);
 
   const [hintLevel, setHintLevel] = useState<number>(0);
@@ -81,6 +84,7 @@ export const FutoshikiBoard: React.FC<Props> = ({ puzzle, puzzleData, tournament
     setRemainingSec(timeLimit);
     setAccumulatedMs(0);
     setHintsTriggeredCount(0);
+    setLockedNum(null);
     lastActiveTimestamp.current = performance.now();
     setHintLevel(0);
     setActiveHint(null);
@@ -164,25 +168,12 @@ export const FutoshikiBoard: React.FC<Props> = ({ puzzle, puzzleData, tournament
     return set;
   }, [grid, size, inequalities]);
 
-  const offloadSummary = useMemo(() => {
+  const offloadAvailable = useMemo(() => {
+    if (!enableOffload) return [];
     const [selR, selC] = selectedCell;
-    const rowUsed = new Set<number>();
-    const colUsed = new Set<number>();
-
-    for (let c = 0; c < size; c++) {
-      if (grid[selR][c] !== 0) rowUsed.add(grid[selR][c]);
-    }
-    for (let r = 0; r < size; r++) {
-      if (grid[r][selC] !== 0) colUsed.add(grid[r][selC]);
-    }
-
-    const available = [];
-    for (let i = 1; i <= size; i++) {
-      if (!rowUsed.has(i) && !colUsed.has(i)) available.push(i);
-    }
-
-    return { rowUsed, colUsed, available };
-  }, [grid, size, selectedCell]);
+    if (grid[selR][selC] !== 0) return [];
+    return WebFutoshikiGenerator.getCandidates(grid, size, inequalities, selR, selC);
+  }, [grid, size, inequalities, selectedCell, enableOffload]);
 
   const checkVictory = useCallback(
     (curGrid: number[][]): boolean => {
@@ -257,6 +248,17 @@ export const FutoshikiBoard: React.FC<Props> = ({ puzzle, puzzleData, tournament
     ]
   );
 
+  // 點擊格子處理（整合數字鎖定注入）
+  const handleCellClick = useCallback(
+    (r: number, c: number) => {
+      setSelectedCell([r, c]);
+      if (lockedNum !== null && !initialMask[r]?.[c]) {
+        setCellValue(r, c, grid[r][c] === lockedNum ? 0 : lockedNum);
+      }
+    },
+    [lockedNum, initialMask, setCellValue, grid]
+  );
+
   const handleCopySeed = () => {
     navigator.clipboard.writeText(`FUTO-S${seed}-T${actualPuzzle?.tier || 'kids'}`);
     setSeedCopied(true);
@@ -266,6 +268,10 @@ export const FutoshikiBoard: React.FC<Props> = ({ puzzle, puzzleData, tournament
   const handleWheel = useCallback(
     (e: React.WheelEvent) => {
       if (isCompleted || isTimeOut) return;
+      const now = performance.now();
+      if (now - lastWheelTimestamp.current < 150) return;
+      lastWheelTimestamp.current = now;
+
       const [r, c] = selectedCell;
       if (initialMask[r]?.[c]) return;
       e.preventDefault();
@@ -304,6 +310,10 @@ export const FutoshikiBoard: React.FC<Props> = ({ puzzle, puzzleData, tournament
 
       const [r, c] = selectedCell;
       switch (e.key.toLowerCase()) {
+        case 'escape':
+          e.preventDefault();
+          setLockedNum(null);
+          break;
         case 'w':
         case 'arrowup':
           e.preventDefault();
@@ -364,13 +374,13 @@ export const FutoshikiBoard: React.FC<Props> = ({ puzzle, puzzleData, tournament
     const map = new Map<string, string>();
     for (const ineq of inequalities) {
       if (ineq.c1 === ineq.c2 && ineq.r1 + 1 === ineq.r2) {
-        map.set(`${ineq.r1},${ineq.c1}`, ineq.op === '>' ? 'v' : '^');
+        map.set(`${ineq.r1},${ineq.c1}`, ineq.op === '>' ? '▼' : '▲');
       }
     }
     return map;
   }, [inequalities]);
 
-  const cellSize = Math.min(230 / size, 38);
+  const cellSize = Math.min(240 / size, 42);
   const cci = useMemo(() => getCompositeCognitiveIndex(), [getCompositeCognitiveIndex, isCompleted]);
 
   return (
@@ -380,15 +390,14 @@ export const FutoshikiBoard: React.FC<Props> = ({ puzzle, puzzleData, tournament
       onWheel={handleWheel}
       className="relative flex flex-col items-center justify-center p-2 select-none font-mono outline-none w-full max-w-[340px] mx-auto"
     >
-      {/* 攻克 Crux 突破橫幅 */}
-      {cruxBreakthrough && (
+      {cruxBreakthrough && !turboMode && (
         <div className="fixed top-3 z-50 px-3.5 py-1.5 bg-gradient-to-r from-amber-500 to-yellow-400 text-slate-950 font-black text-xs rounded-full shadow-[0_0_20px_rgba(251,191,36,0.8)] animate-bounce flex items-center gap-1.5 border border-white">
           <span>✨</span>
           <span>{isEn ? 'CRUX BREACHED!' : '攻克關鍵邏輯華點！'}</span>
         </div>
       )}
 
-      {/* 對稱性與盤面元數據 */}
+      {/* 控制開關與元數據列 */}
       <div className="w-full flex items-center justify-between gap-1 mb-2 px-1 text-[7.5px]">
         <div className="flex items-center gap-1">
           <button
@@ -413,10 +422,22 @@ export const FutoshikiBoard: React.FC<Props> = ({ puzzle, puzzleData, tournament
           >
             🧠 {isEn ? 'Offload' : '卸載'}: {enableOffload ? (isEn ? 'ON' : '開啟') : (isEn ? 'OFF' : '關閉')}
           </button>
+          {/* 指令 3：競速渦輪模式切換 */}
+          <button
+            onClick={() => setTurboMode((prev) => !prev)}
+            className={`px-1.5 py-1 rounded border font-black ${
+              turboMode
+                ? 'bg-rose-950 border-rose-500 text-rose-300'
+                : 'bg-slate-900 border-slate-700 text-slate-500 hover:text-slate-300'
+            }`}
+            title={isEn ? 'Turbo Mode: Disables all animations for zero latency' : '渦輪模式：關閉一切動畫過渡，零延遲競速'}
+          >
+            ⚡ {isEn ? 'Turbo' : '渦輪'}
+          </button>
         </div>
         <div className="flex items-center gap-1.5 text-slate-400 font-semibold">
           {isSymmetric && (
-            <span className="text-cyan-400 font-bold flex items-center gap-0.5" title={isEn ? '180° Point Symmetric Layout' : '180° 旋轉點對稱美學盤面'}>
+            <span className="text-cyan-400 font-bold flex items-center gap-0.5">
               🔄 {isEn ? '180° Sym' : '180° 對稱'}
             </span>
           )}
@@ -428,31 +449,30 @@ export const FutoshikiBoard: React.FC<Props> = ({ puzzle, puzzleData, tournament
           <button
             onClick={handleCopySeed}
             className="text-slate-500 hover:text-slate-300 font-mono underline"
-            title={isEn ? 'Copy Seed' : '複製 Seed 題目種子'}
           >
             {seedCopied ? (isEn ? 'Copied' : '已複製') : `S:${String(seed).slice(-4)}`}
           </button>
         </div>
       </div>
 
-      {/* 工作記憶卸載草稿盤 */}
+      {/* 偏序相容候選數卸載展示 */}
       {enableOffload && (
-        <div className="w-full mb-2 p-1.5 bg-slate-950/80 border border-purple-900/60 rounded-lg text-[7.5px] text-slate-300 flex items-center justify-between">
-          <span className="text-purple-400 font-bold">
+        <div className="w-full mb-2 p-1.5 bg-slate-950/90 border border-purple-800/80 rounded-lg text-[7.5px] text-slate-300 flex items-center justify-between shadow-md">
+          <span className="text-purple-300 font-bold">
             {isEn
-              ? `Cell [${selectedCell[0] + 1}, ${selectedCell[1] + 1}] Candidates:`
-              : `格 [${selectedCell[0] + 1}, ${selectedCell[1] + 1}] 候選:`}
+              ? `Cell [${selectedCell[0] + 1}, ${selectedCell[1] + 1}] Valid Candidates:`
+              : `格 [${selectedCell[0] + 1}, ${selectedCell[1] + 1}] 合法候選:`}
           </span>
           <div className="flex gap-1">
-            {offloadSummary.available.length > 0 ? (
-              offloadSummary.available.map((val) => (
-                <span key={`cand-${val}`} className="px-1.5 py-0.5 bg-purple-950/60 text-purple-200 border border-purple-700/50 rounded font-bold">
+            {offloadAvailable.length > 0 ? (
+              offloadAvailable.map((val) => (
+                <span key={`cand-${val}`} className="px-1.5 py-0.5 bg-purple-900/60 text-purple-200 border border-purple-600 rounded font-bold">
                   {renderValue(val)}
                 </span>
               ))
             ) : (
               <span className="text-rose-400 font-bold">
-                {isEn ? 'No Valid Candidates' : '無合法候選數'}
+                {isEn ? 'No Valid Numbers' : '無合法候選數'}
               </span>
             )}
           </div>
@@ -468,8 +488,12 @@ export const FutoshikiBoard: React.FC<Props> = ({ puzzle, puzzleData, tournament
                 const val = grid[r][c];
                 const isInitial = initialMask[r]?.[c];
                 const isSelected = selectedCell[0] === r && selectedCell[1] === c;
+                // 指令 2：永久十字瞄準線 (Permanent Crosshair)
+                const isInCrosshair = selectedCell[0] === r || selectedCell[1] === c;
                 const isConflict = conflicts.has(`${r},${c}`);
                 const isHintTarget = activeHint?.r === r && activeHint?.c === c && hintLevel === 3;
+                const isHintPair = activeHint?.pairCells?.some(([pr, pc]) => pr === r && pc === c);
+                const isInHintCross = hintLevel > 0 && activeHint && (activeHint.r === r || activeHint.c === c);
                 const isCruxCell = r === cruxCoords[0] && c === cruxCoords[1] && !isInitial;
                 const horizOp = horizontalIneqMap.get(`${r},${c}`);
 
@@ -477,24 +501,44 @@ export const FutoshikiBoard: React.FC<Props> = ({ puzzle, puzzleData, tournament
                   ? 'bg-slate-900 text-amber-300 font-black border border-slate-700 shadow-inner'
                   : 'bg-slate-950 text-cyan-300 hover:bg-slate-900/80 border border-slate-800';
 
+                // 十字瞄準線底色加持
+                if (!isInitial && isInCrosshair && !isSelected) {
+                  bgClass += ' bg-cyan-950/20';
+                }
+
                 if (isConflict) bgClass += ' ring-2 ring-rose-500 bg-rose-950/40 text-rose-300';
-                if (isHintTarget) bgClass += ' ring-2 ring-amber-400 bg-amber-500/30 animate-pulse';
+                if (isInHintCross && !isHintTarget && !isHintPair) bgClass += ' bg-amber-950/30';
+                if (isHintPair) {
+                  bgClass += turboMode
+                    ? ' ring-2 ring-purple-400 bg-purple-900/40 text-purple-200'
+                    : ' ring-2 ring-purple-400 bg-purple-900/40 text-purple-200 animate-pulse';
+                }
+                if (isHintTarget) {
+                  bgClass += turboMode
+                    ? ' ring-2 ring-amber-400 bg-amber-500/30'
+                    : ' ring-2 ring-amber-400 bg-amber-500/30 animate-pulse';
+                }
+
+                // 渦輪模式下禁用 scale 與 transition
+                const selectRingClass = turboMode
+                  ? 'border-2 border-cyan-400 z-10'
+                  : 'ring-2 ring-cyan-400 z-10 scale-[1.04] shadow-[0_0_8px_rgba(34,211,238,0.7)] transition';
 
                 return (
                   <React.Fragment key={`cell-${r}-${c}`}>
                     <div
-                      onClick={() => setSelectedCell([r, c])}
-                      className={`relative flex items-center justify-center font-bold text-sm cursor-pointer rounded transition select-none ${bgClass} ${
-                        isSelected ? 'ring-2 ring-cyan-400 z-10 shadow-[0_0_8px_rgba(34,211,238,0.7)]' : ''
+                      onClick={() => handleCellClick(r, c)}
+                      className={`relative flex items-center justify-center font-bold text-sm cursor-pointer rounded select-none ${bgClass} ${
+                        isSelected ? selectRingClass : ''
                       }`}
                       style={{ width: cellSize, height: cellSize }}
                     >
                       {renderValue(val)}
 
-                      {isCruxCell && (
+                      {isCruxCell && !turboMode && (
                         <div className="absolute inset-0 ring-2 ring-amber-400/70 animate-pulse rounded pointer-events-none" />
                       )}
-                      {isCruxCell && cruxBreakthrough && (
+                      {isCruxCell && cruxBreakthrough && !turboMode && (
                         <div className="absolute inset-0 ring-4 ring-yellow-300 animate-ping rounded pointer-events-none" />
                       )}
                       {isCruxCell && val === 0 && (
@@ -504,7 +548,7 @@ export const FutoshikiBoard: React.FC<Props> = ({ puzzle, puzzleData, tournament
                       )}
                     </div>
                     {c < size - 1 && (
-                      <div className="flex items-center justify-center text-slate-400 font-bold text-xs" style={{ width: 14 }}>
+                      <div className="flex items-center justify-center text-amber-400 font-black text-sm drop-shadow-[0_0_3px_rgba(251,191,36,0.4)]" style={{ width: 14 }}>
                         {horizOp || ''}
                       </div>
                     )}
@@ -519,7 +563,7 @@ export const FutoshikiBoard: React.FC<Props> = ({ puzzle, puzzleData, tournament
                   const vertOp = verticalIneqMap.get(`${r},${c}`);
                   return (
                     <React.Fragment key={`vert-${r}-${c}`}>
-                      <div className="flex items-center justify-center text-slate-400 font-bold text-xs" style={{ width: cellSize, height: 12 }}>
+                      <div className="flex items-center justify-center text-amber-400 font-black text-[11px] drop-shadow-[0_0_3px_rgba(251,191,36,0.4)]" style={{ width: cellSize, height: 14 }}>
                         {vertOp || ''}
                       </div>
                       {c < size - 1 && <div style={{ width: 14 }} />}
@@ -532,32 +576,50 @@ export const FutoshikiBoard: React.FC<Props> = ({ puzzle, puzzleData, tournament
         ))}
       </div>
 
-      {/* 雙行觸控大按鍵 */}
+      {/* 指令 1：數字鍵盤（支援雙擊鎖定注入模式） */}
       <div className="w-full mt-2.5">
-        <div
-          className="grid gap-1"
-          style={{ gridTemplateColumns: `repeat(${Math.ceil((size + 1) / 2)}, minmax(0, 1fr))` }}
-        >
-          {Array.from({ length: size }, (_, i) => i + 1).map((num) => (
-            <button
-              key={`num-pad-${num}`}
-              onClick={() => setCellValue(selectedCell[0], selectedCell[1], num)}
-              className="h-11 bg-slate-900 border border-slate-700 hover:border-cyan-400 active:bg-cyan-950 text-cyan-300 font-bold text-sm rounded-lg transition shadow flex items-center justify-center cursor-pointer"
-            >
-              {renderValue(num)}
-            </button>
-          ))}
+        <div className="grid grid-cols-3 gap-1 max-w-[280px] mx-auto">
+          {Array.from({ length: size }, (_, i) => i + 1).map((num) => {
+            const isLocked = lockedNum === num;
+            return (
+              <button
+                key={`num-pad-${num}`}
+                onClick={() => {
+                  if (lockedNum === num) {
+                    setLockedNum(null);
+                  } else {
+                    setCellValue(selectedCell[0], selectedCell[1], num);
+                  }
+                }}
+                onDoubleClick={() => {
+                  setLockedNum((prev) => (prev === num ? null : num));
+                }}
+                className={`h-10 border font-bold text-sm rounded-lg transition shadow flex items-center justify-center cursor-pointer select-none ${
+                  isLocked
+                    ? 'bg-amber-950 border-amber-400 text-amber-300 ring-2 ring-amber-400 shadow-[0_0_10px_rgba(251,191,36,0.6)]'
+                    : 'bg-slate-900 border-slate-700 hover:border-cyan-400 active:bg-cyan-950 text-cyan-300'
+                }`}
+                title={isEn ? 'Click to set, Double-click to LOCK' : '單擊填入，雙擊【鎖定注入】'}
+              >
+                {renderValue(num)}
+                {isLocked && <span className="ml-1 text-[8px]">🔒</span>}
+              </button>
+            );
+          })}
           <button
-            onClick={() => setCellValue(selectedCell[0], selectedCell[1], 0)}
-            className="h-11 bg-slate-900 border border-slate-700 hover:border-rose-400 active:bg-rose-950 text-rose-400 font-bold text-sm rounded-lg transition shadow flex items-center justify-center cursor-pointer"
-            title={isEn ? 'Clear' : '清空'}
+            onClick={() => {
+              setLockedNum(null);
+              setCellValue(selectedCell[0], selectedCell[1], 0);
+            }}
+            className="h-10 bg-slate-900 border border-slate-700 hover:border-rose-400 active:bg-rose-950 text-rose-400 font-bold text-sm rounded-lg transition shadow flex items-center justify-center cursor-pointer col-span-1"
+            title={isEn ? 'Clear (Esc)' : '清空 (Esc 解鎖)'}
           >
             ✕
           </button>
         </div>
       </div>
 
-      {/* 因果提示階梯 */}
+      {/* 提示階梯 */}
       <div className="flex items-center justify-between w-full mt-2 gap-1.5">
         <button
           onClick={handleRequestHint}
@@ -574,7 +636,7 @@ export const FutoshikiBoard: React.FC<Props> = ({ puzzle, puzzleData, tournament
             <span>
               {isEn
                 ? `🔍 Inspect partial order constraints around [${activeHint.r + 1}, ${activeHint.c + 1}]`
-                : `🔍 審視坐標 [${activeHint.r + 1}, ${activeHint.c + 1}] 的偏序約束`}
+                : `🔍 審視坐標 [${activeHint.r + 1}, ${activeHint.c + 1}] 的偏序與約束交叉`}
             </span>
           )}
           {hintLevel === 2 && (
@@ -584,15 +646,19 @@ export const FutoshikiBoard: React.FC<Props> = ({ puzzle, puzzleData, tournament
           )}
           {hintLevel === 3 && (
             <span className="text-rose-400 font-extrabold">
-              {isEn
-                ? `🎯 Target cell must strictly be ${renderValue(activeHint.forcedValue)}!`
-                : `🎯 目標格必然填入 ${renderValue(activeHint.forcedValue)}！`}
+              {activeHint.technique === 'naked_pair'
+                ? (isEn
+                    ? `🎯 Naked pair detected! Exclude conflicting candidates from this unit!`
+                    : `🎯 鎖定數對！請從同單元格中剔除相應候選數！`)
+                : (isEn
+                    ? `🎯 Target cell must strictly be ${renderValue(activeHint.forcedValue)}!`
+                    : `🎯 目標格必然填入 ${renderValue(activeHint.forcedValue)}！`)}
             </span>
           )}
         </div>
       )}
 
-      {/* 結算面板與推理節奏圖 (Deduction Flow Map) */}
+      {/* 結算面板 */}
       {isCompleted && (
         <div className="mt-2.5 p-3 bg-slate-950 border border-emerald-500/80 rounded-xl text-center w-full shadow-2xl font-mono animate-fade-in">
           <div className="text-emerald-400 font-bold text-xs mb-0.5 uppercase tracking-wider">
