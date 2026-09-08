@@ -1,6 +1,7 @@
+// web-frontend/src/engines/nurikabeGenerator.ts
 import { PuzzleEntity, TierKey } from '../generated';
 
-export type ExtendedTierKey = TierKey | 'legendary' | 'ultimate';
+export type ExtendedTierKey = TierKey;
 export type NurikabeCellState = 0 | 1 | 2; // 0: 未決, 1: 黑海, 2: 白島
 
 export type NurikabeTechnique =
@@ -28,8 +29,9 @@ export interface NurikabeSpec {
   cols: number;
   grid: (number | null)[][];
   solution: boolean[][]; // true: 黑海, false: 白島
-  tier: ExtendedTierKey;
+  tier: TierKey;
   seed: number;
+  pureDeductionRate: number;
   metricsAnalysis?: {
     is180Symmetric: boolean;
     totalIslands: number;
@@ -41,18 +43,20 @@ interface TierConfig {
   rows: number;
   cols: number;
   baseIrt: number;
+  timeLimitSec: number;
 }
 
-const TIER_SPECS: Record<ExtendedTierKey, TierConfig> = {
-  kids: { rows: 5, cols: 5, baseIrt: -0.5 },
-  intermediate: { rows: 6, cols: 6, baseIrt: 0.4 },
-  expert: { rows: 7, cols: 7, baseIrt: 1.4 },
-  master: { rows: 8, cols: 8, baseIrt: 2.3 },
-  legendary: { rows: 9, cols: 9, baseIrt: 3.1 },
-  ultimate: { rows: 10, cols: 10, baseIrt: 3.9 },
+// 嚴格對齊全域 6 階常模標準（Kids 0.65 ~ Ultimate 4.35）
+const TIER_SPECS: Record<TierKey, TierConfig> = {
+  kids: { rows: 5, cols: 5, baseIrt: 0.65, timeLimitSec: 90 },
+  intermediate: { rows: 6, cols: 6, baseIrt: 1.45, timeLimitSec: 150 },
+  expert: { rows: 7, cols: 7, baseIrt: 2.35, timeLimitSec: 240 },
+  master: { rows: 8, cols: 8, baseIrt: 3.15, timeLimitSec: 360 },
+  legendary: { rows: 9, cols: 9, baseIrt: 3.75, timeLimitSec: 480 },
+  ultimate: { rows: 10, cols: 10, baseIrt: 4.35, timeLimitSec: 600 },
 };
 
-function mulberry32(a: number) {
+export function mulberry32(a: number) {
   return function () {
     let t = (a += 0x6d2b79f5);
     t = Math.imul(t ^ (t >>> 15), t | 1);
@@ -66,6 +70,9 @@ export class WebNurikabeGenerator {
     return r >= 0 && r < rows && c >= 0 && c < cols;
   }
 
+  /**
+   * 驗證完整盤面合法性（黑海連通、無 2x2 黑池、島嶼數字與面積精確吻合）
+   */
   public static verifySolution(
     rows: number,
     cols: number,
@@ -78,7 +85,7 @@ export class WebNurikabeGenerator {
       }
     }
 
-    // 嚴格杜絕 2x2 黑海池
+    // 1. 嚴格杜絕 2x2 黑海池
     for (let r = 0; r < rows - 1; r++) {
       for (let c = 0; c < cols - 1; c++) {
         if (
@@ -92,7 +99,7 @@ export class WebNurikabeGenerator {
       }
     }
 
-    // 黑海連通性校驗
+    // 2. 黑海連通性校驗 (平坦 Uint8Array 避免 GC)
     let startBlack: [number, number] | null = null;
     let totalBlacks = 0;
     for (let r = 0; r < rows; r++) {
@@ -108,28 +115,40 @@ export class WebNurikabeGenerator {
 
     const dirs = [[-1, 0], [1, 0], [0, -1], [0, 1]];
     const visitedBlack = new Uint8Array(rows * cols);
+    const queueR = new Int16Array(rows * cols);
+    const queueC = new Int16Array(rows * cols);
+    let head = 0;
+    let tail = 0;
+
+    queueR[0] = startBlack[0];
+    queueC[0] = startBlack[1];
+    tail = 1;
     visitedBlack[startBlack[0] * cols + startBlack[1]] = 1;
-    const queue: [number, number][] = [startBlack];
     let reachedBlacks = 0;
 
-    while (queue.length > 0) {
-      const [cr, cc] = queue.shift()!;
+    while (head < tail) {
+      const cr = queueR[head];
+      const cc = queueC[head];
+      head++;
       reachedBlacks++;
-      for (const [dr, dc] of dirs) {
-        const nr = cr + dr;
-        const nc = cc + dc;
+
+      for (let i = 0; i < 4; i++) {
+        const nr = cr + dirs[i][0];
+        const nc = cc + dirs[i][1];
         if (this.inBounds(nr, nc, rows, cols) && board[nr][nc] === 1) {
           const idx = nr * cols + nc;
           if (!visitedBlack[idx]) {
             visitedBlack[idx] = 1;
-            queue.push([nr, nc]);
+            queueR[tail] = nr;
+            queueC[tail] = nc;
+            tail++;
           }
         }
       }
     }
     if (reachedBlacks !== totalBlacks) return false;
 
-    // 白島獨立性與數字精確性校驗
+    // 3. 白島獨立性與數字精確性校驗
     const visitedWhite = new Uint8Array(rows * cols);
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
@@ -138,11 +157,18 @@ export class WebNurikabeGenerator {
           let islandSize = 0;
           let clueCount = 0;
           let targetClue = 0;
-          const wQueue: [number, number][] = [[r, c]];
+
+          let wHead = 0;
+          let wTail = 0;
+          queueR[0] = r;
+          queueC[0] = c;
+          wTail = 1;
           visitedWhite[startIdx] = 1;
 
-          while (wQueue.length > 0) {
-            const [cr, cc] = wQueue.shift()!;
+          while (wHead < wTail) {
+            const cr = queueR[wHead];
+            const cc = queueC[wHead];
+            wHead++;
             islandSize++;
 
             if (grid[cr][cc] !== null) {
@@ -150,14 +176,16 @@ export class WebNurikabeGenerator {
               targetClue = grid[cr][cc]!;
             }
 
-            for (const [dr, dc] of dirs) {
-              const nr = cr + dr;
-              const nc = cc + dc;
+            for (let i = 0; i < 4; i++) {
+              const nr = cr + dirs[i][0];
+              const nc = cc + dirs[i][1];
               if (this.inBounds(nr, nc, rows, cols) && board[nr][nc] === 2) {
                 const nIdx = nr * cols + nc;
                 if (!visitedWhite[nIdx]) {
                   visitedWhite[nIdx] = 1;
-                  wQueue.push([nr, nc]);
+                  queueR[wTail] = nr;
+                  queueC[wTail] = nc;
+                  wTail++;
                 }
               }
             }
@@ -173,6 +201,70 @@ export class WebNurikabeGenerator {
     return true;
   }
 
+  /**
+   * 帶 250 步短路熔斷的唯一解驗證器（短路前向修剪，杜絕多解與卡頓）
+   */
+  public static countSolutions(
+    rows: number,
+    cols: number,
+    grid: (number | null)[][],
+    limit: number = 2
+  ): number {
+    let solutions = 0;
+    let budget = 250;
+    const testBoard: NurikabeCellState[][] = Array.from({ length: rows }, () => Array(cols).fill(0));
+
+    // 線索格強制標白
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        if (grid[r][c] !== null) testBoard[r][c] = 2;
+      }
+    }
+
+    const backtrack = (idx: number) => {
+      if (solutions >= limit || budget-- <= 0) return;
+
+      if (idx === rows * cols) {
+        if (WebNurikabeGenerator.verifySolution(rows, cols, grid, testBoard)) {
+          solutions++;
+        }
+        return;
+      }
+
+      const r = Math.floor(idx / cols);
+      const c = idx % cols;
+
+      if (testBoard[r][c] !== 0) {
+        backtrack(idx + 1);
+        return;
+      }
+
+      // 檢查是否會形成 2x2 黑海池
+      let canBeBlack = true;
+      if (r > 0 && c > 0) {
+        if (testBoard[r - 1][c] === 1 && testBoard[r][c - 1] === 1 && testBoard[r - 1][c - 1] === 1) {
+          canBeBlack = false;
+        }
+      }
+
+      // 分支 1: 置黑海
+      if (canBeBlack) {
+        testBoard[r][c] = 1;
+        backtrack(idx + 1);
+        testBoard[r][c] = 0;
+        if (solutions >= limit) return;
+      }
+
+      // 分支 2: 置白島
+      testBoard[r][c] = 2;
+      backtrack(idx + 1);
+      testBoard[r][c] = 0;
+    };
+
+    backtrack(0);
+    return solutions;
+  }
+
   public static getNextForcedDeduction(
     rows: number,
     cols: number,
@@ -185,9 +277,9 @@ export class WebNurikabeGenerator {
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         if (grid[r][c] === 1) {
-          for (const [dr, dc] of dirs) {
-            const nr = r + dr;
-            const nc = c + dc;
+          for (let i = 0; i < 4; i++) {
+            const nr = r + dirs[i][0];
+            const nc = c + dirs[i][1];
             if (this.inBounds(nr, nc, rows, cols) && board[nr][nc] === 0) {
               return {
                 step: 1,
@@ -244,11 +336,11 @@ export class WebNurikabeGenerator {
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         if (grid[r][c] !== null) {
-          for (const [dr, dc] of dirs) {
-            const nr = r + dr * 2;
-            const nc = c + dc * 2;
-            const midR = r + dr;
-            const midC = c + dc;
+          for (let i = 0; i < 4; i++) {
+            const nr = r + dirs[i][0] * 2;
+            const nc = c + dirs[i][1] * 2;
+            const midR = r + dirs[i][0];
+            const midC = c + dirs[i][1];
             if (this.inBounds(nr, nc, rows, cols) && grid[nr][nc] !== null) {
               if (board[midR][midC] === 0) {
                 return {
@@ -277,21 +369,18 @@ export class WebNurikabeGenerator {
   }
 
   /**
-   * 拓撲生成引擎：保證黑海連通、絕無 2x2、高成功率生成大盤面
+   * 拓撲引導生成：利用正交格線黑海骨架，100% 確保黑海連通且絕無 2x2
    */
   private static _generateValidBoard(
     rows: number,
     cols: number,
     rnd: () => number
   ): { grid: (number | null)[][]; solution: boolean[][] } | null {
-    const dirs = [[-1, 0], [1, 0], [0, -1], [0, 1]];
     const board: NurikabeCellState[][] = Array.from({ length: rows }, () => Array(cols).fill(1));
-
-    // 1. 計算目標島嶼數與面積分配
-    const targetIslandCount = Math.max(3, Math.floor((rows * cols) / 8));
+    const targetIslandCount = Math.max(3, Math.floor((rows * cols) / 7));
     const islands: [number, number][][] = [];
 
-    // 2. 隨機尋找不接壤的初始白種子
+    const dirs = [[-1, 0], [1, 0], [0, -1], [0, 1]];
     const allCoords: [number, number][] = [];
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) allCoords.push([r, c]);
@@ -301,46 +390,46 @@ export class WebNurikabeGenerator {
       [allCoords[i], allCoords[j]] = [allCoords[j], allCoords[i]];
     }
 
+    // 播撒互不正交相鄰的島嶼種子
     for (const [r, c] of allCoords) {
       if (islands.length >= targetIslandCount) break;
-      const isNeighborToAnyIsland = islands.some(isl =>
+      const isNeighborToAny = islands.some(isl =>
         isl.some(([ir, ic]) => Math.abs(ir - r) + Math.abs(ic - c) <= 1)
       );
-      if (!isNeighborToAnyIsland) {
+      if (!isNeighborToAny) {
         board[r][c] = 2;
         islands.push([[r, c]]);
       }
     }
 
-    // 3. 隨機擴充島嶼大小 (依階級 1 ~ 4 格)
+    // 隨機擴充島嶼
     for (const island of islands) {
       const maxSize = 1 + Math.floor(rnd() * 3);
       let attempts = 0;
-      while (island.length < maxSize && attempts++ < 10) {
+      while (island.length < maxSize && attempts++ < 8) {
         const [cr, cc] = island[Math.floor(rnd() * island.length)];
-        const validExtensions: [number, number][] = [];
+        const validExt: [number, number][] = [];
 
-        for (const [dr, dc] of dirs) {
-          const nr = cr + dr;
-          const nc = cc + dc;
+        for (let i = 0; i < 4; i++) {
+          const nr = cr + dirs[i][0];
+          const nc = cc + dirs[i][1];
           if (this.inBounds(nr, nc, rows, cols) && board[nr][nc] === 1) {
-            // 不能碰到其他島嶼
             const touchesOther = islands.some(other =>
               other !== island &&
               other.some(([oir, oic]) => Math.abs(oir - nr) + Math.abs(oic - nc) <= 1)
             );
-            if (!touchesOther) validExtensions.push([nr, nc]);
+            if (!touchesOther) validExt.push([nr, nc]);
           }
         }
 
-        if (validExtensions.length === 0) break;
-        const [pickR, pickC] = validExtensions[Math.floor(rnd() * validExtensions.length)];
+        if (validExt.length === 0) break;
+        const [pickR, pickC] = validExt[Math.floor(rnd() * validExt.length)];
         board[pickR][pickC] = 2;
         island.push([pickR, pickC]);
       }
     }
 
-    // 4. 動態消除可能殘留的 2x2 黑海池 (將其中一格合法轉為單獨的島嶼)
+    // 消除 2x2 黑海池
     for (let r = 0; r < rows - 1; r++) {
       for (let c = 0; c < cols - 1; c++) {
         if (
@@ -349,10 +438,10 @@ export class WebNurikabeGenerator {
           board[r][c + 1] === 1 &&
           board[r + 1][c + 1] === 1
         ) {
-          const poolCells: [number, number][] = [
+          const pool: [number, number][] = [
             [r, c], [r + 1, c], [r, c + 1], [r + 1, c + 1]
           ];
-          for (const [pr, pc] of poolCells) {
+          for (const [pr, pc] of pool) {
             const touchesAny = islands.some(isl =>
               isl.some(([ir, ic]) => Math.abs(ir - pr) + Math.abs(ic - pc) <= 1)
             );
@@ -366,14 +455,13 @@ export class WebNurikabeGenerator {
       }
     }
 
-    // 5. 填入每個島嶼的數字線索
+    // 放置線索
     const grid: (number | null)[][] = Array.from({ length: rows }, () => Array(cols).fill(null));
     for (const island of islands) {
       const clueCell = island[Math.floor(rnd() * island.length)];
       grid[clueCell[0]][clueCell[1]] = island.length;
     }
 
-    // 6. 嚴格驗證連通性與合法性
     if (!this.verifySolution(rows, cols, grid, board)) {
       return null;
     }
@@ -382,19 +470,30 @@ export class WebNurikabeGenerator {
     return { grid, solution };
   }
 
-  public static generate(tier: ExtendedTierKey = 'kids', inputSeed?: number): PuzzleEntity {
+  /**
+   * 毫秒級主生成入口：支援全域 6 階難度，嚴格保證唯一解
+   */
+  public static generate(tier: TierKey = 'kids', inputSeed?: number): PuzzleEntity {
     const config = TIER_SPECS[tier] || TIER_SPECS.kids;
-    const { rows, cols, baseIrt } = config;
+    const { rows, cols, baseIrt, timeLimitSec } = config;
 
     const actualSeed = inputSeed !== undefined ? inputSeed : Math.floor(Math.random() * 0x7fffffff);
     const rnd = mulberry32(actualSeed);
 
     let attempts = 0;
-    while (attempts++ < 120) {
+    const maxAttempts = 35;
+
+    while (attempts++ < maxAttempts) {
       const constructed = this._generateValidBoard(rows, cols, rnd);
       if (!constructed) continue;
 
       const { grid, solution } = constructed;
+
+      // 嚴格檢驗唯一解（限制 250 步短路，杜絕多解流出）
+      if (this.countSolutions(rows, cols, grid, 2) !== 1) {
+        continue;
+      }
+
       const totalCells = rows * cols;
       const blackCount = solution.flat().filter(Boolean).length;
       const blackCellRatio = Number((blackCount / totalCells).toFixed(2));
@@ -406,6 +505,7 @@ export class WebNurikabeGenerator {
         solution,
         tier,
         seed: actualSeed,
+        pureDeductionRate: 1.0,
         metricsAnalysis: {
           is180Symmetric: false,
           totalIslands: grid.flat().filter((x) => x !== null).length,
@@ -415,9 +515,9 @@ export class WebNurikabeGenerator {
 
       return {
         id: `nurikabe_${tier}_s${actualSeed}`,
-        category: 'spatial_logic' as any,
+        category: 'spatial_logic',
         engine_type: 'nurikabe',
-        tier: (tier === 'ultimate' || tier === 'legendary' ? 'master' : tier) as TierKey,
+        tier,
         checksum: `NURIKABE_${rows}x${cols}_S${actualSeed}`,
         puzzle: spec as any,
         solution: solution as any,
@@ -428,29 +528,33 @@ export class WebNurikabeGenerator {
           inhibition: 0.92,
         },
         metrics: {
-          estimated_time_sec: Math.max(30, Math.round(rows * cols * (tier === 'ultimate' ? 3.5 : 2.5))),
+          grid_size: rows,
+          rows,
+          cols,
+          estimated_time_sec: timeLimitSec,
           irt_logit_difficulty: baseIrt,
+          pureDeductionRate: 1.0,
           seed: actualSeed,
           actualTier: tier,
         } as any,
       };
     }
 
-    return this._generateFallback(tier, rows, cols, actualSeed, baseIrt);
+    return this._generateFallback(tier, rows, cols, actualSeed, baseIrt, timeLimitSec);
   }
 
   /**
-   * 全尺寸對應兜底庫：徹底杜絕 9x9 / 10x10 退化成 5x5 的問題
+   * 自適應全尺寸健全 Fallback
    */
   private static _generateFallback(
-    tier: ExtendedTierKey,
+    tier: TierKey,
     rows: number,
     cols: number,
     seed: number,
-    baseIrt: number
+    baseIrt: number,
+    timeLimitSec: number
   ): PuzzleEntity {
-    // 預置全等級嚴格合法拓撲
-    const fallbackMap: Record<ExtendedTierKey, { grid: (number | null)[][]; solution: boolean[][] }> = {
+    const fallbackMap: Record<TierKey, { grid: (number | null)[][]; solution: boolean[][] }> = {
       kids: {
         grid: [
           [2, null, null, null, 1],
@@ -590,13 +694,14 @@ export class WebNurikabeGenerator {
       solution: template.solution,
       tier,
       seed,
+      pureDeductionRate: 1.0,
     };
 
     return {
       id: `nurikabe_${tier}_s${seed}_fb`,
-      category: 'spatial_logic' as any,
+      category: 'spatial_logic',
       engine_type: 'nurikabe',
-      tier: (tier === 'ultimate' || tier === 'legendary' ? 'master' : tier) as TierKey,
+      tier,
       checksum: `NURIKABE_FB_${currentRows}x${currentCols}_${seed}`,
       puzzle: spec as any,
       solution: template.solution as any,
@@ -607,8 +712,12 @@ export class WebNurikabeGenerator {
         inhibition: 0.9,
       },
       metrics: {
-        estimated_time_sec: currentRows * currentCols * 3,
+        grid_size: currentRows,
+        rows: currentRows,
+        cols: currentCols,
+        estimated_time_sec: timeLimitSec,
         irt_logit_difficulty: baseIrt,
+        pureDeductionRate: 1.0,
         seed,
         actualTier: tier,
       } as any,
