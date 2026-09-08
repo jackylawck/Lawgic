@@ -106,6 +106,51 @@ export class WebHitoriGenerator {
     return r >= 0 && r < size && c >= 0 && c < size;
   }
 
+  /**
+   * 驗證完整盤面狀態合法性（修復 TS2339 缺失問題）
+   */
+  public static isValidSolution(board: number[][], state: number[][], size: number): boolean {
+    const dirs = [[-1, 0], [1, 0], [0, -1], [0, 1]];
+
+    // 1. 黑格不可正交相鄰
+    for (let r = 0; r < size; r++) {
+      for (let c = 0; c < size; c++) {
+        if (state[r][c] === 1) {
+          for (const [dr, dc] of dirs) {
+            const nr = r + dr;
+            const nc = c + dc;
+            if (this.inBounds(nr, nc, size) && state[nr][nc] === 1) return false;
+          }
+        }
+      }
+    }
+
+    // 2. 白格網絡必須連通
+    if (!this.isWhiteConnected(state, size)) return false;
+
+    // 3. 行列留白數字無重複
+    for (let r = 0; r < size; r++) {
+      const seen = new Set<number>();
+      for (let c = 0; c < size; c++) {
+        if (state[r][c] === 2) {
+          if (seen.has(board[r][c])) return false;
+          seen.add(board[r][c]);
+        }
+      }
+    }
+    for (let c = 0; c < size; c++) {
+      const seen = new Set<number>();
+      for (let r = 0; r < size; r++) {
+        if (state[r][c] === 2) {
+          if (seen.has(board[r][c])) return false;
+          seen.add(board[r][c]);
+        }
+      }
+    }
+
+    return true;
+  }
+
   public static isWhiteConnected(state: number[][], size: number): boolean {
     let startR = -1;
     let startC = -1;
@@ -161,10 +206,6 @@ export class WebHitoriGenerator {
     return reached === whiteCount;
   }
 
-  /**
-   * 暗刺 3 修復：完全擬合人類速解眼球追蹤
-   * 空間視覺模式（三連、三明治、相鄰對子）先行，隨後才執行計數強制與割點判定
-   */
   public static getNextForcedDeduction(
     board: number[][],
     state: number[][],
@@ -310,7 +351,7 @@ export class WebHitoriGenerator {
       }
     }
 
-    // ── 認知第二層：計數強制（Count Forcing 白黑雙向閉環 + 暗刺 1 相鄰防撞護欄） ──
+    // ── 認知第二層：計數強制（Count Forcing 白黑雙向閉環 + 相鄰防撞護欄） ──
     for (let r = 0; r < size; r++) {
       const freq = new Map<number, { count: number; unknownCols: number[]; hasWhite: boolean }>();
       for (let c = 0; c < size; c++) {
@@ -323,7 +364,6 @@ export class WebHitoriGenerator {
       }
 
       for (const [val, { count, unknownCols, hasWhite }] of freq) {
-        // 唯一保留位保白
         if (!hasWhite && count === 1 && unknownCols.length === 1) {
           const c = unknownCols[0];
           return {
@@ -343,14 +383,11 @@ export class WebHitoriGenerator {
           };
         }
 
-        // 暗刺 1 修復：安全批量塗黑（消除相鄰黑格衝突崩潰）
         if (hasWhite && unknownCols.length > 0) {
           const safeAffected: HitoriCellEffect[] = [];
           for (let i = 0; i < unknownCols.length; i++) {
             const col = unknownCols[i];
-            // 檢查是否與前面已選入的黑格正交相鄰（同一行內只會水平相鄰：差 1）
             const touchesSelected = safeAffected.some(c => c.r === r && Math.abs(c.c - col) === 1);
-            // 檢查是否與盤面既有黑格相鄰
             const touchesExisting = dirs.some(([dr, dc]) => {
               const nr = r + dr, nc = col + dc;
               return WebHitoriGenerator.inBounds(nr, nc, size) && state[nr][nc] === 1;
@@ -527,8 +564,8 @@ export class WebHitoriGenerator {
                 affectedCells: [{ r: nr, c: nc, state: 2, role: 'primary' }],
                 rationale: `黑格不可正交相鄰，[${r + 1}, ${c + 1}] 已塗黑，相鄰格強制留白。`,
                 humanReadable: {
-                  zh: `緊鄰黑格 [${r + 1}, ${c + 1}]，黑格不得相連，此格強制留白！`,
-                  en: `Touching black cell at [${r + 1}, ${c + 1}]; neighbor forced white!`,
+                  zh: `緊鄰黑格 [${r + 1}, ${c + 1}]，依黑格互斥原則，此格強制留白！`,
+                  en: `Adjacent cell [${r + 1}, ${c + 1}] is black; orthogonal neighbor forced white!`,
                 },
               };
             }
@@ -673,9 +710,6 @@ export class WebHitoriGenerator {
     return solutions;
   }
 
-  /**
-   * 暗刺 2 修復：非同步無阻生成，將運算排入微任務隊列，杜絕 UI 凍結
-   */
   public static async generateAsync(tier: TierKey = 'kids', inputSeed?: number): Promise<PuzzleEntity> {
     return new Promise((resolve) => {
       setTimeout(() => {
@@ -685,9 +719,6 @@ export class WebHitoriGenerator {
     });
   }
 
-  /**
-   * 暗刺 2 修復：50ms 極速熔斷 + 賽道級高熵暫存
-   */
   public static generate(tier: TierKey = 'kids', inputSeed?: number): PuzzleEntity {
     const config = TIER_SPECS[tier] || TIER_SPECS.kids;
     const { size, baseIrt, timeLimitSec, blackRatio, allowSymmetric } = config;
@@ -695,7 +726,6 @@ export class WebHitoriGenerator {
     const actualSeed = inputSeed !== undefined ? inputSeed : Math.floor(Math.random() * 0x7fffffff);
     const rnd = mulberry32(actualSeed);
 
-    // 壓縮至 50ms 人類視覺暫留極限，保障 60fps 幀率
     const deadline = performance.now() + 50;
     let bestCandidateSpec: HitoriSpec | null = null;
     let maxFoundWeightedDelta = -1;
@@ -789,14 +819,14 @@ export class WebHitoriGenerator {
         }
       }
 
-      // 混合交錯雕刻（Z 型衝突注入）
+      // 暗刺 5 強化：將拐角與對角交錯注入比例提升至 60%
       for (let r = 0; r < size; r++) {
         for (let c = 0; c < size; c++) {
           if (targetState[r][c] === 1) {
             const injectMode = rnd();
-            if (injectMode < 0.35) {
+            if (injectMode < 0.60) {
               const crossTargets: [number, number][] = [];
-              for (const [dr, dc] of [[1, 1], [-1, -1], [1, -1], [-1, 1], [0, 2], [2, 0]]) {
+              for (const [dr, dc] of [[1, 1], [-1, -1], [1, -1], [-1, 1], [1, 2], [2, 1], [-1, 2], [2, -1]]) {
                 const nr = r + dr, nc = c + dc;
                 if (WebHitoriGenerator.inBounds(nr, nc, size) && targetState[nr][nc] === 2) {
                   crossTargets.push([nr, nc]);
