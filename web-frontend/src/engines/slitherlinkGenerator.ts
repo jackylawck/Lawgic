@@ -346,11 +346,11 @@ export class WebSlitherlinkGenerator {
     const ptDeg = new Uint8Array((rows + 1) * ptCols);
 
     let solutions = 0;
-    let stepBudget = 250;
+    let stepBudget = 300;
 
     const allEdges: { type: EdgeType; r: number; c: number }[] = [];
 
-    // 線索邊優先排程
+    // 線索邊優先決策
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         if (clues[r][c] !== null) {
@@ -362,10 +362,10 @@ export class WebSlitherlinkGenerator {
       }
     }
 
-    // 去重並補齊其餘邊界
     const seen = new Set<string>();
     const orderedEdges: { type: EdgeType; r: number; c: number }[] = [];
-    for (const e of allEdges) {
+    for (let i = 0; i < allEdges.length; i++) {
+      const e = allEdges[i];
       const k = `${e.type}_${e.r}_${e.c}`;
       if (!seen.has(k)) {
         seen.add(k);
@@ -425,7 +425,7 @@ export class WebSlitherlinkGenerator {
       const p1Idx = e.r * ptCols + e.c;
       const p2Idx = e.type === 'h' ? e.r * ptCols + (e.c + 1) : (e.r + 1) * ptCols + e.c;
 
-      // 分支 1: 置為實線
+      // 分支 1: 置為連線
       if (ptDeg[p1Idx] < 2 && ptDeg[p2Idx] < 2) {
         if (e.type === 'h') curH[e.r][e.c] = true;
         else curV[e.r][e.c] = true;
@@ -481,7 +481,7 @@ export class WebSlitherlinkGenerator {
         ptDeg[p2Idx]--;
       }
 
-      // 分支 2: 不選此邊
+      // 分支 2: 不選該邊
       backtrack(idx + 1);
     };
 
@@ -501,7 +501,7 @@ export class WebSlitherlinkGenerator {
       { edge: SlitherEdge; state: 1 | 2; type: SlitherDeductionType; rationale: string; humanReadable: { zh: string; en: string } }
     >();
 
-    // 定式 1: 線索 0 周邊標叉
+    // 1. 線索 0 周邊標叉
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         if (clues[r][c] === 0) {
@@ -528,7 +528,7 @@ export class WebSlitherlinkGenerator {
       }
     }
 
-    // 定式 2: 角落 3 定式
+    // 2. 角落 3 定式
     const corners: [number, number, [EdgeType, number, number][]][] = [
       [0, 0, [['h', 0, 0], ['v', 0, 0]]],
       [0, cols - 1, [['h', 0, cols - 1], ['v', 0, cols]]],
@@ -557,7 +557,7 @@ export class WebSlitherlinkGenerator {
       }
     }
 
-    // 定式 3: 相鄰雙 3 定式
+    // 3. 相鄰雙 3 定式
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         if (c + 1 < cols && clues[r][c] === 3 && clues[r][c + 1] === 3) {
@@ -607,7 +607,7 @@ export class WebSlitherlinkGenerator {
       }
     }
 
-    // 定式 4: 頂點度數飽和與延伸
+    // 4. 頂點度數飽和與延伸
     for (let r = 0; r <= rows; r++) {
       for (let c = 0; c <= cols; c++) {
         const edges: { type: EdgeType; er: number; ec: number; val: number }[] = [];
@@ -652,7 +652,7 @@ export class WebSlitherlinkGenerator {
       }
     }
 
-    // 定式 5: 線索完成與剩餘邊補齊
+    // 5. 線索完成與剩餘邊補齊
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         const clue = clues[r][c];
