@@ -41,6 +41,16 @@
     * **雙軌 800ms 防誤觸投降機制 (Hold-to-Resign)**：滑鼠長按與鍵盤長按 `[R]` 鍵共享 800ms 時間閥與 requestAnimationFrame 進度填充，徹底消除終局緊張時誤觸「🕊️」導致的心流崩潰。
     * **零延遲 Web Audio 聲學回饋**：內建原生 AudioContext 合成振盪器，以 20ms 1200Hz 正弦波提示落子成功、260Hz 鋸齒波執行評測硬阻斷警告，提供競技級實體打擊感。
     * **外圈 A-I / 1-9 坐標錨點與向量 SVG 拓撲導引**：外圍標註標準國際棋規坐標；推導步驟支援編譯為紅強藍弱的向量線段數據，實現賽後復盤的拓撲光影直接投影。
+  * **帳篷扎營 (`tents`)**：
+    * **v3.0 零猜測純傳播與圖論同調 (Zero-Assumption & Parity Homology)**：摒棄截斷步數回溯（`stepBudget`）之偽唯一解漏洞，採用純粹約束傳播與二分圖交錯路徑奇偶性（Alternating Parity Loops）。題目 100% 具備人類嚴密演繹閉環，嚴格實裝極小化檢定（Critically Minimal），移除任意樹木或行列線索即崩塌為多解。
+    * **雙向因果前瞻向量漣漪 (Forward Vector Ripples)**：淘汰粗暴的「點擊防呆彈窗攔截」。游標懸停未決格即啟動微秒級 2-SAT 前瞻探針，以半透明暗紅向量光線預先繪製「跨維度因果衝突鏈（8向碰撞、配額溢出、遠端樹木窒息）」，容許選手在知曉後果下悲壯落子。
+    * **前注意瞬態對比拉伸 (Preattentive Contrast Stretch)**：長按 `[Ctrl]` 啟動全局資訊熵減光場（Entropy Gain Map）。抑制低增益噪聲，當且僅當存在引爆多米諾骨牌連鎖之關鍵突破格（$\Delta H \ge 2.5\text{ bits}$）時，背景自動壓暗至 35%，目標格爆發熾白孤立脈衝，實現前注意加工毫秒級定位。
+    * **無感手勢自由墨跡 (Canvas Ink Scratchpad)**：長按 `[Alt] + 拖曳滑鼠` 直接在棋盤幾何層上隨手圈畫懷疑區域或指向箭頭，向量墨跡零延遲渲染且不污染標準題解，徹底消除「打字記錄破壞大腦工作記憶」的認知氧化層。
+    * **四維平行宇宙殘影差分 (Ghost Branch Superposition)**：落子自動存入因果快照歷史，按住 `[Shift] + 滾輪` 即可將過去決策以 30% 半透明「幽靈殘影」原地疊加於當前棋盤，零延遲即時目視對比兩大平行分支的拓撲勢能差。
+    * **思維心搏動態共振 (Mind Pulse Halo Resonance)**：底層演算法即時積分墨跡軌跡之環繞度（Winding Angle $\ge 4.8\pi$）。當偵測到選手在特定關鍵格反覆畫圈徘徊、陷入認知猶豫臨界態時，系統不彈窗、不打擾，僅在目標格邊緣靜默泛起微弱的同頻呼吸光暈，實現人機認知共生。
+    * **阻尼相位鎖儀表 (Damped Parity Phase Lock)**：將全域行列奇偶差值（$\Delta\Phi = \sum\text{RowDeficit} - \sum\text{ColDeficit}$）抽象為帶有物理阻尼感的動態指針，實時反饋全域閉鎖狀態（`LOCKED` vs `DRIFT`），提供宏觀勢能直覺。
+    * **微縮拓撲雷達像元 (Miniature Topology Radar)**：以 1:1 等比發光像元替代傳統文字座標跳轉，將全盤狀態直接映射為視覺梭狀回可並行識別的幾何模式。
+    * **標準 WPF 複合連號題解格式**：嚴格依據世界謎題錦標賽規範輸出 Answer Key，每行由小至大遞增拼接帳篷所在欄位編號（無帳篷標 `0`），支援常數時間密碼學對撞驗證。
   * **摩天透視 (`skyscraper`)**：
     * **無模態時間動態輸入 (Modeless Temporal Keypress)**：敲擊（<200ms）確信落子、長按（≥200ms）自然切換草稿候選數（Pencil Marks），徹底終結傳統數獨/天際線工具中「頻繁切換鉛筆開關」的工作記憶磨損。
     * **Vim 級全主鍵位盲打 (Home-Row Ergonomics)**：全面支援 `H/J/K/L` 與 `W/A/S/D` 游標磁吸平移，搭配 QWERTY 鍵位直映數字（`Q~O` / `A~L`），實現雙手完全不離主鍵區的競速操控。
@@ -94,7 +104,7 @@
 | `futoshiki` | **天平不等** | 有向無環圖 (DAG)、傳遞閉包 | Knuth 無偏真隨機拉丁方、全量 Naked Pair 雙格數對引擎、Floyd-Warshall 矩陣全域複用、中局平行分支度（$\ge 2.4$）、雙擊鎖定注入模式、殘局調度加速 |
 | `hitori` | **隻眼獨尊** | 負向排除、候選域熵減 | 視覺優先手筋層（三連全推導/三明治）、計數白黑雙向閉環、防碰撞批量塗黑、$\Delta\text{Domain}$ 加權熵減 Crux、紙本鉛筆草稿系統、50ms 極速熔斷 |
 | `yajilin` | **矢印連線** | 正交迴路、射線指向計數 | 閉合迴路自避檢驗、箭頭射線黑格拓撲遮蔽、相鄰黑格互斥判定、角落單元閉鎖剪枝 |
-| `tents` | **帳篷扎營** | 二分圖匹配、8-鄰域幾何 | 雙向抽屜原理閉鎖器、雙子樹角隅互斥破局器、Kuhn-Munkres 雙射唯一驗證 |
+| `tents` | **帳篷扎營** | 二分圖同調、空間排他 (Gv)、歸謬因果 (Gf) | **v3.0 靜默自指純傳播核心 (Zero-Assumption)**、二分圖交錯路徑奇偶覆蓋、不可約極小化審定 (Critically Minimal)、動態前瞻因果向量漣漪、前注意瞬態對比拉伸（$\Delta H \ge 2.5\text{ bits}$ 脈衝）、`Alt` 自由墨跡畫布、`Shift` 滾輪平行宇宙殘影差分、思維心搏環繞檢測呼吸光暈、阻尼相位鎖儀表盤、微縮拓撲雷達、標準 WPF 官方多行複合連號 Answer Key |
 | `lightup` | **燈泡照明** | 視線投射、全域命題邏輯 | 偽布林（PB）基數不等式邊界收緊、全域 2-SAT Kosaraju SCC 蘊含圖傳播、雙向對稱歸謬探針（±Reductio）、動態美學拓撲（低階連通長城 / 高階孤島光阱）、頓悟峰值（Eureka Moments）心流計量、左鍵燈泡/右鍵防護點雙模極速落子、零延遲行動端模式鎖定棒（Mode Stick）、WPC 鉑金級無試錯實操審計 |
 | `masyu` | **珍珠迴路** | 空間拓撲、正交折角約束 | 隨機自避蜿蜒迴路、貼邊黑白定式、相鄰黑珍珠排斥、CSP 唯一解 |
 
@@ -122,6 +132,7 @@ flowchart TD
     Gv --> M8["Heyawake (L-Room咬合 / 射線閉包)"]
     Gv --> M9["Yajilin (方向線索 / 迴路避障)"]
     Gv --> M10["Shikaku (互鎖拓撲 / 邊界頂點奇偶 / 因果張量質量)"]
+    Gv --> M11["Tents (二分圖交錯環 / 瞬態對比拉伸 / 前瞻因果向量鏈)"]
 
     Nq --> N1["Sudoku (雙向認知共振 / 反向致命悖論 UR / 集合覆蓋 A* AIC / Junior Exocet 異魚投影)"]
     Nq --> N2["Kakuro (跑道局部性 / 數論模9同餘)"]
@@ -139,6 +150,7 @@ flowchart TD
     Gwm --> W7["Skyscraper (Cowan 4-Chunk 依賴鏈 / 格式塔模塊壓縮 / 實時節奏標尺)"]
     Gwm --> W8["Slitherlink (7步人類認知極限波束反證 / 雙態飢餓死鎖預警 / 轉折點追蹤)"]
     Gwm --> W9["Sudoku (Miller 7±2 認知波束動態衰竭 / 次視覺化 Auto-Candidates 潛意識讀取)"]
+    Gwm --> W10["Tents (Shift滾輪平行宇宙幽靈差分 / Alt自由墨跡 / 思維心搏環繞偵測)"]
 
 ```
 
@@ -148,8 +160,8 @@ flowchart TD
 
 ```text
 ┌─────────────────────────────────────────────────────────────┐
-│                        Lawgic Presentation Layer            │
-│   (React 18 + TailwindCSS + iOS Safe Area + PWA Hardened SW)│
+│                         Lawgic Presentation Layer           │
+│    (React 18 + TailwindCSS + iOS Safe Area + PWA Hardened SW)│
 └──────────────┬───────────────────────────────┬──────────────┘
                │                               │
                ▼ (Zero-Copy Pointer)           ▼ (Causal Step Stream)
@@ -163,13 +175,14 @@ flowchart TD
 │                              │ │ • 2-SAT Kosaraju SCC Blk   │
 │                              │ │ • Beam-3 BFS Slitherlink   │
 │                              │ │ • Bi-Directional BDCE-v9.1 │
+│                              │ │ • Zero-Assumption Tents v3 │
 └──────────────┬───────────────┘ └─────────────┬──────────────┘
                │                               │
                └───────────────┬───────────────┘
                                │
                                ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                    Clinical Integrity Layer                 │
+│                     Clinical Integrity Layer                │
 │  Anti-Cheat Monitor + SMT Welder + Web Crypto SHA-256 Auth  │
 └─────────────────────────────────────────────────────────────┘
 
@@ -186,7 +199,7 @@ flowchart TD
 ### Architecture Highlights
 
 * **Zero-Copy WASM Core**: Computationally intensive solvers are written in Rust and compiled to WebAssembly, featuring compile-time static lookup tables (PEERS_TABLE) and zero-copy shared array memory mapping.
-* **Exact Cover Uniqueness Engine**: Mathematical certainty replacing heuristic timeouts. Across Sudoku, Nonogram, Dominoes, Hashi, Heyawake, Futoshiki, Hitori, Kakuro, Kropki, Light Up, Nurikabe, Yajilin, Shikaku, Slitherlink, and Skyscraper, exact MRV backtracking solvers, Line-CSP engines, and value-constrained bipartite matching proofs guarantee puzzle solution cardinality equals exactly 1.
+* **Exact Cover Uniqueness Engine**: Mathematical certainty replacing heuristic timeouts. Across Sudoku, Nonogram, Dominoes, Hashi, Heyawake, Futoshiki, Hitori, Kakuro, Kropki, Light Up, Nurikabe, Yajilin, Shikaku, Slitherlink, Skyscraper, and Tents, exact MRV backtracking solvers, Line-CSP engines, and value-constrained bipartite matching proofs guarantee puzzle solution cardinality equals exactly 1.
 * **100% Pure Deduction Rate & Breakpoint Ratio**: Master, Legendary, and Ultimate tiers strictly enforce complete human deductive chain simulations with Breakpoint Depth Ratio $\ge 80\%$, discarding puzzles requiring trial-and-error branching during early and mid games.
 * **True Cognitive Crux via $\Delta\text{Domain}$ Reduction**: Crux points are quantified using weighted candidate domain entropy reductions and DAG topological radii rather than arbitrary heuristic weights.
 * **Speed-Solving Ergonomics**:
@@ -202,6 +215,14 @@ flowchart TD
 * **Dual-Track Hold-to-Resign (800ms)**: Synchronizes mouse hold and keyboard `[R]` hold with `requestAnimationFrame` progress telemetry to prevent accidental resignations.
 * **Zero-Latency Web Audio Synthesizer**: Native AudioContext synthesized feedback (20ms 1200Hz sine for success, 260Hz sawtooth for assessment rejection).
 * **Perimeter A-I / 1-9 Coordinates & Vector SVG Anchors**: Full tournament-compliant alphanumeric labeling paired with vector coordinate exports for visual replay.
+
+
+* **Tents**:
+* **v3.0 Zero-Assumption & Parity Homology**: Eliminates truncated backtracking (`stepBudget`), utilizing pure constraint propagation and alternating parity loops in bipartite graphs with strictly enforced *Critically Minimal* proof criteria.
+* **Forward Vector Ripples**: Pre-flight speculative probe casting translucent red causal vectors upon hover, illustrating multi-step conflicts (asphyxiation, overflow, diagonal touch) without modal interception.
+* **Preattentive Contrast Stretch**: Holding `[Ctrl]` suppresses visual noise across low-gain cells and fires an isolated white pulse on cells exhibiting quantum-leap entropy reduction ($\Delta H \ge 2.5\text{ bits}$).
+* **Canvas Ink Scratchpad & Ghost Branch Superposition**: `Alt + Drag` allows natural vector doodling directly over the grid; `Shift + Wheel` superimposes parallel universe snapshots as a 30% translucent ghost layer for instant topological differential analysis.
+* **Mind Pulse Detection & Damped Phase Lock**: Continuously integrates stroke winding angles ($\ge 4.8\pi$) to detect hesitation over crux cells, projecting a subtle breathing halo in silent cognitive resonance. Visualizes global parity deviation ($\Delta\Phi$) via a physical damped gauge alongside an instant miniature topological radar.
 
 
 * **Skyscraper**:
@@ -236,11 +257,11 @@ flowchart TD
 * **Hitori**: Primary click cycle, secondary pencil-marking (Pencil Marks), real-time action & APM metric tracker.
 * **Light Up**: Dual-mode left/right instantaneous dispatch (Left: Light, Right: Dot), zero-latency Mobile Mode Stick, 50-step circular snapshot stack, inverted darkness focus, dual-factor hot-zone hinting, immutable Grandmaster Platinum post-audit.
 * **Yajilin**: Closed self-avoiding loop detection, ray-casting black cell masking, adjacent cell exclusivity.
-
-
 * **Clinical Proctoring & Integrity Monitoring**: Integrates `useAntiCheatMonitor`, `clinicalProctoring`, and hardware input drift heuristics to ensure objective competitive fidelity.
 * **Strict Tournament Mode**: Completely suppresses in-game conflict glows, wave overlays, and nominal quota labels for unassisted, competition-compliant solving.
 * **Zero-Trust Verification**: Hard locks board generation and hints during official attempts; generates cryptographic SHA-256 receipts via Web Crypto API with constant-time equality checks.
+
+
 
 ---
 
@@ -298,7 +319,7 @@ Lawgic/
 ├── web-frontend/
 │   ├── public/               # PWA manifest、安全 Service Worker (sw.js) 與靜態圖示
 │   ├── src/
-│   │   ├── components/       # 18 款競速駕駛艙 (含 SudokuBoard、SkyscraperBoard)
+│   │   ├── components/       # 18 款競速駕駛艙 (含 SudokuBoard、TentsBoard、SkyscraperBoard)
 │   │   ├── contexts/         # 語系切換 (LanguageContext) 與無障礙支援 (AccessibilityContext)
 │   │   ├── engines/          # 18 款競技級演算法 (含 BDCE-v9.1 數獨引擎與圖論分析)
 │   │   ├── generated/        # 靜態種子庫與題目元數據預編譯快取 (JSON)
