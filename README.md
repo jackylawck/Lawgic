@@ -17,6 +17,11 @@
 
 **Lawgic 羅輯** 是一款依據世界謎題聯合會（WPF）、世界數獨錦標賽（WSC）與國際智力運動規章打造的現代化純邏輯競賽平台。平台徹底摒棄偽難度猜題與盲目窮舉，將 **高效能 Rust/WebAssembly 零拷貝核心**、**離線 SMT/SAT 生成守護進程（Generator Daemon）**、**前 0.1% 錦標賽級確定性生成引擎（Deterministic Procedural Engines）**、**離散圖論約束求解唯一解驗證**、**CHC 心理測量學模型** 與純粹無干擾的賽場級快捷操作融合，提供具備可驗證因果鏈條的職業級大腦心流競技環境。
 
+### 伴讀與階梯式思維成長 (Pedagogical Philosophy)
+
+* **直覺引導而非死記硬背**：全平台題型均配置嚴密平滑的階梯式難度（Kids ➔ Intermediate ➔ Expert ➔ Master ➔ Legendary ➔ Ultimate）。低階題目專注於啟發兒童對空間對稱、連通閉合、奇偶校驗與因果鏈條的純粹直覺；高階題庫無縫對軌世界解謎錦標賽（WPC）決賽圈水準。
+* **零視覺干擾與沉浸心流**：為守護最純淨的思維專注力，全站嚴格剔除商業廣告、抽卡獎勵、代幣商城與暗黑引導機制，回歸黑體與幾何秩序本身的純粹之美。
+
 ### 架構特色
 
 * **WASM 零拷貝記憶體與查表常數加速**：核心數獨與密集型運算模組全面以 Rust 編寫並編譯為 WebAssembly，具備編譯期預算靜態鄰居查表（LUT）與共享記憶體視圖（Zero-Copy Memory View），實現超低功耗與次毫秒級狀態收斂。
@@ -24,6 +29,11 @@
 * **純邏輯閉環與因果推導率（100% Pure Deduction Rate & Breakpoint Ratio）**：高難度題目（Master / Legendary / Ultimate）嚴格執行人類邏輯求解鏈模擬，實裝真實邏輯斷點深度比（Breakpoint Ratio $\ge 80\%$），消滅早盤盲猜分支，確保試誤僅沈澱於尾盤收割。
 * **真實認知轉折點（$\Delta\text{Domain}$ Entropy Crux & Eureka Moments）**：告別機械式技巧標籤。以每一步手筋造成的「加權候選域熵減量（$\Delta\text{Domain}$）」與「DAG 拓撲影響半徑」精確錨定破局天王山（Crux），動態捕捉交響樂般的頓悟波峰（Eureka Peaks）。
 * **WPC 賽場級鍵位與心流防護（Speed-Solving Ergonomics）**：
+  * **四角分割 (`shikaku`)**：
+    * **八分節段頂點奇偶光流 (Octant Segmented Vertex Parity)**：邊界光流嚴格以矩形 4 個幾何角點（Vertices）落在邊界節段上的接觸次數為基準，消除覆蓋長度造成的拓撲相位差，餘光瞬態定位缺陷象限。
+    * **四維因果張量質量場 (Causal Tensor Field)**：預覽框輝度直接反映其對未解質數與邊界線索走向的空間拘束密度，徹底擺脫單純貼邊長度的平面誤導。
+    * **雙擊退火蒸發 (Double-Tap Annealing)**：單擊戰術冷審視高亮、280ms 雙擊觸發 150ms 幾何向心退火縮小消失並伴隨 45ms 頓挫震動，徹底杜絕指尖靜電誤觸導致的心流崩塌。
+    * **奇異點引力坍縮與無字觸覺遙測 (Singularity Collapse & Haptic Wave)**：結算瞬間矩形向最後落子質心向心爆炸塌陷為點；全盤徹底無字化，賽後秒數與步數透過 Web Vibration API 原生編碼為**長短脈衝引力波**（長震為十位、短震為個位），觸碰事件視界即可隨時觸覺重讀。
   * **暗夜數牆 (`nurikabe`)**：左鍵黑海 / 右鍵白點 / Shift 鍵直達三態分治、零顏色語義干擾之純邊框警告 HUD、全域必然性白名單校驗與雙割點假設態自動切換、無級歷史時間軸滑塊（Timeline Scrubber）與歷史違規幀快速跳轉、AI 覆盤殘局斷點無縫接管（Take Over）、雙軌時鐘（物理掛鐘 vs. 純粹運算時間）輸出客觀思考密度（Density of Thought）。
   * **黑白雙星 (`kropki`)**：標準數獨宮格拓撲、貫穿式負約束微結構細虛線（No-Dot Barrier）、同數戰場十字光環高亮、8ms 觸覺行程微震動反饋、可逆 Auto-Notes 快照避險、20% 分段配速條（Splits Telemetry）。
   * **數和密碼 (`kakuro`)**：跑道局部性解空間、180° 對稱區塊侵蝕黑牆、所見即所填候選條、極限和差集合閉包、真·正交容量閉區間擠壓（Capacity Squeeze）、中盤模 9 數字根同餘剪枝。
@@ -31,7 +41,7 @@
   * **天平不等 (`futoshiki`)**：T9 固定三欄盲打九宮格、雙擊數字鎖定注入模式（Injection Mode）、永久十字瞄準線、一鍵硬切無延遲渦輪模式（Turbo Mode）。
   * **隻眼獨尊 (`hitori`)**：左鍵主決策循環、右鍵紙本鉛筆草稿三態標記（Pencil Marking）、衝突與同數空間波浪底線視覺疊加、即時 APM 戰績追蹤。
   * **燈泡照明 (`lightup`)**：左右鍵瞬發分流（左鍵 💡 / 右鍵 •）、行動端零延遲三態模式鎖定棒（Mode Stick）、50 步環形快照與審計軌跡深度綁定、反向暗區盲點凸顯（Blindspot Highlight）、雙因子空間熱區教練提示（Hot-Zone Hinting）、WPC 鉑金/金牌/銀牌不可逆後置操作審計。
-  * **矢印連線 (`yajilin`) & 四角分割 (`shikaku`)**：正交迴路自避檢測、長方形面積幾何動態約束錨定。
+  * **矢印連線 (`yajilin`)**：閉合迴路自避檢驗、箭頭射線黑格拓撲遮蔽、相鄰黑格互斥判定、角落單元閉鎖剪枝。
 * **臨床級反作弊監控與專業監考（Proctoring & Anti-Cheat）**：整合 `useAntiCheatMonitor`、`clinicalProctoring` 與硬體級輸入防漂移偵測，確保錦標賽競技數據的客觀嚴密。
 * **嚴格賽事裸裝模式（Strict Tournament Mode）**：開啟賽事模式即強制隱蔽所有即時衝突紅框、波浪輔助線與虛假標稱配額，鎖定盤面禁止提示，還原國際大賽現場的「無輔助裸裝對決」。
 * **零信任防偽存證簽章（Zero-Trust Receipt）**：通關後透過 Web Crypto API 原生硬體加速生成 SHA-256 數位簽章與常數時間核驗，確保各項賽事通關憑證與個人最佳紀錄（PB）無法篡改。
@@ -43,6 +53,7 @@
 
 | 代號 | 遊戲名稱 | 核心能力維度 (CHC) | 演算法與賽事級特點 |
 | --- | --- | --- | --- |
+| `shikaku` | **四角分割** | 幾何整除、空間張量、頂點奇偶 | 互鎖咬合波前生長（Interlocking Growth）、破缺對稱（90/10 誘敵背刺）、邊界頂點奇偶閉合鎖定（Boundary Vertex Parity Lock）、因果張量質量場預覽、雙擊退火蒸發、奇異點向心引力坍縮、純觸覺震動脈衝電碼遙測（Zero-Text Haptic Telemetry） |
 | `nurikabe` | **暗夜數牆** | 平面連通、圖論割點、拓撲張力 | 多源形態發生競賽生長（Morphogenesis）、動量轉向纏繞度調控、雙割點拓撲奇點過濾（Dual-Cut Singularity）、傳播優先回溯（CP-Solver）唯一解驗證、純邊框 HUD 透視、時間軸違規熱點書籤、思考密度（Density of Thought）計量 |
 | `kropki` | **黑白雙星** | 數理偏序、宮格空間排他 | 正統數獨宮格拓撲（2x2/2x3/3x3）、全相鄰無點負約束（Full Kropki）、雙向 X-Wing 魚形排除、4x 超加權樞紐錨定、真實斷點深度比（$\ge 80\%$）、貫穿虛線屏障、8ms 觸覺行程鍵盤 |
 | `kakuro` | **數和密碼** | 整數分割、數論同餘閉包 | 跑道局部性獨立去重、180° 對稱區塊侵蝕黑牆、雙向極限和差集合閉包、真·正交容量閉區間擠壓（Capacity Squeeze）、中盤模 9 數字根同餘剪枝、封閉疊代局部傳播、所見即所填候選條 |
@@ -55,7 +66,6 @@
 | `futoshiki` | **天平不等** | 有向無環圖 (DAG)、傳遞閉包 | Knuth 無偏真隨機拉丁方、全量 Naked Pair 雙格數對引擎、Floyd-Warshall 矩陣全域複用、中局平行分支度（$\ge 2.4$）、雙擊鎖定注入模式、殘局調度加速 |
 | `hitori` | **隻眼獨尊** | 負向排除、候選域熵減 | 視覺優先手筋層（三連全推導/三明治）、計數白黑雙向閉環、防碰撞批量塗黑、$\Delta\text{Domain}$ 加權熵減 Crux、紙本鉛筆草稿系統、50ms 極速熔斷 |
 | `yajilin` | **矢印連線** | 正交迴路、射線指向計數 | 閉合迴路自避檢驗、箭頭射線黑格拓撲遮蔽、相鄰黑格互斥判定、角落單元閉鎖剪枝 |
-| `shikaku` | **四角分割** | 幾何整除、矩形空間鋪砌 | 質因數矩形分解列舉、數字包含唯一性約束、多矩形衝突割平面演算法、非重疊平面覆蓋驗證 |
 | `skyscraper` | **摩天透視** | 3D 心理旋轉、空間透視 | 4 面邊界視線滿足度即時反饋、立體高度推演 |
 | `slitherlink` | **迴路封閉** | 歐拉迴路、頂點度數約束 | 點網格拖曳畫線、0/3 經典定式推進、子環防早斷檢測 |
 | `tents` | **帳篷扎營** | 二分圖匹配、8-鄰域幾何 | 雙向抽屜原理閉鎖器、雙子樹角隅互斥破局器、Kuhn-Munkres 雙射唯一驗證 |
@@ -77,6 +87,11 @@
 * **100% Pure Deduction Rate & Breakpoint Ratio**: Master, Legendary, and Ultimate tiers strictly enforce complete human deductive chain simulations with Breakpoint Depth Ratio $\ge 80\%$, discarding puzzles requiring trial-and-error branching during early and mid games.
 * **True Cognitive Crux via $\Delta\text{Domain}$ Reduction**: Crux points are quantified using weighted candidate domain entropy reductions and DAG topological radii rather than arbitrary heuristic weights.
 * **Speed-Solving Ergonomics**:
+  * **Shikaku**:
+    * **Octant Segmented Vertex Parity**: Edge halo strictly tracks corner touches (Vertices) across perimeter segments rather than raw overlap lengths, eradicating phase errors and enabling peripheral defect localization.
+    * **4D Causal Tensor Field**: Real-time mass luminance projecting constraints onto prime and corner degrees of freedom, discarding superficial edge-length brightness.
+    * **Double-Tap Annealing**: Single-tap cold tactical inspection; 280ms double-tap triggers a 150ms geometric implosion disappearance accompanied by a 45ms tactile notch, preventing misclick-induced cognitive blackout.
+    * **Singularity Collapse & Haptic Waves**: Centroid-directed implosion upon completion; full textless canvas with elapsed time and moves encoded into Web Vibration pulses (long pulse for tens, short for units).
   * **Nurikabe**: Left/right-click zero-latency dual dispatch, non-intrusive border-only HUD eliminating semantic color interference, strict deterministic whitelist with automatic Topological Hypothesis fallback, continuous timeline scrubber with violation bookmarks, seamless AI replay breakpoint take-over, and dual-clock Density of Thought telemetry.
   * **Kropki**: Standard box topology, linear dashed negative-constraint barriers, localized crosshair highlight, 8ms mechanical haptic feedback, reversible auto-notes infill, 20% pace splits.
   * **Kakuro**: Run-local solution spaces, blocky 180° erosion layout, clickable candidate strip, extreme sum set-closures, cross-capacity squeeze, deep modulo-9 digital root congruence filters.
@@ -84,7 +99,7 @@
   * **Futoshiki**: Fixed 3-column numpad, double-click number injection mode, permanent crosshair guide, zero-latency Turbo Mode.
   * **Hitori**: Primary click cycle, secondary pencil-marking (Pencil Marks), real-time action & APM metric tracker.
   * **Light Up**: Dual-mode left/right instantaneous dispatch (Left: Light, Right: Dot), zero-latency Mobile Mode Stick, 50-step circular snapshot stack, inverted darkness focus, dual-factor hot-zone hinting, immutable Grandmaster Platinum post-audit.
-  * **Yajilin & Shikaku**: Closed self-avoiding loop detection, dynamic geometric factoring for rectangular tiling.
+  * **Yajilin**: Closed self-avoiding loop detection, ray-casting black cell masking, adjacent cell exclusivity.
 * **Clinical Proctoring & Integrity Monitoring**: Integrates `useAntiCheatMonitor`, `clinicalProctoring`, and hardware input drift heuristics to ensure objective competitive fidelity.
 * **Strict Tournament Mode**: Completely suppresses in-game conflict glows, wave overlays, and nominal quota labels for unassisted, competition-compliant solving.
 * **Zero-Trust Verification**: Hard locks board generation and hints during official attempts; generates cryptographic SHA-256 receipts via Web Crypto API with constant-time equality checks.
@@ -111,7 +126,7 @@ flowchart TD
     Gv --> M6["Hashi (泊松張力 / Tarjan割邊)"]
     Gv --> M7["Heyawake (L-Room咬合 / 射線閉包)"]
     Gv --> M8["Yajilin (方向線索 / 迴路避障)"]
-    Gv --> M9["Shikaku (幾何分割 / 矩形覆蓋)"]
+    Gv --> M9["Shikaku (互鎖拓撲 / 邊界頂點奇偶 / 因果張量質量)"]
 
     Nq --> N1["Sudoku (交叉排他 / 魚定式)"]
     Nq --> N2["Kakuro (跑道局部性 / 數論模9同餘)"]
@@ -125,6 +140,7 @@ flowchart TD
     Gwm --> W3["錯誤類型學與即時 APM 時序監測"]
     Gwm --> W4["無級時間軸滑塊與歷史分支回溯 (Timeline Scrubber)"]
     Gwm --> W5["雙軌思考密度計量 (Density of Thought)"]
+    Gwm --> W6["Shikaku 觸覺震動引力波解碼 (Haptic Telemetry Recall)"]
 
 ```
 
@@ -144,10 +160,12 @@ flowchart TD
 │  • Compile-time PEERS LUT    │ │ • Full Kropki Box Topology │
 │  • Bitmask MRV Propagation   │ │ • Run-Local Modulo-9 Sieve │
 │  • O(1) Backtrack Snapshot   │ │ • Dual-Cut Singularity Nur │
+│                              │ │ • Vertex Parity Shikaku    │
 │                              │ │ • 2-SAT Kosaraju SCC Blk   │
 └──────────────┬───────────────┘ └─────────────┬──────────────┘
                │                               │
                └───────────────┬───────────────┘
+                               │
                                ▼
 ┌─────────────────────────────────────────────────────────────┐
 │                    Clinical Integrity Layer                 │
@@ -212,9 +230,9 @@ Lawgic/
 ├── web-frontend/
 │   ├── public/              # PWA manifest、安全 Service Worker (sw.js) 與靜態圖示
 │   ├── src/
-│   │   ├── components/      # 18 款競速駕駛艙 (Board)、因果高亮、虛擬手把與互動元件
+│   │   ├── components/      # 18 款競速駕駛艙 (含 ShikakuBoard 奇異點引力物理岩板)
 │   │   ├── contexts/        # 語系切換 (LanguageContext) 與無障礙支援 (AccessibilityContext)
-│   │   ├── engines/         # 18 款競技級演算法 (Nurikabe Axiomatic, Kropki Apex, LightUp 2-SAT 等)
+│   │   ├── engines/         # 18 款競技級演算法 (含 Shikaku 互鎖生長與邊界頂點奇偶校驗)
 │   │   ├── generated/       # 靜態種子庫與題目元數據預編譯快取 (JSON)
 │   │   ├── hooks/           # useLearnerProfile、useAntiCheatMonitor、useLongTermScheduler
 │   │   ├── registry/        # RendererRegistry (動態分發與容錯重試註冊中心)
@@ -235,4 +253,3 @@ Lawgic/
 ## 授權條款 / License
 
 本專案採用 [MIT License](https://www.google.com/search?q=LICENSE) 授權開放開源社群交流使用。
-
