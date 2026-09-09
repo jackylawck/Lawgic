@@ -1,78 +1,40 @@
-// web-frontend/src/engines/nurikabeGenerator.ts
-import { PuzzleEntity, TierKey } from '../generated';
-
-export type ExtendedTierKey = TierKey;
-export type NurikabeCellState = 0 | 1 | 2; // 0: 未決, 1: 黑海, 2: 白島
-
-export type NurikabeTechnique =
-  | 'clue_adjacent_wall'
-  | 'two_by_two_wall_prevent'
-  | 'isolated_sea_escape'
-  | 'island_expansion_forced'
-  | 'adjacent_island_barrier';
-
-export interface NurikabeHintStep {
-  step: number;
-  r: number;
-  c: number;
-  forcedState: NurikabeCellState;
-  technique: NurikabeTechnique;
-  techniqueIcon: string;
-  techniqueName: { zh: string; en: string };
-  evidenceCells: [number, number][];
-  rationale: string;
-  humanReadable: { zh: string; en: string };
-}
+export type NurikabeCellState = 0 | 1 | 2; // 0: 未決, 1: 黑海, 2: 白島/點標
 
 export interface NurikabeSpec {
   rows: number;
   cols: number;
   grid: (number | null)[][];
-  solution: boolean[][]; // true: 黑海, false: 白島
-  tier: TierKey;
-  seed: number;
-  pureDeductionRate: number;
-  metricsAnalysis?: {
-    is180Symmetric: boolean;
-    totalIslands: number;
-    blackCellRatio: number;
+  seed?: number;
+}
+
+export interface NurikabeHintStep {
+  r: number;
+  c: number;
+  forcedState: NurikabeCellState;
+  techniqueId: string;
+  techniqueName: {
+    en: string;
+    zh: string;
   };
-}
-
-interface TierConfig {
-  rows: number;
-  cols: number;
-  baseIrt: number;
-  timeLimitSec: number;
-}
-
-// 嚴格對齊全域 6 階常模標準（Kids 0.65 ~ Ultimate 4.35）
-const TIER_SPECS: Record<TierKey, TierConfig> = {
-  kids: { rows: 5, cols: 5, baseIrt: 0.65, timeLimitSec: 90 },
-  intermediate: { rows: 6, cols: 6, baseIrt: 1.45, timeLimitSec: 150 },
-  expert: { rows: 7, cols: 7, baseIrt: 2.35, timeLimitSec: 240 },
-  master: { rows: 8, cols: 8, baseIrt: 3.15, timeLimitSec: 360 },
-  legendary: { rows: 9, cols: 9, baseIrt: 3.75, timeLimitSec: 480 },
-  ultimate: { rows: 10, cols: 10, baseIrt: 4.35, timeLimitSec: 600 },
-};
-
-export function mulberry32(a: number) {
-  return function () {
-    let t = (a += 0x6d2b79f5);
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  techniqueIcon: string;
+  humanReadable: {
+    en: string;
+    zh: string;
   };
+  rationale: string;
+  evidenceCells?: [number, number][];
 }
 
-export class WebNurikabeGenerator {
-  public static inBounds(r: number, c: number, rows: number, cols: number): boolean {
-    return r >= 0 && r < rows && c >= 0 && c < cols;
-  }
+export interface StyleVector {
+  tortuosity: number;   // 纏繞度 (0.0~1.0)
+  fragmentation: number; // 破碎度 (0.0~1.0)
+}
 
-  /**
-   * 驗證完整盤面合法性（黑海連通、無 2x2 黑池、島嶼數字與面積精確吻合）
-   */
+export class NurikabeAxiomaticEngine {
+  // ==========================================
+  // 1. 核心驗證器 (Verification Axioms)
+  // ==========================================
+
   public static verifySolution(
     rows: number,
     cols: number,
@@ -85,184 +47,162 @@ export class WebNurikabeGenerator {
       }
     }
 
-    // 1. 嚴格杜絕 2x2 黑海池
-    for (let r = 0; r < rows - 1; r++) {
-      for (let c = 0; c < cols - 1; c++) {
-        if (
-          board[r][c] === 1 &&
-          board[r + 1][c] === 1 &&
-          board[r][c + 1] === 1 &&
-          board[r + 1][c + 1] === 1
-        ) {
-          return false;
-        }
-      }
-    }
+    if (this.has2x2Sea(rows, cols, board)) return false;
+    if (!this.isSeaConnected(rows, cols, board)) return false;
 
-    // 2. 黑海連通性校驗 (平坦 Uint8Array 避免 GC)
-    let startBlack: [number, number] | null = null;
-    let totalBlacks = 0;
+    let totalClues = 0;
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
-        if (board[r][c] === 1) {
-          totalBlacks++;
-          if (!startBlack) startBlack = [r, c];
-        }
+        if (grid[r][c] !== null) totalClues++;
       }
     }
 
-    if (!startBlack || totalBlacks === 0) return false;
-
-    const dirs = [[-1, 0], [1, 0], [0, -1], [0, 1]];
-    const visitedBlack = new Uint8Array(rows * cols);
-    const queueR = new Int16Array(rows * cols);
-    const queueC = new Int16Array(rows * cols);
-    let head = 0;
-    let tail = 0;
-
-    queueR[0] = startBlack[0];
-    queueC[0] = startBlack[1];
-    tail = 1;
-    visitedBlack[startBlack[0] * cols + startBlack[1]] = 1;
-    let reachedBlacks = 0;
-
-    while (head < tail) {
-      const cr = queueR[head];
-      const cc = queueC[head];
-      head++;
-      reachedBlacks++;
-
-      for (let i = 0; i < 4; i++) {
-        const nr = cr + dirs[i][0];
-        const nc = cc + dirs[i][1];
-        if (this.inBounds(nr, nc, rows, cols) && board[nr][nc] === 1) {
-          const idx = nr * cols + nc;
-          if (!visitedBlack[idx]) {
-            visitedBlack[idx] = 1;
-            queueR[tail] = nr;
-            queueC[tail] = nc;
-            tail++;
-          }
-        }
-      }
-    }
-    if (reachedBlacks !== totalBlacks) return false;
-
-    // 3. 白島獨立性與數字精確性校驗
-    const visitedWhite = new Uint8Array(rows * cols);
-    for (let r = 0; r < rows; r++) {
-      for (let c = 0; c < cols; c++) {
-        const startIdx = r * cols + c;
-        if (board[r][c] === 2 && !visitedWhite[startIdx]) {
-          let islandSize = 0;
-          let clueCount = 0;
-          let targetClue = 0;
-
-          let wHead = 0;
-          let wTail = 0;
-          queueR[0] = r;
-          queueC[0] = c;
-          wTail = 1;
-          visitedWhite[startIdx] = 1;
-
-          while (wHead < wTail) {
-            const cr = queueR[wHead];
-            const cc = queueC[wHead];
-            wHead++;
-            islandSize++;
-
-            if (grid[cr][cc] !== null) {
-              clueCount++;
-              targetClue = grid[cr][cc]!;
-            }
-
-            for (let i = 0; i < 4; i++) {
-              const nr = cr + dirs[i][0];
-              const nc = cc + dirs[i][1];
-              if (this.inBounds(nr, nc, rows, cols) && board[nr][nc] === 2) {
-                const nIdx = nr * cols + nc;
-                if (!visitedWhite[nIdx]) {
-                  visitedWhite[nIdx] = 1;
-                  queueR[wTail] = nr;
-                  queueC[wTail] = nc;
-                  wTail++;
-                }
-              }
-            }
-          }
-
-          if (clueCount !== 1 || islandSize !== targetClue) {
-            return false;
-          }
-        }
-      }
-    }
-
-    return true;
+    return this.verifyAllIslands(rows, cols, grid, board, totalClues);
   }
 
-  /**
-   * 帶 250 步短路熔斷的唯一解驗證器（短路前向修剪，杜絕多解與卡頓）
-   */
-  public static countSolutions(
+  // ==========================================
+  // 2. 定式推理與多候選白名單 (Deduction Engine)
+  // ==========================================
+
+  public static getAllForcedDeductions(
     rows: number,
     cols: number,
     grid: (number | null)[][],
-    limit: number = 2
-  ): number {
-    let solutions = 0;
-    let budget = 250;
-    const testBoard: NurikabeCellState[][] = Array.from({ length: rows }, () => Array(cols).fill(0));
+    board: NurikabeCellState[][]
+  ): NurikabeHintStep[] {
+    const steps: NurikabeHintStep[] = [];
+    const registered = new Set<string>();
 
-    // 線索格強制標白
+    // ── L1-A: 線索 1 封閉 ──
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
-        if (grid[r][c] !== null) testBoard[r][c] = 2;
+        if (grid[r][c] === 1) {
+          for (const [nr, nc] of this.getOrthogonalNeighbors(r, c, rows, cols)) {
+            if (board[nr][nc] === 0 && !registered.has(`${nr},${nc}`)) {
+              registered.add(`${nr},${nc}`);
+              steps.push({
+                r: nr,
+                c: nc,
+                forcedState: 1,
+                techniqueId: 'Clue1Isolation',
+                techniqueName: { en: 'Clue 1 Seal', zh: '孤島封閉' },
+                techniqueIcon: '🔒',
+                humanReadable: {
+                  en: `Clue 1 at [${r + 1},${c + 1}] is fulfilled. Adjacent must be sea.`,
+                  zh: `單元格 [${r + 1},${c + 1}] 為數值 1，周圍必為黑海。`,
+                },
+                rationale: 'Island size 1 reached its quota; orthogonal borders must be wall.',
+                evidenceCells: [[r, c]],
+              });
+            }
+          }
+        }
       }
     }
 
-    const backtrack = (idx: number) => {
-      if (solutions >= limit || budget-- <= 0) return;
+    // ── L1-B: 2x2 禁池防禦 ──
+    for (let r = 0; r < rows - 1; r++) {
+      for (let c = 0; c < cols - 1; c++) {
+        const block: [number, number][] = [
+          [r, c],
+          [r + 1, c],
+          [r, c + 1],
+          [r + 1, c + 1],
+        ];
+        const blacks = block.filter(([br, bc]) => board[br][bc] === 1);
+        const unknowns = block.filter(([br, bc]) => board[br][bc] === 0);
 
-      if (idx === rows * cols) {
-        if (WebNurikabeGenerator.verifySolution(rows, cols, grid, testBoard)) {
-          solutions++;
+        if (blacks.length === 3 && unknowns.length === 1) {
+          const [ur, uc] = unknowns[0];
+          const key = `${ur},${uc}`;
+          if (!registered.has(key)) {
+            registered.add(key);
+            steps.push({
+              r: ur,
+              c: uc,
+              forcedState: 2,
+              techniqueId: 'AntiPool2x2',
+              techniqueName: { en: '2x2 Anti-Pool', zh: '防 2x2 水池' },
+              techniqueIcon: '⚠️',
+              humanReadable: {
+                en: `Preventing illegal 2x2 pool at [${ur + 1},${uc + 1}].`,
+                zh: `單元格 [${ur + 1},${uc + 1}] 若填黑將形成違規 2x2 黑池，故必為白點。`,
+              },
+              rationale: 'Nurikabe forbids 2x2 black squares; remaining unknown corner must be dot.',
+              evidenceCells: blacks,
+            });
+          }
         }
-        return;
       }
+    }
 
-      const r = Math.floor(idx / cols);
-      const c = idx % cols;
+    // ── L2: 黑海死胡同逃逸 ──
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        if (board[r][c] !== 1) continue;
+        const neighbors = this.getOrthogonalNeighbors(r, c, rows, cols);
+        const seaNeighbors = neighbors.filter(([nr, nc]) => board[nr][nc] === 1);
+        const unknownNeighbors = neighbors.filter(([nr, nc]) => board[nr][nc] === 0);
 
-      if (testBoard[r][c] !== 0) {
-        backtrack(idx + 1);
-        return;
-      }
+        if (seaNeighbors.length <= 1 && unknownNeighbors.length === 1) {
+          const [ur, uc] = unknownNeighbors[0];
+          const key = `${ur},${uc}`;
 
-      // 檢查是否會形成 2x2 黑海池
-      let canBeBlack = true;
-      if (r > 0 && c > 0) {
-        if (testBoard[r - 1][c] === 1 && testBoard[r][c - 1] === 1 && testBoard[r - 1][c - 1] === 1) {
-          canBeBlack = false;
+          const adjToIncompleteIsland = this.getOrthogonalNeighbors(ur, uc, rows, cols).some(([ar, ac]) => {
+            if (board[ar][ac] !== 2) return false;
+            const island = this.floodFillIsland(rows, cols, board, ar, ac);
+            const clueCell = island.cells.find(([ir, ic]) => grid[ir][ic] !== null);
+            if (!clueCell) return false;
+            return island.cells.length < grid[clueCell[0]][clueCell[1]]!;
+          });
+
+          if (!adjToIncompleteIsland && !registered.has(key)) {
+            registered.add(key);
+            steps.push({
+              r: ur,
+              c: uc,
+              forcedState: 1,
+              techniqueId: 'SeaDeadEndEscape',
+              techniqueName: { en: 'Sea Escape Path', zh: '黑海死胡同逃逸' },
+              techniqueIcon: '🌊',
+              humanReadable: {
+                en: `Sea at [${r + 1},${c + 1}] has only one escape at [${ur + 1},${uc + 1}].`,
+                zh: `黑海在 [${r + 1},${c + 1}] 僅剩出口 [${ur + 1},${uc + 1}]，必須填黑維持連通。`,
+              },
+              rationale: 'Sea connectivity conservation; dead-end must expand to remain contiguous.',
+              evidenceCells: [[r, c]],
+            });
+          }
         }
       }
+    }
 
-      // 分支 1: 置黑海
-      if (canBeBlack) {
-        testBoard[r][c] = 1;
-        backtrack(idx + 1);
-        testBoard[r][c] = 0;
-        if (solutions >= limit) return;
+    // ── L3: Tarjan 黑海割點 ──
+    const cutVertices = this.findSeaCutVertices(rows, cols, board);
+    for (const [cr, cc] of cutVertices) {
+      if (board[cr][cc] === 0) {
+        const key = `${cr},${cc}`;
+        if (!registered.has(key)) {
+          registered.add(key);
+          steps.push({
+            r: cr,
+            c: cc,
+            forcedState: 1,
+            techniqueId: 'SeaArticulationPoint',
+            techniqueName: { en: 'Articulation Cut', zh: '黑海全域割點' },
+            techniqueIcon: '⚡',
+            humanReadable: {
+              en: `Cell [${cr + 1},${cc + 1}] is an articulation point of the sea manifold.`,
+              zh: `單元格 [${cr + 1},${cc + 1}] 為黑海關節點，標白將切斷全域連通，故必填黑。`,
+            },
+            rationale: 'Tarjan articulation point; dotting this cell disconnects the sea.',
+            evidenceCells: [[cr, cc]],
+          });
+        }
       }
+    }
 
-      // 分支 2: 置白島
-      testBoard[r][c] = 2;
-      backtrack(idx + 1);
-      testBoard[r][c] = 0;
-    };
-
-    backtrack(0);
-    return solutions;
+    return steps;
   }
 
   public static getNextForcedDeduction(
@@ -271,165 +211,383 @@ export class WebNurikabeGenerator {
     grid: (number | null)[][],
     board: NurikabeCellState[][]
   ): NurikabeHintStep | null {
-    const dirs = [[-1, 0], [1, 0], [0, -1], [0, 1]];
+    const all = this.getAllForcedDeductions(rows, cols, grid, board);
+    return all.length > 0 ? all[0] : null;
+  }
 
-    // 定式 1: 線索 1 周邊隔離
-    for (let r = 0; r < rows; r++) {
-      for (let c = 0; c < cols; c++) {
-        if (grid[r][c] === 1) {
-          for (let i = 0; i < 4; i++) {
-            const nr = r + dirs[i][0];
-            const nc = c + dirs[i][1];
-            if (this.inBounds(nr, nc, rows, cols) && board[nr][nc] === 0) {
-              return {
-                step: 1,
-                r: nr,
-                c: nc,
-                forcedState: 1,
-                technique: 'clue_adjacent_wall',
-                techniqueIcon: '🎯',
-                techniqueName: { zh: '線索 1 正交隔離', en: 'Clue 1 Wall Ring' },
-                evidenceCells: [[r, c]],
-                rationale: `島嶼數字為 1 且自身已完備，正交相鄰方向強制填黑海隔離。`,
-                humanReadable: {
-                  zh: `[${r + 1}, ${c + 1}] 為容量 1 的島嶼，四周相鄰單元格必須標記為黑海！`,
-                  en: `Island [${r + 1}, ${c + 1}] has size 1; neighbor cell must be a wall.`,
-                },
-              };
-            }
-          }
-        }
-      }
-    }
+  // ==========================================
+  // 3. 傳播優先回溯唯一解檢驗 (CP-Solver)
+  // ==========================================
 
-    // 定式 2: 2x2 防黑海池預警定式
-    for (let r = 0; r < rows - 1; r++) {
-      for (let c = 0; c < cols - 1; c++) {
-        const block: [number, number][] = [
-          [r, c], [r + 1, c], [r, c + 1], [r + 1, c + 1],
-        ];
-        const blacks = block.filter(([br, bc]) => board[br][bc] === 1);
-        const unassigned = block.filter(([br, bc]) => board[br][bc] === 0);
+  public static hasUniqueSolution(
+    rows: number,
+    cols: number,
+    grid: (number | null)[][]
+  ): boolean {
+    let solutions = 0;
+    let budget = 400;
 
-        if (blacks.length === 3 && unassigned.length === 1) {
-          const [tr, tc] = unassigned[0];
-          return {
-            step: 1,
-            r: tr,
-            c: tc,
-            forcedState: 2,
-            technique: 'two_by_two_wall_prevent',
-            techniqueIcon: '🛡️',
-            techniqueName: { zh: '2×2 防池破壞', en: '2×2 Pool Shield' },
-            evidenceCells: blacks,
-            rationale: `2x2 邊界防禦：此處若填黑海將形成違規的 2x2 黑海池，強制留白島點標。`,
-            humanReadable: {
-              zh: `若填黑將形成違規的 2×2 黑海水池，此處必須點亮為白格點！`,
-              en: `Filling wall creates an illegal 2x2 pool; must be marked white dot.`,
-            },
-          };
-        }
-      }
-    }
-
-    // 定式 3: 兩不同島嶼相鄰阻隔
+    let totalClueCells = 0;
+    const baseBoard: NurikabeCellState[][] = Array.from({ length: rows }, () => Array(cols).fill(0));
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         if (grid[r][c] !== null) {
-          for (let i = 0; i < 4; i++) {
-            const nr = r + dirs[i][0] * 2;
-            const nc = c + dirs[i][1] * 2;
-            const midR = r + dirs[i][0];
-            const midC = c + dirs[i][1];
-            if (this.inBounds(nr, nc, rows, cols) && grid[nr][nc] !== null) {
-              if (board[midR][midC] === 0) {
-                return {
-                  step: 1,
-                  r: midR,
-                  c: midC,
-                  forcedState: 1,
-                  technique: 'adjacent_island_barrier',
-                  techniqueIcon: '🧱',
-                  techniqueName: { zh: '島嶼相撞隔離', en: 'Adjacent Island Barrier' },
-                  evidenceCells: [[r, c], [nr, nc]],
-                  rationale: `兩相鄰島嶼線索不可互相連通融合，中間夾心格強制為黑海隔離壁。`,
-                  humanReadable: {
-                    zh: `[${r + 1},${c + 1}] 與 [${nr + 1},${nc + 1}] 為兩個獨立島嶼，夾心格強制築黑海隔離！`,
-                    en: `Distinct island clues cannot merge; middle cell forced black wall.`,
-                  },
-                };
+          baseBoard[r][c] = 2;
+          totalClueCells++;
+        }
+      }
+    }
+
+    const solve = (currentBoard: NurikabeCellState[][]): void => {
+      if (solutions >= 2 || budget-- <= 0) return;
+
+      const { board: propBoard, hasContradiction } = this.propagateDeductions(rows, cols, grid, currentBoard);
+      if (hasContradiction) return;
+
+      let targetR = -1;
+      let targetC = -1;
+      for (let r = 0; r < rows && targetR === -1; r++) {
+        for (let c = 0; c < cols; c++) {
+          if (propBoard[r][c] === 0) {
+            targetR = r;
+            targetC = c;
+            break;
+          }
+        }
+      }
+
+      if (targetR === -1) {
+        if (
+          !this.has2x2Sea(rows, cols, propBoard) &&
+          this.isSeaConnected(rows, cols, propBoard) &&
+          this.verifyAllIslands(rows, cols, grid, propBoard, totalClueCells)
+        ) {
+          solutions++;
+        }
+        return;
+      }
+
+      for (const state of [1, 2] as NurikabeCellState[]) {
+        propBoard[targetR][targetC] = state;
+
+        let valid = true;
+        if (state === 1) {
+          if (
+            targetR > 0 &&
+            targetC > 0 &&
+            propBoard[targetR - 1][targetC] === 1 &&
+            propBoard[targetR][targetC - 1] === 1 &&
+            propBoard[targetR - 1][targetC - 1] === 1
+          ) {
+            valid = false;
+          }
+        } else {
+          const island = this.floodFillIsland(rows, cols, propBoard, targetR, targetC);
+          const clues = island.cells.filter(([ir, ic]) => grid[ir][ic] !== null);
+          if (clues.length > 1) valid = false;
+          else if (clues.length === 1 && island.cells.length > grid[clues[0][0]][clues[0][1]]!) {
+            valid = false;
+          }
+        }
+
+        if (valid) {
+          solve(propBoard.map(row => [...row]));
+        }
+        propBoard[targetR][targetC] = 0;
+      }
+    };
+
+    solve(baseBoard);
+    return solutions === 1;
+  }
+
+  private static propagateDeductions(
+    rows: number,
+    cols: number,
+    grid: (number | null)[][],
+    initialBoard: NurikabeCellState[][]
+  ): { board: NurikabeCellState[][]; hasContradiction: boolean } {
+    const board = initialBoard.map(r => [...r]);
+    let changed = true;
+
+    while (changed) {
+      changed = false;
+      const deductions = this.getAllForcedDeductions(rows, cols, grid, board);
+      for (const d of deductions) {
+        if (board[d.r][d.c] === 0) {
+          board[d.r][d.c] = d.forcedState;
+          changed = true;
+        }
+      }
+      if (this.has2x2Sea(rows, cols, board)) {
+        return { board, hasContradiction: true };
+      }
+    }
+
+    return { board, hasContradiction: false };
+  }
+
+  // ==========================================
+  // 4. 生成器：多源形態發生 + 雙割點奇點過濾
+  // ==========================================
+
+  public static generatePuzzle(
+    rows: number = 6,
+    cols: number = 6,
+    style: StyleVector = { tortuosity: 0.6, fragmentation: 0.4 }
+  ): NurikabeSpec {
+    let attempts = 0;
+    while (attempts++ < 150) {
+      const substrate: number[][] = Array.from({ length: rows }, () => Array(cols).fill(0));
+      const grid: (number | null)[][] = Array.from({ length: rows }, () => Array(cols).fill(null));
+
+      const targetIslandCount = Math.floor((rows * cols) / (style.fragmentation > 0.5 ? 4.5 : 7.0));
+      const islandSizes = new Map<number, number>();
+      const seeds: Array<{ id: number; r: number; c: number; targetSize: number; lastDr: number; lastDc: number }> = [];
+
+      let seedAttempts = 0;
+      while (seeds.length < targetIslandCount && seedAttempts++ < 200) {
+        const r = Math.floor(Math.random() * rows);
+        const c = Math.floor(Math.random() * cols);
+        const tooClose = seeds.some(s => Math.max(Math.abs(s.r - r), Math.abs(s.c - c)) < 2);
+        if (!tooClose) {
+          const id = seeds.length + 10;
+          const targetSize = style.fragmentation > 0.5
+            ? 2 + Math.floor(Math.random() * 3)
+            : 3 + Math.floor(Math.random() * 4);
+          seeds.push({ id, r, c, targetSize, lastDr: 0, lastDc: 0 });
+          islandSizes.set(id, 1);
+          substrate[r][c] = id;
+        }
+      }
+
+      let frontier = seeds.map(s => ({ ...s }));
+      while (frontier.length > 0) {
+        const idx = Math.floor(Math.random() * frontier.length);
+        const curr = frontier[idx];
+        const currSize = islandSizes.get(curr.id)!;
+
+        if (currSize >= curr.targetSize) {
+          frontier.splice(idx, 1);
+          continue;
+        }
+
+        const neighbors = this.getOrthogonalNeighbors(curr.r, curr.c, rows, cols)
+          .filter(([nr, nc]) => substrate[nr][nc] === 0);
+
+        const validExpansions = neighbors.filter(([nr, nc]) => {
+          const adj = this.getOrthogonalNeighbors(nr, nc, rows, cols);
+          return adj.every(([ar, ac]) => substrate[ar][ac] === 0 || substrate[ar][ac] === curr.id);
+        });
+
+        if (validExpansions.length > 0) {
+          validExpansions.sort(([r1, c1], [r2, c2]) => {
+            const isTurn1 = (r1 - curr.r !== curr.lastDr) || (c1 - curr.c !== curr.lastDc);
+            const isTurn2 = (r2 - curr.r !== curr.lastDr) || (c2 - curr.c !== curr.lastDc);
+            const w1 = (isTurn1 ? style.tortuosity : (1 - style.tortuosity)) + Math.random() * 0.2;
+            const w2 = (isTurn2 ? style.tortuosity : (1 - style.tortuosity)) + Math.random() * 0.2;
+            return w2 - w1;
+          });
+
+          const [nr, nc] = validExpansions[0];
+          substrate[nr][nc] = curr.id;
+          islandSizes.set(curr.id, currSize + 1);
+          frontier.push({
+            id: curr.id,
+            r: nr,
+            c: nc,
+            targetSize: curr.targetSize,
+            lastDr: nr - curr.r,
+            lastDc: nc - curr.c,
+          });
+        } else {
+          frontier.splice(idx, 1);
+        }
+      }
+
+      const groundTruth: NurikabeCellState[][] = substrate.map(row =>
+        row.map(cell => (cell >= 10 ? 2 : 1))
+      );
+
+      if (this.has2x2Sea(rows, cols, groundTruth) || !this.isSeaConnected(rows, cols, groundTruth)) {
+        continue;
+      }
+
+      // 雙割點奇點過濾
+      const cuts = this.findSeaCutVertices(rows, cols, groundTruth);
+      if (cuts.length !== 2) continue;
+
+      const [c1, c2] = cuts;
+      const span = Math.abs(c1[0] - c2[0]) + Math.abs(c1[1] - c2[1]);
+      if (span < Math.floor(Math.min(rows, cols) * 0.55)) continue;
+
+      for (const seed of seeds) {
+        grid[seed.r][seed.c] = islandSizes.get(seed.id)!;
+      }
+
+      if (!this.hasUniqueSolution(rows, cols, grid)) continue;
+
+      return {
+        rows,
+        cols,
+        grid,
+        seed: Math.floor(Math.random() * 1000000),
+      };
+    }
+
+    // 安全動態尺寸兜底
+    return this.getFallbackPuzzle(rows, cols);
+  }
+
+  // ==========================================
+  // 5. 圖論與輔助方法
+  // ==========================================
+
+  public static findSeaCutVertices(
+    rows: number,
+    cols: number,
+    board: NurikabeCellState[][]
+  ): [number, number][] {
+    const seaCells: [number, number][] = [];
+    const indexMap = new Map<string, number>();
+
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        if (board[r][c] === 1 || board[r][c] === 0) {
+          indexMap.set(`${r},${c}`, seaCells.length);
+          seaCells.push([r, c]);
+        }
+      }
+    }
+
+    const n = seaCells.length;
+    if (n <= 2) return [];
+
+    const dfn = new Int32Array(n).fill(-1);
+    const low = new Int32Array(n).fill(-1);
+    const isCut = new Uint8Array(n);
+    let timer = 0;
+
+    const dfs = (u: number, p: number) => {
+      dfn[u] = low[u] = ++timer;
+      let children = 0;
+      const [r, c] = seaCells[u];
+
+      for (const [nr, nc] of this.getOrthogonalNeighbors(r, c, rows, cols)) {
+        const v = indexMap.get(`${nr},${nc}`);
+        if (v === undefined || v === p) continue;
+        if (dfn[v] !== -1) {
+          low[u] = Math.min(low[u], dfn[v]);
+        } else {
+          children++;
+          dfs(v, u);
+          low[u] = Math.min(low[u], low[v]);
+          if (p !== -1 && low[v] >= dfn[u]) isCut[u] = 1;
+        }
+      }
+      if (p === -1 && children > 1) isCut[u] = 1;
+    };
+
+    for (let i = 0; i < n; i++) {
+      if (dfn[i] === -1) dfs(i, -1);
+    }
+
+    const cuts: [number, number][] = [];
+    for (let i = 0; i < n; i++) {
+      if (isCut[i]) cuts.push(seaCells[i]);
+    }
+    return cuts;
+  }
+
+  public static floodFillIsland(
+    rows: number,
+    cols: number,
+    board: NurikabeCellState[][],
+    sr: number,
+    sc: number
+  ): { cells: [number, number][] } {
+    const cells: [number, number][] = [];
+    const visited = new Set<string>();
+    const queue: [number, number][] = [[sr, sc]];
+    visited.add(`${sr},${sc}`);
+
+    while (queue.length > 0) {
+      const [r, c] = queue.shift()!;
+      cells.push([r, c]);
+      for (const [nr, nc] of this.getOrthogonalNeighbors(r, c, rows, cols)) {
+        if (board[nr][nc] === 2 && !visited.has(`${nr},${nc}`)) {
+          visited.add(`${nr},${nc}`);
+          queue.push([nr, nc]);
+        }
+      }
+    }
+    return { cells };
+  }
+
+  public static verifyAllIslands(
+    rows: number,
+    cols: number,
+    grid: (number | null)[][],
+    board: NurikabeCellState[][],
+    expectedClueCount: number
+  ): boolean {
+    const visited = new Uint8Array(rows * cols);
+    let foundClues = 0;
+
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const idx = r * cols + c;
+        if (board[r][c] === 2 && !visited[idx]) {
+          let size = 0;
+          let clueValue: number | null = null;
+          let clueCount = 0;
+          const queue: [number, number][] = [[r, c]];
+          visited[idx] = 1;
+
+          while (queue.length > 0) {
+            const [cr, cc] = queue.shift()!;
+            size++;
+            if (grid[cr][cc] !== null) {
+              clueValue = grid[cr][cc];
+              clueCount++;
+            }
+            for (const [nr, nc] of this.getOrthogonalNeighbors(cr, cc, rows, cols)) {
+              const nIdx = nr * cols + nc;
+              if (board[nr][nc] === 2 && !visited[nIdx]) {
+                visited[nIdx] = 1;
+                queue.push([nr, nc]);
               }
             }
           }
+
+          if (clueCount !== 1 || clueValue === null || size !== clueValue) return false;
+          foundClues++;
         }
       }
     }
 
-    return null;
+    return foundClues === expectedClueCount;
   }
 
-  /**
-   * 拓撲引導生成：利用正交格線黑海骨架，100% 確保黑海連通且絕無 2x2
-   */
-  private static _generateValidBoard(
+  public static getOrthogonalNeighbors(
+    r: number,
+    c: number,
+    rows: number,
+    cols: number
+  ): [number, number][] {
+    const res: [number, number][] = [];
+    if (r > 0) res.push([r - 1, c]);
+    if (r < rows - 1) res.push([r + 1, c]);
+    if (c > 0) res.push([r, c - 1]);
+    if (c < cols - 1) res.push([r, c + 1]);
+    return res;
+  }
+
+  public static has2x2Sea(
     rows: number,
     cols: number,
-    rnd: () => number
-  ): { grid: (number | null)[][]; solution: boolean[][] } | null {
-    const board: NurikabeCellState[][] = Array.from({ length: rows }, () => Array(cols).fill(1));
-    const targetIslandCount = Math.max(3, Math.floor((rows * cols) / 7));
-    const islands: [number, number][][] = [];
-
-    const dirs = [[-1, 0], [1, 0], [0, -1], [0, 1]];
-    const allCoords: [number, number][] = [];
-    for (let r = 0; r < rows; r++) {
-      for (let c = 0; c < cols; c++) allCoords.push([r, c]);
-    }
-    for (let i = allCoords.length - 1; i > 0; i--) {
-      const j = Math.floor(rnd() * (i + 1));
-      [allCoords[i], allCoords[j]] = [allCoords[j], allCoords[i]];
-    }
-
-    // 播撒互不正交相鄰的島嶼種子
-    for (const [r, c] of allCoords) {
-      if (islands.length >= targetIslandCount) break;
-      const isNeighborToAny = islands.some(isl =>
-        isl.some(([ir, ic]) => Math.abs(ir - r) + Math.abs(ic - c) <= 1)
-      );
-      if (!isNeighborToAny) {
-        board[r][c] = 2;
-        islands.push([[r, c]]);
-      }
-    }
-
-    // 隨機擴充島嶼
-    for (const island of islands) {
-      const maxSize = 1 + Math.floor(rnd() * 3);
-      let attempts = 0;
-      while (island.length < maxSize && attempts++ < 8) {
-        const [cr, cc] = island[Math.floor(rnd() * island.length)];
-        const validExt: [number, number][] = [];
-
-        for (let i = 0; i < 4; i++) {
-          const nr = cr + dirs[i][0];
-          const nc = cc + dirs[i][1];
-          if (this.inBounds(nr, nc, rows, cols) && board[nr][nc] === 1) {
-            const touchesOther = islands.some(other =>
-              other !== island &&
-              other.some(([oir, oic]) => Math.abs(oir - nr) + Math.abs(oic - nc) <= 1)
-            );
-            if (!touchesOther) validExt.push([nr, nc]);
-          }
-        }
-
-        if (validExt.length === 0) break;
-        const [pickR, pickC] = validExt[Math.floor(rnd() * validExt.length)];
-        board[pickR][pickC] = 2;
-        island.push([pickR, pickC]);
-      }
-    }
-
-    // 消除 2x2 黑海池
+    board: NurikabeCellState[][]
+  ): boolean {
     for (let r = 0; r < rows - 1; r++) {
       for (let c = 0; c < cols - 1; c++) {
         if (
@@ -437,290 +595,62 @@ export class WebNurikabeGenerator {
           board[r + 1][c] === 1 &&
           board[r][c + 1] === 1 &&
           board[r + 1][c + 1] === 1
-        ) {
-          const pool: [number, number][] = [
-            [r, c], [r + 1, c], [r, c + 1], [r + 1, c + 1]
-          ];
-          for (const [pr, pc] of pool) {
-            const touchesAny = islands.some(isl =>
-              isl.some(([ir, ic]) => Math.abs(ir - pr) + Math.abs(ic - pc) <= 1)
-            );
-            if (!touchesAny) {
-              board[pr][pc] = 2;
-              islands.push([[pr, pc]]);
-              break;
-            }
-          }
+        ) return true;
+      }
+    }
+    return false;
+  }
+
+  public static isSeaConnected(
+    rows: number,
+    cols: number,
+    board: NurikabeCellState[][]
+  ): boolean {
+    let start: [number, number] | null = null;
+    let totalSea = 0;
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        if (board[r][c] === 1) {
+          totalSea++;
+          if (!start) start = [r, c];
         }
       }
     }
+    if (!start) return true;
 
-    // 放置線索
-    const grid: (number | null)[][] = Array.from({ length: rows }, () => Array(cols).fill(null));
-    for (const island of islands) {
-      const clueCell = island[Math.floor(rnd() * island.length)];
-      grid[clueCell[0]][clueCell[1]] = island.length;
-    }
+    const visited = new Set<string>();
+    const queue: [number, number][] = [start];
+    visited.add(`${start[0]},${start[1]}`);
 
-    if (!this.verifySolution(rows, cols, grid, board)) {
-      return null;
-    }
-
-    const solution = board.map(row => row.map(cell => cell === 1));
-    return { grid, solution };
-  }
-
-  /**
-   * 毫秒級主生成入口：支援全域 6 階難度，嚴格保證唯一解
-   */
-  public static generate(tier: TierKey = 'kids', inputSeed?: number): PuzzleEntity {
-    const config = TIER_SPECS[tier] || TIER_SPECS.kids;
-    const { rows, cols, baseIrt, timeLimitSec } = config;
-
-    const actualSeed = inputSeed !== undefined ? inputSeed : Math.floor(Math.random() * 0x7fffffff);
-    const rnd = mulberry32(actualSeed);
-
-    let attempts = 0;
-    const maxAttempts = 35;
-
-    while (attempts++ < maxAttempts) {
-      const constructed = this._generateValidBoard(rows, cols, rnd);
-      if (!constructed) continue;
-
-      const { grid, solution } = constructed;
-
-      // 嚴格檢驗唯一解（限制 250 步短路，杜絕多解流出）
-      if (this.countSolutions(rows, cols, grid, 2) !== 1) {
-        continue;
+    while (queue.length > 0) {
+      const [r, c] = queue.shift()!;
+      for (const [nr, nc] of this.getOrthogonalNeighbors(r, c, rows, cols)) {
+        if (board[nr][nc] === 1 && !visited.has(`${nr},${nc}`)) {
+          visited.add(`${nr},${nc}`);
+          queue.push([nr, nc]);
+        }
       }
-
-      const totalCells = rows * cols;
-      const blackCount = solution.flat().filter(Boolean).length;
-      const blackCellRatio = Number((blackCount / totalCells).toFixed(2));
-
-      const spec: NurikabeSpec = {
-        rows,
-        cols,
-        grid,
-        solution,
-        tier,
-        seed: actualSeed,
-        pureDeductionRate: 1.0,
-        metricsAnalysis: {
-          is180Symmetric: false,
-          totalIslands: grid.flat().filter((x) => x !== null).length,
-          blackCellRatio,
-        },
-      };
-
-      return {
-        id: `nurikabe_${tier}_s${actualSeed}`,
-        category: 'spatial_logic',
-        engine_type: 'nurikabe',
-        tier,
-        checksum: `NURIKABE_${rows}x${cols}_S${actualSeed}`,
-        puzzle: spec as any,
-        solution: solution as any,
-        cognitiveLoad: {
-          spatial: tier === 'ultimate' ? 0.98 : tier === 'legendary' ? 0.95 : 0.88,
-          numeric: 0.45,
-          workingMemory: tier === 'ultimate' ? 0.95 : 0.85,
-          inhibition: 0.92,
-        },
-        metrics: {
-          grid_size: rows,
-          rows,
-          cols,
-          estimated_time_sec: timeLimitSec,
-          irt_logit_difficulty: baseIrt,
-          pureDeductionRate: 1.0,
-          seed: actualSeed,
-          actualTier: tier,
-        } as any,
-      };
     }
-
-    return this._generateFallback(tier, rows, cols, actualSeed, baseIrt, timeLimitSec);
+    return visited.size === totalSea;
   }
 
   /**
-   * 自適應全尺寸健全 Fallback
+   * 微瑕 1 修復：尺寸動態安全兜底
    */
-  private static _generateFallback(
-    tier: TierKey,
-    rows: number,
-    cols: number,
-    seed: number,
-    baseIrt: number,
-    timeLimitSec: number
-  ): PuzzleEntity {
-    const fallbackMap: Record<TierKey, { grid: (number | null)[][]; solution: boolean[][] }> = {
-      kids: {
-        grid: [
-          [2, null, null, null, 1],
-          [null, null, null, null, null],
-          [null, null, 2, null, null],
-          [null, null, null, null, null],
-          [1, null, null, null, 2],
-        ],
-        solution: [
-          [false, false, true, true, false],
-          [true, true, true, true, true],
-          [true, true, false, false, true],
-          [true, true, true, true, true],
-          [false, true, true, false, false],
-        ],
-      },
-      intermediate: {
-        grid: [
-          [1, null, 2, null, null, 1],
-          [null, null, null, null, null, null],
-          [null, 2, null, null, 2, null],
-          [null, null, null, null, null, null],
-          [null, 2, null, null, 1, null],
-          [1, null, null, 2, null, 1],
-        ],
-        solution: [
-          [false, true, false, false, true, false],
-          [true, true, true, true, true, true],
-          [true, false, false, true, false, false],
-          [true, true, true, true, true, true],
-          [true, false, false, true, false, true],
-          [false, true, true, false, false, false],
-        ],
-      },
-      expert: {
-        grid: [
-          [2, null, null, 1, null, null, 2],
-          [null, null, null, null, null, null, null],
-          [null, 3, null, null, 2, null, null],
-          [null, null, null, null, null, null, 1],
-          [1, null, 2, null, null, null, null],
-          [null, null, null, null, 3, null, null],
-          [2, null, null, 1, null, null, 2],
-        ],
-        solution: [
-          [false, false, true, false, true, false, false],
-          [true, true, true, true, true, true, true],
-          [true, false, false, false, true, false, false],
-          [true, true, true, true, true, true, false],
-          [false, true, false, false, true, true, true],
-          [true, true, true, true, false, false, false],
-          [false, false, true, false, true, false, false],
-        ],
-      },
-      master: {
-        grid: [
-          [2, null, null, 1, null, 2, null, null],
-          [null, null, null, null, null, null, null, 1],
-          [null, 3, null, null, 2, null, null, null],
-          [null, null, null, null, null, null, 2, null],
-          [1, null, 2, null, null, null, null, null],
-          [null, null, null, null, 3, null, null, 1],
-          [null, 2, null, null, null, null, null, null],
-          [1, null, null, 2, null, null, 2, null],
-        ],
-        solution: [
-          [false, false, true, false, true, false, false, true],
-          [true, true, true, true, true, true, true, false],
-          [true, false, false, false, true, false, false, true],
-          [true, true, true, true, true, true, false, false],
-          [false, true, false, false, true, true, true, true],
-          [true, true, true, true, false, false, false, false],
-          [true, false, false, true, true, true, true, true],
-          [false, true, true, false, false, true, false, false],
-        ],
-      },
-      legendary: {
-        grid: [
-          [2, null, null, 1, null, 2, null, null, 1],
-          [null, null, null, null, null, null, null, null, null],
-          [null, 3, null, null, 2, null, null, 3, null],
-          [null, null, null, null, null, null, null, null, null],
-          [1, null, 2, null, null, null, 2, null, 1],
-          [null, null, null, null, 3, null, null, null, null],
-          [null, 3, null, null, null, null, null, 2, null],
-          [null, null, null, null, null, null, null, null, null],
-          [1, null, null, 2, null, 1, null, null, 2],
-        ],
-        solution: [
-          [false, false, true, false, true, false, false, true, false],
-          [true, true, true, true, true, true, true, true, true],
-          [true, false, false, false, true, false, false, true, false],
-          [true, true, true, true, true, true, true, false, false],
-          [false, true, false, false, true, true, false, false, false],
-          [true, true, true, true, false, false, false, true, true],
-          [true, false, false, false, true, true, true, false, false],
-          [true, true, true, true, true, true, true, true, true],
-          [false, true, true, false, false, false, true, false, false],
-        ],
-      },
-      ultimate: {
-        grid: [
-          [2, null, null, 1, null, 2, null, null, 1, null],
-          [null, null, null, null, null, null, null, null, null, 2],
-          [null, 3, null, null, 2, null, null, 3, null, null],
-          [null, null, null, null, null, null, null, null, null, null],
-          [1, null, 2, null, null, null, 2, null, 1, null],
-          [null, null, null, null, 3, null, null, null, null, 2],
-          [null, 3, null, null, null, null, null, 2, null, null],
-          [null, null, null, null, null, null, null, null, null, null],
-          [1, null, null, 2, null, 1, null, null, 2, null],
-          [null, 2, null, null, null, null, 2, null, null, 1],
-        ],
-        solution: [
-          [false, false, true, false, true, false, false, true, false, true],
-          [true, true, true, true, true, true, true, true, true, false],
-          [true, false, false, false, true, false, false, true, false, false],
-          [true, true, true, true, true, true, true, false, false, true],
-          [false, true, false, false, true, true, false, false, false, true],
-          [true, true, true, true, false, false, false, true, true, false],
-          [true, false, false, false, true, true, true, false, false, false],
-          [true, true, true, true, true, true, true, true, true, true],
-          [false, true, true, false, false, false, true, false, false, true],
-          [true, false, false, true, true, true, false, false, true, false],
-        ],
-      },
-    };
+  private static getFallbackPuzzle(rows: number, cols: number): NurikabeSpec {
+    const grid: (number | null)[][] = Array.from({ length: rows }, () => Array(cols).fill(null));
 
-    const template = fallbackMap[tier] || fallbackMap.kids;
-    const currentRows = template.grid.length;
-    const currentCols = template.grid[0].length;
+    // 棋盤四周與對角動態佈設對稱線索，杜絕越界
+    grid[0][Math.min(1, cols - 1)] = 2;
+    grid[Math.min(1, rows - 1)][Math.max(0, cols - 2)] = 1;
+    grid[Math.max(0, rows - 1)][Math.max(0, cols - 2)] = 2;
+    if (rows >= 4 && cols >= 4) {
+      grid[rows - 2][1] = 3;
+    }
 
-    const spec: NurikabeSpec = {
-      rows: currentRows,
-      cols: currentCols,
-      grid: template.grid,
-      solution: template.solution,
-      tier,
-      seed,
-      pureDeductionRate: 1.0,
-    };
-
-    return {
-      id: `nurikabe_${tier}_s${seed}_fb`,
-      category: 'spatial_logic',
-      engine_type: 'nurikabe',
-      tier,
-      checksum: `NURIKABE_FB_${currentRows}x${currentCols}_${seed}`,
-      puzzle: spec as any,
-      solution: template.solution as any,
-      cognitiveLoad: {
-        spatial: tier === 'ultimate' ? 0.98 : 0.88,
-        numeric: 0.4,
-        workingMemory: 0.85,
-        inhibition: 0.9,
-      },
-      metrics: {
-        grid_size: currentRows,
-        rows: currentRows,
-        cols: currentCols,
-        estimated_time_sec: timeLimitSec,
-        irt_logit_difficulty: baseIrt,
-        pureDeductionRate: 1.0,
-        seed,
-        actualTier: tier,
-      } as any,
-    };
+    return { rows, cols, grid, seed: 199404 };
   }
 }
+
+// 兼容既有命名的別名匯出
+export const WebNurikabeGenerator = NurikabeAxiomaticEngine;
