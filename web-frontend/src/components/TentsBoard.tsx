@@ -1,3 +1,4 @@
+// web-frontend/src/components/TentsBoard.tsx
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { PuzzleEntity, TierKey } from '../generated';
 import { useLearnerProfile } from '../hooks/useLearnerProfile';
@@ -7,7 +8,6 @@ import {
   WebTentsGenerator,
   TentCoord,
   EntropyGainProjection,
-  RippleStep,
 } from '../engines/tentsGenerator';
 
 interface Props {
@@ -32,20 +32,42 @@ export const TentsBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
   const { lang } = useLanguage();
   const isEn = lang === 'en';
 
-  const { recordAttempt, profile } = useLearnerProfile();
-  const spec = (actualPuzzle?.puzzle || actualPuzzle) as unknown as TentsSpec;
+  const { recordAttempt } = useLearnerProfile();
+  const spec = useMemo(() => {
+    return ((actualPuzzle?.puzzle || actualPuzzle) as unknown as TentsSpec) || null;
+  }, [actualPuzzle]);
 
   const rows = spec?.rows || 6;
   const cols = spec?.cols || 6;
-  const initialTrees = spec?.trees || [];
-  const initialRowCounts = spec?.rowCounts || [];
-  const initialColCounts = spec?.colCounts || [];
+  const initialTrees = useMemo(() => spec?.trees || [], [spec]);
+  const initialRowCounts = useMemo(() => spec?.rowCounts || [], [spec]);
+  const initialColCounts = useMemo(() => spec?.colCounts || [], [spec]);
 
+  // 棋盤本體狀態
   const [board, setBoard] = useState<CellState[][]>(() => {
     const b: CellState[][] = Array.from({ length: rows }, () => Array(cols).fill(0));
-    for (const tree of initialTrees) b[tree.r][tree.c] = 2;
+    for (const tree of initialTrees) {
+      if (tree.r < rows && tree.c < cols) b[tree.r][tree.c] = 2;
+    }
     return b;
   });
+
+  // 當題目切換時重設狀態
+  useEffect(() => {
+    const b: CellState[][] = Array.from({ length: rows }, () => Array(cols).fill(0));
+    for (const tree of initialTrees) {
+      if (tree.r < rows && tree.c < cols) b[tree.r][tree.c] = 2;
+    }
+    setBoard(b);
+    setIsCompleted(false);
+    setElapsedMs(0);
+    setGhostSnapshots([]);
+    setGhostIndex(-1);
+    setStrokes([]);
+    setMindPulseCoord(null);
+    setHoveredRipple(null);
+    startTimeRef.current = Date.now();
+  }, [actualPuzzle?.id, rows, cols, initialTrees]);
 
   const [isCompleted, setIsCompleted] = useState<boolean>(false);
   const [elapsedMs, setElapsedMs] = useState<number>(0);
@@ -53,9 +75,9 @@ export const TentsBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
   const [isAltActive, setIsAltActive] = useState<boolean>(false);
   const [isShiftActive, setIsShiftActive] = useState<boolean>(false);
 
-  // 熵增益光場
+  // 熵增益光場映射
   const [entropyGainMap, setEntropyGainMap] = useState<Record<string, EntropyGainProjection>>({});
-  
+
   // 前瞻因果漣漪
   const [hoveredRipple, setHoveredRipple] = useState<{
     path: Array<{ from: [number, number]; to: [number, number] }>;
@@ -78,14 +100,18 @@ export const TentsBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
   const startTimeRef = useRef<number>(Date.now());
   const cellSize = Math.min(320 / Math.max(rows, cols), 46);
 
-  // 鍵盤狀態監聽
+  // 鍵盤修飾鍵全局精確綁定
   useEffect(() => {
-    const handleDown = (e: KeyboardEvent) => {
+    const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Control') setIsCtrlActive(true);
-      if (e.key === 'Alt') setIsAltActive(true);
+      if (e.key === 'Alt') {
+        e.preventDefault();
+        setIsAltActive(true);
+      }
       if (e.key === 'Shift') setIsShiftActive(true);
     };
-    const handleUp = (e: KeyboardEvent) => {
+
+    const handleKeyUp = (e: KeyboardEvent) => {
       if (e.key === 'Control') setIsCtrlActive(false);
       if (e.key === 'Alt') setIsAltActive(false);
       if (e.key === 'Shift') {
@@ -93,41 +119,47 @@ export const TentsBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
         setGhostIndex(-1);
       }
     };
-    window.addEventListener('keydown', handleDown);
-    window.addEventListener('keyup', handleUp);
+
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
     return () => {
-      window.removeEventListener('keydown', handleDown);
-      window.removeEventListener('keyup', handleUp);
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
     };
   }, []);
 
   // 計時器
   useEffect(() => {
     if (isCompleted) return;
-    const t = setInterval(() => setElapsedMs(Date.now() - startTimeRef.current), 100);
-    return () => clearInterval(t);
+    const interval = setInterval(() => {
+      setElapsedMs(Date.now() - startTimeRef.current);
+    }, 100);
+    return () => clearInterval(interval);
   }, [isCompleted]);
 
-  // 全域奇偶偏差
+  // 全域奇偶偏差量計算
   const deltaPhi = useMemo(() => {
     let rDef = 0;
     for (let r = 0; r < rows; r++) {
       let placed = 0;
       for (let c = 0; c < cols; c++) if (board[r][c] === 1) placed++;
-      rDef += initialRowCounts[r] - placed;
+      rDef += (initialRowCounts[r] || 0) - placed;
     }
     let cDef = 0;
     for (let c = 0; c < cols; c++) {
       let placed = 0;
       for (let r = 0; r < rows; r++) if (board[r][c] === 1) placed++;
-      cDef += initialColCounts[c] - placed;
+      cDef += (initialColCounts[c] || 0) - placed;
     }
     return rDef - cDef;
   }, [board, rows, cols, initialRowCounts, initialColCounts]);
 
-  // 計算熵光場
+  // 計算並緩存熵光場
   useEffect(() => {
-    if (!isCtrlActive) return;
+    if (!isCtrlActive || !spec) {
+      setEntropyGainMap({});
+      return;
+    }
     const map: Record<string, EntropyGainProjection> = {};
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
@@ -139,10 +171,10 @@ export const TentsBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
     setEntropyGainMap(map);
   }, [isCtrlActive, board, rows, cols, spec]);
 
-  // 懸停探針計算
+  // 懸停因果前瞻探針
   const handleCellHover = useCallback(
     (r: number, c: number) => {
-      if (board[r][c] !== 0) {
+      if (board[r][c] !== 0 || !spec) {
         setHoveredRipple(null);
         return;
       }
@@ -161,51 +193,89 @@ export const TentsBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
     [board, spec]
   );
 
-  // 落子與平行宇宙快照留存
-  const applyCell = (r: number, c: number, val: CellState) => {
-    if (board[r][c] === 2 || isCompleted) return;
+  // 落子與平行宇宙快照保存
+  const applyCell = useCallback(
+    (r: number, c: number, val: CellState) => {
+      if (board[r][c] === 2 || isCompleted) return;
 
-    // 儲存決策前快照供 Shift 幽靈對比
-    setGhostSnapshots((prev) => [board.map((row) => [...row]), ...prev.slice(0, 4)]);
+      if (navigator.vibrate) navigator.vibrate(6);
 
-    setBoard((prev) => {
-      const next = prev.map((row) => [...row]);
-      next[r][c] = next[r][c] === val ? 0 : val;
+      // 深拷貝當前快照存入幽靈佇列（最多保留最近 5 個分歧點）
+      setGhostSnapshots((prev) => [board.map((row) => [...row]), ...prev.slice(0, 4)]);
 
-      // 勝利檢查
-      let allTents = 0;
-      for (let i = 0; i < rows; i++) {
-        for (let j = 0; j < cols; j++) {
-          if (next[i][j] === 1) allTents++;
-        }
-      }
-      if (allTents === initialTrees.length && deltaPhi === 0) {
+      setBoard((prev) => {
+        const next = prev.map((row) => [...row]);
+        next[r][c] = next[r][c] === val ? 0 : val;
+
+        let allTents = 0;
         const tentCoords: TentCoord[] = [];
         for (let i = 0; i < rows; i++) {
-          for (let j = 0; j < cols; j++) if (next[i][j] === 1) tentCoords.push({ r: i, c: j });
+          for (let j = 0; j < cols; j++) {
+            if (next[i][j] === 1) {
+              allTents++;
+              tentCoords.push({ r: i, c: j });
+            }
+          }
         }
-        if (WebTentsGenerator.hasUniqueBijectiveMatching(initialTrees, tentCoords, rows, cols)) {
-          setIsCompleted(true);
-          recordAttempt({
-            puzzleId: actualPuzzle.id,
-            engineType: 'tents',
-            tier: (actualPuzzle.tier as TierKey) || 'kids',
-            cognitiveLoad: actualPuzzle.cognitiveLoad || { spatial: 1, numeric: 1, workingMemory: 1, inhibition: 1 },
-            isSuccess: true,
-            timeSpentSec: Math.round((Date.now() - startTimeRef.current) / 1000),
-            conflictsCount: 0,
-            technique: 'HomologicalMatching',
-            isPureClear: true,
-          });
+
+        // 完備性與奇偶閉鎖檢定
+        if (allTents === initialTrees.length && deltaPhi === 0) {
+          if (WebTentsGenerator.hasUniqueBijectiveMatching(initialTrees, tentCoords, rows, cols)) {
+            setIsCompleted(true);
+            if (navigator.vibrate) navigator.vibrate([15, 60, 25]);
+
+            if (actualPuzzle) {
+              recordAttempt({
+                puzzleId: actualPuzzle.id,
+                engineType: 'tents',
+                tier: (actualPuzzle.tier as TierKey) || 'kids',
+                cognitiveLoad: actualPuzzle.cognitiveLoad || { spatial: 1, numeric: 1, workingMemory: 1, inhibition: 1 },
+                isSuccess: true,
+                timeSpentSec: Math.max(1, Math.round((Date.now() - startTimeRef.current) / 1000)),
+                conflictsCount: 0,
+                technique: 'HomologicalMatching',
+                isPureClear: true,
+              });
+            }
+          }
         }
+
+        return next;
+      });
+    },
+    [board, isCompleted, rows, cols, initialTrees, deltaPhi, actualPuzzle, recordAttempt]
+  );
+
+  // Canvas 墨跡塗鴉重繪邏輯
+  const redrawCanvas = useCallback(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = 2.5;
+
+    for (const stroke of strokes) {
+      if (stroke.points.length < 2) continue;
+      ctx.strokeStyle = 'rgba(251, 191, 36, 0.65)';
+      ctx.beginPath();
+      ctx.moveTo(stroke.points[0].x, stroke.points[0].y);
+      for (let i = 1; i < stroke.points.length; i++) {
+        ctx.lineTo(stroke.points[i].x, stroke.points[i].y);
       }
+      ctx.stroke();
+    }
+  }, [strokes]);
 
-      return next;
-    });
-  };
+  useEffect(() => {
+    redrawCanvas();
+  }, [redrawCanvas]);
 
-  // 畫布塗鴉處理
-  const handlePointerDown = (e: React.PointerEvent) => {
+  // 墨跡事件監聽
+  const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (!isAltActive) return;
     isDrawingRef.current = true;
     const rect = canvasRef.current?.getBoundingClientRect();
@@ -213,16 +283,18 @@ export const TentsBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
     currentPointsRef.current = [{ x: e.clientX - rect.left, y: e.clientY - rect.top }];
   };
 
-  const handlePointerMove = (e: React.PointerEvent) => {
+  const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (!isDrawingRef.current || !isAltActive) return;
     const rect = canvasRef.current?.getBoundingClientRect();
     if (!rect) return;
-    currentPointsRef.current.push({ x: e.clientX - rect.left, y: e.clientY - rect.top });
+
+    const pt = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    currentPointsRef.current.push(pt);
 
     const ctx = canvasRef.current?.getContext('2d');
     if (ctx && currentPointsRef.current.length > 1) {
       const len = currentPointsRef.current.length;
-      ctx.strokeStyle = 'rgba(251, 191, 36, 0.75)';
+      ctx.strokeStyle = 'rgba(251, 191, 36, 0.8)';
       ctx.lineWidth = 2.5;
       ctx.lineCap = 'round';
       ctx.beginPath();
@@ -235,14 +307,15 @@ export const TentsBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
   const handlePointerUp = () => {
     if (!isDrawingRef.current) return;
     isDrawingRef.current = false;
+
     if (currentPointsRef.current.length > 1) {
       const newStroke: AnnotationStroke = {
-        id: `st_${Date.now()}`,
+        id: `stroke_${Date.now()}`,
         points: [...currentPointsRef.current],
       };
       setStrokes((prev) => [...prev, newStroke]);
 
-      // 檢測思維心搏（環繞猶豫）
+      // 思維心搏（環繞猶豫度積分）
       const pts = currentPointsRef.current;
       const avgX = pts.reduce((a, b) => a + b.x, 0) / pts.length;
       const avgY = pts.reduce((a, b) => a + b.y, 0) / pts.length;
@@ -255,14 +328,15 @@ export const TentsBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
         const v2x = pts[i].x - avgX, v2y = pts[i].y - avgY;
         angleSweep += Math.atan2(v1x * v2y - v1y * v2x, v1x * v2x + v1y * v2y);
       }
-      if (Math.abs(angleSweep) >= Math.PI * 5) {
+
+      if (Math.abs(angleSweep) >= Math.PI * 4.8 && targetR >= 0 && targetR < rows && targetC >= 0 && targetC < cols) {
         setMindPulseCoord({ r: targetR, c: targetC });
       }
     }
     currentPointsRef.current = [];
   };
 
-  // 滾輪切換平行幽靈快照
+  // 滾輪切換平行宇宙快照
   const handleWheel = (e: React.WheelEvent) => {
     if (!isShiftActive || ghostSnapshots.length === 0) return;
     if (e.deltaY > 0) {
@@ -303,14 +377,14 @@ export const TentsBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
           </span>
         </div>
 
-        <div className="text-[7px] text-neutral-500">
-          {isAltActive ? 'DRAWING' : isCtrlActive ? 'ENTROPY' : isShiftActive ? 'GHOST' : 'STANDBY'}
+        <div className="text-[7px] text-neutral-500 font-bold">
+          {isAltActive ? 'DRAW' : isCtrlActive ? 'ENTROPY' : isShiftActive ? 'GHOST' : 'STANDBY'}
         </div>
       </div>
 
-      {/* 主拓撲網格 */}
+      {/* 主拓撲網格區域 */}
       <div className="relative p-2 border border-neutral-800 bg-neutral-950 rounded-xl shadow-2xl flex flex-col items-center">
-        {/* 上方直行計數 */}
+        {/* 直行配額數字 */}
         <div className="flex pl-8 mb-1">
           {initialColCounts.map((count, c) => (
             <div
@@ -324,7 +398,7 @@ export const TentsBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
         </div>
 
         <div className="flex relative">
-          {/* 左側橫列計數 */}
+          {/* 橫列配額數字 */}
           <div className="flex flex-col justify-around pr-2">
             {initialRowCounts.map((count, r) => (
               <div
@@ -338,7 +412,7 @@ export const TentsBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
           </div>
 
           <div className="relative">
-            {/* 自由墨跡畫布 */}
+            {/* 自由墨跡 Canvas 層 */}
             <canvas
               ref={canvasRef}
               width={cols * (cellSize + 4)}
@@ -389,7 +463,7 @@ export const TentsBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
               />
             )}
 
-            {/* 棋盤實體格子陣列 */}
+            {/* 棋盤格子本體 */}
             <div
               className="grid gap-1 border border-neutral-800 p-1 bg-black rounded"
               style={{
@@ -415,7 +489,7 @@ export const TentsBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
                       }}
                       className={`relative flex items-center justify-center cursor-pointer transition-all duration-100 ${
                         cell === 2
-                          ? 'bg-neutral-900 border border-neutral-800'
+                          ? 'bg-neutral-900 border border-neutral-800 cursor-default'
                           : cell === 1
                           ? 'bg-neutral-950 border border-amber-500 font-bold text-white shadow-[0_0_10px_rgba(245,158,11,0.3)]'
                           : cell === 3
@@ -426,15 +500,15 @@ export const TentsBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
                     >
                       {/* 瞬態對比拉伸光脈衝 */}
                       {isLeap && (
-                        <div className="absolute inset-0 rounded bg-white shadow-[0_0_16px_#ffffff] animate-ping opacity-60 z-10" />
+                        <div className="absolute inset-0 rounded bg-white shadow-[0_0_16px_#ffffff] animate-ping opacity-60 z-10 pointer-events-none" />
                       )}
 
-                      {/* 實體圖元 */}
+                      {/* 圖元符號 */}
                       <span className="text-xs">
                         {cell === 2 ? '🌲' : cell === 1 ? '⛺' : cell === 3 ? '•' : ''}
                       </span>
 
-                      {/* 平行宇宙殘影覆蓋 */}
+                      {/* 平行宇宙殘影 */}
                       {ghostCell !== null && ghostCell !== cell && ghostCell !== 0 && (
                         <span className="absolute text-[9px] text-indigo-400 opacity-60 pointer-events-none">
                           {ghostCell === 1 ? '⛺' : '•'}
@@ -449,7 +523,7 @@ export const TentsBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
         </div>
       </div>
 
-      {/* 底部微縮拓撲雷達與控制 */}
+      {/* 底部微縮拓撲雷達與交互備忘 */}
       <div className="mt-3 flex items-center justify-between w-full max-w-sm px-1">
         <div className="flex gap-2 text-[7.5px] text-neutral-500">
           <span>ALT: DRAW</span>
@@ -457,7 +531,7 @@ export const TentsBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
           <span>SHIFT+WHEEL: GHOST</span>
         </div>
 
-        {/* 微縮雷達像元 */}
+        {/* 微縮雷達矩陣 */}
         <div
           className="grid gap-[1px] bg-neutral-900 border border-neutral-800 p-0.5 rounded"
           style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}
@@ -479,16 +553,22 @@ export const TentsBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
         </div>
       </div>
 
-      {/* 結算純淨認證 */}
+      {/* 勝利結算面板（防空安全渲染） */}
       {isCompleted && (
         <div className="mt-3 p-3 bg-neutral-950 border border-emerald-500/80 rounded-xl text-center max-w-xs shadow-2xl animate-fade-in">
-          <div className="text-emerald-400 font-bold text-xs tracking-widest mb-1">TOPOLOGY COLLAPSED</div>
+          <div className="text-emerald-400 font-bold text-xs tracking-widest mb-1">
+            TOPOLOGY COLLAPSED
+          </div>
           <div className="text-[7.5px] text-neutral-400 mb-2">
-            ZERO-ASSUMPTION PROOF: VERIFIED | WPF KEY: {spec.wpfAnswerKey}
+            ZERO-ASSUMPTION PROOF: VERIFIED | WPF KEY: {spec?.wpfAnswerKey ?? 'N/A'}
           </div>
           <button
-            onClick={() => navigator.clipboard.writeText(spec.wpfAnswerKey)}
-            className="w-full py-1 bg-emerald-600/20 hover:bg-emerald-600/40 text-emerald-300 border border-emerald-500/50 rounded text-[8px] font-bold transition"
+            onClick={() => {
+              if (spec?.wpfAnswerKey) {
+                navigator.clipboard.writeText(spec.wpfAnswerKey);
+              }
+            }}
+            className="w-full py-1 bg-emerald-600/20 hover:bg-emerald-600/40 text-emerald-300 border border-emerald-500/50 rounded text-[8px] font-bold transition active:scale-95"
           >
             COPY WPF CERTIFIED KEY
           </button>
