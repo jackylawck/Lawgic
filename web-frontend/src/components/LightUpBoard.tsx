@@ -8,6 +8,7 @@ import {
   WebLightUpGenerator,
   LightUpStep,
   ExtendedTierKey,
+  DEDUCTION_PRIORITY,
   generateAkariSignature,
 } from '../engines/lightupGenerator';
 import { CognitiveRadarChart } from './CognitiveRadarChart';
@@ -21,6 +22,25 @@ interface Props {
 }
 
 type CellState = 0 | 1 | 2 | 3; // 0: 空白, 1: 燈泡 (💡), 2: 黑塊, 3: 防護點 (•)
+type MobileInputMode = 'light' | 'dot' | 'note';
+
+interface PlayerAction {
+  r: number;
+  c: number;
+  state: CellState;
+  timestamp: number;
+  isPureDeductionAtTime: boolean;
+}
+
+interface BoardSnapshot {
+  board: CellState[][];
+  pencilNotes: boolean[][];
+  playerTrace: PlayerAction[];
+  corrections: number;
+  totalActions: number;
+}
+
+const MAX_HISTORY_LIMIT = 50;
 
 export const LightUpBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode = false }) => {
   const actualPuzzle = puzzleData || puzzle;
@@ -38,7 +58,6 @@ export const LightUpBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMo
   const rows = spec?.rows || 5;
   const cols = spec?.cols || 5;
   const blackBlocks = spec?.blackBlocks || [];
-  const solvingSteps = spec?.solvingSteps || [];
   const tier = (spec?.tier || actualPuzzle?.tier || 'kids') as ExtendedTierKey;
 
   const [board, setBoard] = useState<CellState[][]>(() => {
@@ -51,28 +70,29 @@ export const LightUpBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMo
     Array.from({ length: rows }, () => Array(cols).fill(false))
   );
 
-  const [isCompleted, setIsCompleted] = useState<boolean>(false);
-  const [elapsedMs, setElapsedMs] = useState<number>(0);
-  const [remainingSec, setRemainingSec] = useState<number>(
-    actualPuzzle?.metrics?.estimated_time_sec || 90
-  );
-  const [showPBModal, setShowPBModal] = useState<boolean>(false);
-  const [proofSignature, setProofSignature] = useState<string | null>(null);
-  const [isFav, setIsFav] = useState<boolean>(false);
-
-  const [isNoGuessMode, setIsNoGuessMode] = useState<boolean>(!tournamentMode);
-  const [isNoteMode, setIsNoteMode] = useState<boolean>(false);
-  const [isFocusDarkness, setIsFocusDarkness] = useState<boolean>(false);
-  const [guessWarning, setGuessWarning] = useState<string | null>(null);
-  const [hintLevel, setHintLevel] = useState<number>(0);
-  const [activeHintStep, setActiveHintStep] = useState<LightUpStep | null>(null);
-  const [boardScale, setBoardScale] = useState<number>(1.0);
-
+  const [history, setHistory] = useState<BoardSnapshot[]>([]);
+  const [redoStack, setRedoStack] = useState<BoardSnapshot[]>([]);
+  const [playerTrace, setPlayerTrace] = useState<PlayerAction[]>([]);
   const [totalActions, setTotalActions] = useState<number>(0);
   const [corrections, setCorrections] = useState<number>(0);
 
+  const [mobileMode, setMobileMode] = useState<MobileInputMode>('light');
+
+  const [isCompleted, setIsCompleted] = useState<boolean>(false);
+  const [elapsedMs, setElapsedMs] = useState<number>(0);
+  const [remainingSec, setRemainingSec] = useState<number>(actualPuzzle?.metrics?.estimated_time_sec || 90);
+  const [showPBModal, setShowPBModal] = useState<boolean>(false);
+  const [proofSignature, setProofSignature] = useState<string | null>(null);
+  const [isFav, setIsFav] = useState<boolean>(false);
+  const [isFocusDarkness, setIsFocusDarkness] = useState<boolean>(false);
+
+  const [activeHintStep, setActiveHintStep] = useState<LightUpStep | null>(null);
+  const [hintLevel, setHintLevel] = useState<number>(0);
+  const [cellSizeDelta, setCellSizeDelta] = useState<number>(0);
+
   const startTimeRef = useRef<number>(Date.now());
   const hasRecordedRef = useRef<boolean>(false);
+  const totalLifetimeAttemptsRef = useRef<number>(0);
 
   const timeLimitSec = actualPuzzle?.metrics?.estimated_time_sec || 90;
 
@@ -81,19 +101,22 @@ export const LightUpBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMo
     for (const blk of blackBlocks) b[blk.r][blk.c] = 2;
     setBoard(b);
     setPencilNotes(Array.from({ length: rows }, () => Array(cols).fill(false)));
+    setHistory([]);
+    setRedoStack([]);
+    setPlayerTrace([]);
     setIsCompleted(false);
     setElapsedMs(0);
     setRemainingSec(timeLimitSec);
     setTotalActions(0);
     setCorrections(0);
     setProofSignature(null);
-    setGuessWarning(null);
     setHintLevel(0);
     setActiveHintStep(null);
     setIsFocusDarkness(false);
     setIsFav(VaultManager.isFavorited(actualPuzzle?.id || ''));
     startTimeRef.current = Date.now();
     hasRecordedRef.current = false;
+    totalLifetimeAttemptsRef.current = 0;
   }, [actualPuzzle?.id, rows, cols, timeLimitSec]);
 
   useEffect(() => {
@@ -111,7 +134,6 @@ export const LightUpBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMo
     return () => clearInterval(interval);
   }, [isCompleted, tournamentMode, timeLimitSec]);
 
-  // 雙燈互照衝突檢測 (Beam Collision)
   const lampClashes = useMemo(() => {
     const set = new Set<string>();
     const isBlock = (r: number, c: number) => board[r][c] === 2;
@@ -166,7 +188,10 @@ export const LightUpBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMo
     return map;
   }, [board, blackBlocks, rows, cols]);
 
-  const cellSize = Math.min(300 / Math.max(rows, cols), 42);
+  const baseCellSize = useMemo(() => {
+    const auto = Math.min(320 / Math.max(rows, cols), 44);
+    return Math.max(26, Math.min(56, auto + cellSizeDelta));
+  }, [rows, cols, cellSizeDelta]);
 
   const rayLines = useMemo(() => {
     const lines: { x1: number; y1: number; x2: number; y2: number; isClash: boolean }[] = [];
@@ -176,35 +201,48 @@ export const LightUpBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMo
       for (let c = 0; c < cols; c++) {
         if (board[r][c] === 1) {
           const isClash = lampClashes.has(`${r},${c}`);
-          const cx = c * (cellSize + 4) + cellSize / 2 + 6;
-          const cy = r * (cellSize + 4) + cellSize / 2 + 6;
+          const cx = c * (baseCellSize + 4) + baseCellSize / 2 + 6;
+          const cy = r * (baseCellSize + 4) + baseCellSize / 2 + 6;
 
           let tr = r - 1;
           while (tr >= 0 && !isBlock(tr, c)) tr--;
-          lines.push({ x1: cx, y1: cy, x2: cx, y2: (tr + 1) * (cellSize + 4) + 6, isClash });
+          lines.push({ x1: cx, y1: cy, x2: cx, y2: (tr + 1) * (baseCellSize + 4) + 6, isClash });
 
           let br = r + 1;
           while (br < rows && !isBlock(br, c)) br++;
-          lines.push({ x1: cx, y1: cy, x2: cx, y2: br * (cellSize + 4) + cellSize + 6, isClash });
+          lines.push({ x1: cx, y1: cy, x2: cx, y2: br * (baseCellSize + 4) + baseCellSize + 6, isClash });
 
           let lc = c - 1;
           while (lc >= 0 && !isBlock(r, lc)) lc--;
-          lines.push({ x1: cx, y1: cy, x2: (lc + 1) * (cellSize + 4) + 6, y2: cy, isClash });
+          lines.push({ x1: cx, y1: cy, x2: (lc + 1) * (baseCellSize + 4) + 6, y2: cy, isClash });
 
           let rc = c + 1;
           while (rc < cols && !isBlock(r, rc)) rc++;
-          lines.push({ x1: cx, y1: cy, x2: rc * (cellSize + 4) + cellSize + 6, y2: cy, isClash });
+          lines.push({ x1: cx, y1: cy, x2: rc * (baseCellSize + 4) + baseCellSize + 6, y2: cy, isClash });
         }
       }
     }
     return lines;
-  }, [board, rows, cols, cellSize, lampClashes]);
+  }, [board, rows, cols, baseCellSize, lampClashes]);
 
   const checkVictory = useCallback(
     (curBoard: CellState[][]): boolean => {
       const isBlock = (r: number, c: number) => curBoard[r][c] === 2;
-      const lit: boolean[][] = Array.from({ length: rows }, () => Array(cols).fill(false));
+      const orth = [[-1, 0], [1, 0], [0, -1], [0, 1]];
 
+      for (const blk of blackBlocks) {
+        if (blk.clue !== null && blk.clue !== undefined) {
+          let count = 0;
+          for (const [dr, dc] of orth) {
+            const nr = blk.r + dr;
+            const nc = blk.c + dc;
+            if (nr >= 0 && nr < rows && nc >= 0 && nc < cols && curBoard[nr][nc] === 1) count++;
+          }
+          if (count !== blk.clue) return false;
+        }
+      }
+
+      const lit: boolean[][] = Array.from({ length: rows }, () => Array(cols).fill(false));
       for (let r = 0; r < rows; r++) {
         for (let c = 0; c < cols; c++) {
           if (curBoard[r][c] === 1) {
@@ -223,19 +261,6 @@ export const LightUpBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMo
         }
       }
 
-      for (const blk of blackBlocks) {
-        if (blk.clue !== null && blk.clue !== undefined) {
-          let count = 0;
-          const orth = [[-1, 0], [1, 0], [0, -1], [0, 1]];
-          for (const [dr, dc] of orth) {
-            const nr = blk.r + dr;
-            const nc = blk.c + dc;
-            if (nr >= 0 && nr < rows && nc >= 0 && nc < cols && curBoard[nr][nc] === 1) count++;
-          }
-          if (count !== blk.clue) return false;
-        }
-      }
-
       return true;
     },
     [rows, cols, blackBlocks]
@@ -247,6 +272,8 @@ export const LightUpBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMo
 
     if (!hasRecordedRef.current && actualPuzzle) {
       hasRecordedRef.current = true;
+      const isPure = corrections === 0 && hintLevel === 0;
+
       recordAttempt({
         puzzleId: actualPuzzle.id,
         engineType: 'lightup',
@@ -261,11 +288,11 @@ export const LightUpBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMo
         timeSpentSec: timeSpent,
         conflictsCount: corrections,
         technique: 'RayCastingIlluminance',
-        isPureClear: corrections === 0 && hintLevel === 0,
+        isPureClear: isPure,
       });
 
       const signature = await generateAkariSignature(
-        `AKARI-${actualPuzzle.id}-${timeSpent}-${tier.toUpperCase()}`
+        `WPC-AKARI-${actualPuzzle.id}-${timeSpent}-${tier.toUpperCase()}`
       );
       setProofSignature(signature);
 
@@ -275,100 +302,195 @@ export const LightUpBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMo
     }
   }, [actualPuzzle, corrections, tier, recordAttempt, profile.personalBest.fastestTime, hintLevel]);
 
-  const handleRequestHint = useCallback(() => {
-    if (isCompleted || tournamentMode) return;
+  const pushHistorySnapshot = useCallback(() => {
+    setHistory((prev) => {
+      const nextSnap: BoardSnapshot = {
+        board: board.map((r) => [...r]),
+        pencilNotes: pencilNotes.map((r) => [...r]),
+        playerTrace: [...playerTrace],
+        corrections,
+        totalActions,
+      };
+      const trimmed = prev.length >= MAX_HISTORY_LIMIT ? prev.slice(1) : prev;
+      return [...trimmed, nextSnap];
+    });
+    setRedoStack([]);
+  }, [board, pencilNotes, playerTrace, corrections, totalActions]);
 
-    const deductions = WebLightUpGenerator.getStrictDeductions(rows, cols, blackBlocks, board);
-    if (deductions.size === 0) {
-      setGuessWarning(
-        isEn
-          ? 'Observe corridor ray alignments and parity!'
-          : '請觀察光束走廊的交叉對齊與排他奇偶性！'
-      );
-      setTimeout(() => setGuessWarning(null), 3000);
-      return;
-    }
+  const handleUndo = useCallback(() => {
+    if (history.length === 0 || isCompleted) return;
+    const previous = history[history.length - 1];
 
-    const item = deductions.values().next().value;
-    if (!item) return;
-    const { r, c, state, type, rationale, humanReadable } = item;
+    setRedoStack((prev) => [
+      ...prev,
+      {
+        board: board.map((r) => [...r]),
+        pencilNotes: pencilNotes.map((r) => [...r]),
+        playerTrace: [...playerTrace],
+        corrections,
+        totalActions,
+      },
+    ]);
 
-    if (!activeHintStep || activeHintStep.r !== r || activeHintStep.c !== c) {
-      setActiveHintStep({
-        step: 1,
-        type,
-        r, c, state,
-        rationale,
-        humanReadable,
+    setBoard(previous.board);
+    setPencilNotes(previous.pencilNotes);
+    setPlayerTrace(previous.playerTrace);
+    setCorrections(previous.corrections);
+    setTotalActions(previous.totalActions);
+    setHistory((prev) => prev.slice(0, prev.length - 1));
+
+    if (navigator.vibrate) navigator.vibrate(6);
+  }, [history, board, pencilNotes, playerTrace, corrections, totalActions, isCompleted]);
+
+  const handleRedo = useCallback(() => {
+    if (redoStack.length === 0 || isCompleted) return;
+    const next = redoStack[redoStack.length - 1];
+
+    setHistory((prev) => [
+      ...prev,
+      {
+        board: board.map((r) => [...r]),
+        pencilNotes: pencilNotes.map((r) => [...r]),
+        playerTrace: [...playerTrace],
+        corrections,
+        totalActions,
+      },
+    ]);
+
+    setBoard(next.board);
+    setPencilNotes(next.pencilNotes);
+    setPlayerTrace(next.playerTrace);
+    setCorrections(next.corrections);
+    setTotalActions(next.totalActions);
+    setRedoStack((prev) => prev.slice(0, prev.length - 1));
+
+    if (navigator.vibrate) navigator.vibrate(6);
+  }, [redoStack, board, pencilNotes, playerTrace, corrections, totalActions, isCompleted]);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+        e.preventDefault();
+        if (e.shiftKey) handleRedo();
+        else handleUndo();
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') {
+        e.preventDefault();
+        handleRedo();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [handleUndo, handleRedo]);
+
+  const applyCellMutation = useCallback(
+    (r: number, c: number, targetType: 'light' | 'dot') => {
+      if (isCompleted || board[r][c] === 2) return;
+
+      pushHistorySnapshot();
+      totalLifetimeAttemptsRef.current += 1;
+      setTotalActions((prev) => prev + 1);
+
+      const deductions = WebLightUpGenerator.getStrictDeductions(rows, cols, blackBlocks, board);
+      const isPureAtTime = deductions.has(`${r},${c}`);
+
+      setBoard((prev) => {
+        const next = prev.map((row) => [...row]);
+        const cur = next[r][c];
+
+        let resultingState: CellState = cur;
+        if (targetType === 'light') {
+          if (cur === 1) {
+            resultingState = 0;
+            setCorrections((cp) => cp + 1);
+          } else {
+            resultingState = 1;
+          }
+        } else if (targetType === 'dot') {
+          resultingState = cur === 3 ? 0 : 3;
+        }
+
+        next[r][c] = resultingState;
+
+        setPlayerTrace((t) => [
+          ...t,
+          {
+            r,
+            c,
+            state: resultingState,
+            timestamp: Date.now() - startTimeRef.current,
+            isPureDeductionAtTime: isPureAtTime,
+          },
+        ]);
+
+        if (checkVictory(next)) triggerVictory();
+        return next;
       });
-      setHintLevel(1);
-    } else {
-      setHintLevel((prev) => Math.min(3, prev + 1));
-    }
-  }, [isCompleted, tournamentMode, rows, cols, blackBlocks, board, isEn, activeHintStep]);
 
-  const toggleCell = (r: number, c: number) => {
-    if (isCompleted || board[r][c] === 2) return;
+      if (pencilNotes[r][c]) {
+        setPencilNotes((prev) => {
+          const next = prev.map((row) => [...row]);
+          next[r][c] = false;
+          return next;
+        });
+      }
 
-    setTotalActions((prev) => prev + 1);
+      if (navigator.vibrate) navigator.vibrate(8);
+    },
+    [isCompleted, board, pushHistorySnapshot, rows, cols, blackBlocks, pencilNotes, checkVictory, triggerVictory]
+  );
 
-    if (isNoteMode) {
+  const handleCellClick = (r: number, c: number) => {
+    if (mobileMode === 'note') {
       if (board[r][c] === 0) {
         setPencilNotes((prev) => {
           const next = prev.map((row) => [...row]);
           next[r][c] = !next[r][c];
           return next;
         });
-        if (navigator.vibrate) navigator.vibrate(5);
+        if (navigator.vibrate) navigator.vibrate(4);
       }
       return;
     }
+    applyCellMutation(r, c, mobileMode);
+  };
 
-    if (pencilNotes[r][c]) {
-      setPencilNotes((prev) => {
-        const next = prev.map((row) => [...row]);
-        next[r][c] = false;
-        return next;
-      });
+  const handleCellContextMenu = (e: React.MouseEvent, r: number, c: number) => {
+    e.preventDefault();
+    applyCellMutation(r, c, 'dot');
+  };
+
+  const handleRequestHint = useCallback(() => {
+    if (isCompleted || tournamentMode) return;
+
+    const deductions = WebLightUpGenerator.getStrictDeductions(rows, cols, blackBlocks, board);
+    if (deductions.size === 0) return;
+
+    const candidates = Array.from(deductions.values());
+
+    const recentActions = playerTrace.slice(-3);
+    let centroidR = rows / 2;
+    let centroidC = cols / 2;
+
+    if (recentActions.length > 0) {
+      centroidR = recentActions.reduce((acc, a) => acc + a.r, 0) / recentActions.length;
+      centroidC = recentActions.reduce((acc, a) => acc + a.c, 0) / recentActions.length;
     }
 
-    const isHintExempt = activeHintStep && activeHintStep.r === r && activeHintStep.c === c;
+    candidates.sort((a, b) => {
+      const priorityA = DEDUCTION_PRIORITY[a.type] ?? 0;
+      const priorityB = DEDUCTION_PRIORITY[b.type] ?? 0;
+      const distA = Math.hypot(a.r - centroidR, a.c - centroidC);
+      const distB = Math.hypot(b.r - centroidR, b.c - centroidC);
 
-    if (isNoGuessMode && !tournamentMode && board[r][c] === 0 && !isHintExempt) {
-      const deductions = WebLightUpGenerator.getStrictDeductions(rows, cols, blackBlocks, board);
-      const deduction = deductions.get(`${r},${c}`);
+      const scoreA = priorityA * 10 - distA;
+      const scoreB = priorityB * 10 - distB;
 
-      if (!deduction) {
-        setGuessWarning(
-          isEn
-            ? '🤔 Not a forced deduction yet! Check black clues or beam coverage first.'
-            : '🤔 這格還不是必然定式喔！先觀察線索黑塊或射線交叉吧。'
-        );
-        setTimeout(() => setGuessWarning(null), 3000);
-        return;
-      }
-    }
-
-    setGuessWarning(null);
-    setHintLevel(0);
-    setActiveHintStep(null);
-
-    setBoard((prev) => {
-      const next = prev.map((row) => [...row]);
-      const cur = next[r][c];
-
-      if (cur === 1) setCorrections((cPrev) => cPrev + 1);
-
-      if (cur === 0) next[r][c] = 1;
-      else if (cur === 1) next[r][c] = 3;
-      else next[r][c] = 0;
-
-      if (checkVictory(next)) triggerVictory();
-      return next;
+      return scoreB - scoreA;
     });
 
-    if (navigator.vibrate) navigator.vibrate(8);
-  };
+    setActiveHintStep(candidates[0]);
+    setHintLevel((prev) => Math.min(3, prev + 1));
+  }, [isCompleted, tournamentMode, rows, cols, blackBlocks, board, playerTrace]);
 
   const handleToggleFavorite = () => {
     if (!actualPuzzle) return;
@@ -387,43 +509,50 @@ export const LightUpBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMo
   const cci = useMemo(() => getCompositeCognitiveIndex(), [getCompositeCognitiveIndex, isCompleted]);
   const sci = useMemo(() => getSpatialCompositeIndex(), [getSpatialCompositeIndex, isCompleted]);
 
+  const playerPureRate = useMemo(() => {
+    if (playerTrace.length === 0) return 100;
+    const pureActions = playerTrace.filter((a) => a.isPureDeductionAtTime).length;
+    return Math.round((pureActions / playerTrace.length) * 100);
+  }, [playerTrace]);
+
+  const certificationTier = useMemo(() => {
+    const lifetimeAttempts = totalLifetimeAttemptsRef.current;
+    const unforcedCount = playerTrace.filter((a) => !a.isPureDeductionAtTime).length;
+    const hasUsedUndo = lifetimeAttempts > totalActions;
+
+    if (!hasUsedUndo && unforcedCount <= 1 && corrections === 0 && hintLevel === 0) {
+      return {
+        rank: 'PLATINUM',
+        tag: isEn ? 'WPC Grandmaster: Pure Mental Deduction' : 'WPC 特級大師：純腦內無試錯演繹',
+        color: 'text-amber-300 border-amber-400 bg-amber-950/70 shadow-[0_0_12px_rgba(251,191,36,0.4)]',
+        desc: isEn ? 'Flawless linear solution without physical trial & error.' : '完美線性通關，無任何實體撤回與探索試錯。',
+      };
+    }
+
+    if (corrections === 0 && unforcedCount <= 3) {
+      return {
+        rank: 'GOLD',
+        tag: isEn ? 'WPC Master: Sandbox Reductio' : 'WPC 大師級：受控沙盤演繹',
+        color: 'text-cyan-300 border-cyan-400 bg-cyan-950/70',
+        desc: isEn ? 'Zero permanent conflicts with controlled board explorations.' : '零殘留衝突，包含合理的盤面假設與推演收斂。',
+      };
+    }
+
+    return {
+      rank: 'SILVER',
+      tag: isEn ? 'WPC Standard Clear' : 'WPC 競技常規通關',
+      color: 'text-slate-300 border-slate-600 bg-slate-900',
+      desc: isEn ? 'Valid solution verified under tournament rules.' : '符合規則的合法解答完成。',
+    };
+  }, [playerTrace, corrections, totalActions, hintLevel, isEn]);
+
   const eleganceIndex = useMemo(() => {
     if (totalActions === 0) return 100;
     return Math.max(0, Math.round(((totalActions - corrections * 1.5) / totalActions) * 100));
   }, [totalActions, corrections]);
 
-  const techniqueCounts = useMemo(() => {
-    const counts: Record<string, number> = {
-      zero: 0,
-      saturated: 0,
-      forced: 0,
-      xor: 0,
-      diagonal: 0,
-      isolated: 0,
-    };
-    for (const s of solvingSteps) {
-      if (s.type === 'zero_black_cross') counts.zero++;
-      else if (s.type === 'clue_saturated_dot') counts.saturated++;
-      else if (s.type === 'clue_forced_light') counts.forced++;
-      else if (s.type === 'adjacent_clue_xor') counts.xor++;
-      else if (s.type === 'diagonal_exclusion') counts.diagonal++;
-      else if (s.type === 'isolated_illuminance') counts.isolated++;
-    }
-    return counts;
-  }, [solvingSteps]);
-
-  const deductionStats = useMemo(() => {
-    const blockCount = solvingSteps.filter((s) => s.type.includes('clue') || s.type.includes('zero') || s.type.includes('diagonal')).length;
-    const rayCount = solvingSteps.filter((s) => s.type === 'isolated_illuminance' || s.type === 'ray_no_clash').length;
-    const total = blockCount + rayCount || 1;
-    const blockPercent = Math.round((blockCount / total) * 100);
-    const rayPercent = 100 - blockPercent;
-    return { blockCount, rayCount, blockPercent, rayPercent };
-  }, [solvingSteps]);
-
   return (
     <div className="flex flex-col items-center justify-center p-2 select-none font-mono">
-      {/* 頂部數據列 */}
       <div className="w-full grid grid-cols-3 gap-1 mb-1.5 text-[9px]">
         <div className="bg-slate-950 border border-slate-800 p-1.5 rounded text-center">
           <div className="text-slate-500 text-[7px]">
@@ -449,12 +578,11 @@ export const LightUpBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMo
         </div>
       </div>
 
-      {/* 難度階梯、傳奇收藏與縮放控制列 */}
       <div className="w-full flex items-center justify-between px-1 mb-1.5">
         <div className="flex items-center gap-1.5">
           {tournamentMode ? (
             <span className="px-2 py-0.5 rounded-full bg-amber-950 border border-amber-500 text-amber-300 text-[7.5px] font-extrabold flex items-center gap-1">
-              🏆 {isEn ? 'WPF Tournament Mode' : 'WPF 賽事鎖定'}
+              🏆 {isEn ? 'WPC Tournament' : 'WPC 錦標賽'}
             </span>
           ) : (
             <button
@@ -463,21 +591,17 @@ export const LightUpBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMo
                 isFav ? 'bg-amber-950 border-amber-500 text-amber-300' : 'bg-slate-900 border-slate-800 text-slate-500'
               }`}
             >
-              {isFav ? (isEn ? '★ Vault' : '★ 傳奇') : (isEn ? '☆ Star' : '☆ 收藏')}
+              {isFav ? (isEn ? '★ Vault' : '★ 收藏') : (isEn ? '☆ Star' : '☆ 標星')}
             </button>
           )}
 
           {tier === 'ultimate' ? (
-            <span className="px-2 py-0.5 rounded-full bg-purple-950 border border-purple-500 text-purple-300 text-[7.5px] font-extrabold flex items-center gap-1">
-              ⚡ {isEn ? 'Ultimate 10×10' : '極限級 10×10'}
+            <span className="px-2 py-0.5 rounded-full bg-purple-950 border border-purple-500 text-purple-300 text-[7.5px] font-extrabold">
+              ⚡ 10×10
             </span>
           ) : tier === 'legendary' ? (
-            <span className="px-2 py-0.5 rounded-full bg-rose-950/80 border border-rose-500 text-rose-300 text-[7.5px] font-extrabold flex items-center gap-1 shadow-[0_0_8px_rgba(244,63,94,0.3)]">
-              👑 {isEn ? 'Legendary 9×9' : '傳奇級 9×9'}
-            </span>
-          ) : spec?.isSymmetric180 ? (
-            <span className="px-2 py-0.5 rounded-full bg-indigo-950/70 border border-indigo-500/40 text-indigo-300 text-[7.5px] font-bold flex items-center gap-1 shadow-[0_0_8px_rgba(99,102,241,0.2)]">
-              ✨ {isEn ? '180° Balanced' : '180° 對稱'}
+            <span className="px-2 py-0.5 rounded-full bg-rose-950/80 border border-rose-500 text-rose-300 text-[7.5px] font-extrabold">
+              👑 9×9
             </span>
           ) : null}
 
@@ -489,53 +613,56 @@ export const LightUpBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMo
                 : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200'
             }`}
           >
-            🌑 {isEn ? 'Dark Focus' : '聚焦暗區'}
+            🌑 {isEn ? 'Blindspots' : '盲區凸顯'}
           </button>
         </div>
 
         <div className="flex items-center gap-1">
           <button
-            onClick={() => setBoardScale((s) => Math.max(0.75, Number((s - 0.05).toFixed(2))))}
-            className="w-5 h-5 rounded bg-slate-900 border border-slate-800 text-slate-400 hover:text-slate-200 text-xs flex items-center justify-center active:scale-95 cursor-pointer"
-            title={isEn ? 'Zoom Out' : '縮小'}
+            onClick={handleUndo}
+            disabled={history.length === 0}
+            className="px-2 py-0.5 rounded bg-slate-900 border border-slate-800 text-slate-300 hover:text-white disabled:opacity-30 text-[8px] cursor-pointer"
+            title="Undo (Ctrl+Z)"
+          >
+            ↩
+          </button>
+          <button
+            onClick={handleRedo}
+            disabled={redoStack.length === 0}
+            className="px-2 py-0.5 rounded bg-slate-900 border border-slate-800 text-slate-300 hover:text-white disabled:opacity-30 text-[8px] cursor-pointer"
+            title="Redo (Ctrl+Y)"
+          >
+            ↪
+          </button>
+          <div className="w-[1px] h-3 bg-slate-800 mx-0.5" />
+          <button
+            onClick={() => setCellSizeDelta((d) => Math.max(-10, d - 2))}
+            className="w-5 h-5 rounded bg-slate-900 border border-slate-800 text-slate-400 hover:text-slate-200 text-xs flex items-center justify-center cursor-pointer"
           >
             -
           </button>
-          <span className="text-[7.5px] text-slate-500 font-mono w-7 text-center">
-            {Math.round(boardScale * 100)}%
-          </span>
           <button
-            onClick={() => setBoardScale((s) => Math.min(1.25, Number((s + 0.05).toFixed(2))))}
-            className="w-5 h-5 rounded bg-slate-900 border border-slate-800 text-slate-400 hover:text-slate-200 text-xs flex items-center justify-center active:scale-95 cursor-pointer"
-            title={isEn ? 'Zoom In' : '放大'}
+            onClick={() => setCellSizeDelta((d) => Math.min(14, d + 2))}
+            className="w-5 h-5 rounded bg-slate-900 border border-slate-800 text-slate-400 hover:text-slate-200 text-xs flex items-center justify-center cursor-pointer"
           >
             +
           </button>
         </div>
       </div>
 
-      {/* 盤面主畫布 */}
-      <div
-        className="relative p-3 bg-slate-950 border-2 border-slate-800 rounded-xl shadow-2xl transition-transform duration-150 flex flex-col items-center"
-        style={{ transform: `scale(${boardScale})`, transformOrigin: 'top center' }}
-      >
+      <div className="relative p-3 bg-slate-950 border-2 border-slate-800 rounded-xl shadow-2xl flex flex-col items-center">
         <div className="relative">
-          {/* SVG 漸層射線 */}
           <svg
             className="absolute inset-0 pointer-events-none z-10"
             style={{
-              width: cols * (cellSize + 4) + 8,
-              height: rows * (cellSize + 4) + 8,
+              width: cols * (baseCellSize + 4) + 8,
+              height: rows * (baseCellSize + 4) + 8,
             }}
           >
             <defs>
               <linearGradient id="rayGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-                <stop offset="0%" stopColor="#f59e0b" stopOpacity="0.6" />
+                <stop offset="0%" stopColor="#f59e0b" stopOpacity="0.5" />
                 <stop offset="100%" stopColor="#fbbf24" stopOpacity="0.15" />
-              </linearGradient>
-              <linearGradient id="rayClashGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-                <stop offset="0%" stopColor="#ef4444" stopOpacity="0.8" />
-                <stop offset="100%" stopColor="#f87171" stopOpacity="0.4" />
               </linearGradient>
             </defs>
             {rayLines.map((line, idx) => (
@@ -545,19 +672,18 @@ export const LightUpBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMo
                 y1={line.y1}
                 x2={line.x2}
                 y2={line.y2}
-                stroke={line.isClash ? 'url(#rayClashGradient)' : 'url(#rayGradient)'}
-                strokeWidth={line.isClash ? '4' : '3'}
-                strokeDasharray={line.isClash ? '3 2' : '5 3'}
-                className={line.isClash ? 'animate-bounce' : 'animate-pulse'}
+                stroke={line.isClash ? '#ef4444' : 'url(#rayGradient)'}
+                strokeWidth={line.isClash ? '2' : '2.5'}
+                strokeDasharray={line.isClash ? '4 2' : '5 3'}
+                strokeOpacity={line.isClash ? 0.9 : 0.8}
               />
             ))}
           </svg>
 
-          {/* 網格 */}
           <div
             className="grid gap-1 bg-slate-900/90 p-1.5 rounded-lg border border-slate-800"
             style={{
-              gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`
+              gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
             }}
           >
             {board.map((row, r) =>
@@ -569,36 +695,36 @@ export const LightUpBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMo
                 const blockInfo = blackBlocks.find((b) => b.r === r && b.c === c);
                 const blockStatus = blockStatusMap.get(cellKey);
                 const hasPencilX = pencilNotes[r][c];
-
-                const isDimmed = isFocusDarkness && cell !== 2 && isLit && cell !== 1;
+                const isSuppressedByDarkFocus = isFocusDarkness && cell === 0 && isLit;
 
                 return (
                   <div
                     key={cellKey}
-                    onClick={() => toggleCell(r, c)}
-                    className={`relative flex items-center justify-center rounded-md font-black transition select-none ${
+                    onClick={() => handleCellClick(r, c)}
+                    onContextMenu={(e) => handleCellContextMenu(e, r, c)}
+                    className={`relative flex items-center justify-center rounded-md font-black select-none transition-colors ${
                       isHintTarget && hintLevel >= 1
-                        ? 'bg-amber-500/40 ring-2 ring-amber-400 animate-pulse z-20'
+                        ? 'bg-amber-500/40 ring-2 ring-amber-400 z-20'
                         : cell === 2
                         ? blockStatus?.state === 'exact'
-                          ? 'bg-slate-950 border-2 border-emerald-500 text-emerald-400 shadow-[0_0_8px_rgba(16,185,129,0.4)] z-20 cursor-default'
+                          ? 'bg-slate-950 border border-emerald-500/60 text-emerald-400 z-20 cursor-default'
                           : blockStatus?.state === 'over'
-                          ? 'bg-slate-950 border-2 border-rose-500 text-rose-400 shadow-[0_0_8px_rgba(244,63,94,0.4)] z-20 cursor-default'
-                          : 'bg-slate-950 border border-slate-700 text-slate-200 cursor-default shadow-inner z-20'
+                          ? 'bg-slate-950 border border-rose-500 text-rose-400 z-20 cursor-default'
+                          : 'bg-slate-950 border border-slate-700 text-slate-200 cursor-default z-20'
                         : isClash
-                        ? 'bg-rose-600 text-white ring-4 ring-rose-500 shadow-[0_0_16px_rgba(239,68,68,0.9)] z-20 cursor-pointer animate-pulse'
+                        ? 'bg-rose-950 border border-rose-500 text-rose-200 z-20 cursor-pointer'
                         : cell === 1
-                        ? 'bg-amber-400/90 text-amber-950 shadow-[0_0_14px_rgba(251,191,36,0.9)] z-20 cursor-pointer'
-                        : isDimmed
-                        ? 'bg-slate-950/40 border border-slate-900/40 opacity-30 cursor-pointer'
+                        ? 'bg-amber-400 text-amber-950 shadow-[0_0_12px_rgba(251,191,36,0.6)] z-20 cursor-pointer'
+                        : isSuppressedByDarkFocus
+                        ? 'bg-slate-950/30 border border-slate-900/30 opacity-20 cursor-pointer'
                         : isLit
-                        ? 'bg-amber-300/20 border border-amber-500/30 cursor-pointer'
-                        : 'bg-slate-950/90 hover:bg-slate-900 border border-amber-500/30 cursor-pointer'
+                        ? 'bg-amber-300/15 border border-amber-500/20 cursor-pointer'
+                        : 'bg-slate-950 hover:bg-slate-900 border border-slate-800 cursor-pointer'
                     }`}
                     style={{
-                      width: cellSize,
-                      height: cellSize,
-                      fontSize: cellSize < 36 ? '12px' : '15px',
+                      width: baseCellSize,
+                      height: baseCellSize,
+                      fontSize: baseCellSize < 34 ? '11px' : '14px',
                     }}
                   >
                     {cell === 2 && blockInfo?.clue !== null && blockInfo?.clue !== undefined && (
@@ -616,7 +742,7 @@ export const LightUpBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMo
                     )}
 
                     {cell === 1 && '💡'}
-                    {cell === 3 && <span className="w-1.5 h-1.5 rounded-full bg-slate-400/80" />}
+                    {cell === 3 && <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />}
                     {cell === 0 && hasPencilX && (
                       <span className="text-[10px] text-slate-500 font-bold leading-none select-none">✕</span>
                     )}
@@ -628,161 +754,118 @@ export const LightUpBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMo
         </div>
       </div>
 
-      {/* 3 階提示階梯訊息卡片 */}
       {!tournamentMode && hintLevel > 0 && activeHintStep && (
         <div className="mt-2.5 p-2 bg-amber-950/70 border border-amber-500/60 rounded-lg text-[8px] text-amber-200 text-center max-w-xs animate-fade-in">
           <div className="font-bold flex items-center justify-center gap-1 mb-0.5">
-            <span>💡 {isEn ? 'Hint Ladder' : '因果思考提示'}</span>
+            <span>💡 {isEn ? 'Spatial Hot-Zone Hint' : '空間熱區感應提示'}</span>
             <span className="text-amber-400">Level {hintLevel}/3</span>
           </div>
           {hintLevel === 1 && (
             <div>
               {isEn
-                ? `Focus on Cell (${activeHintStep.r + 1}, ${activeHintStep.c + 1}). Check adjacent clue or unlit corridor!`
-                : `請觀察座標格 (${activeHintStep.r + 1}, ${activeHintStep.c + 1}) 與周圍黑塊或未照亮走廊！`}
+                ? `Focus on Cell (${activeHintStep.r + 1}, ${activeHintStep.c + 1}) within current corridor!`
+                : `請注視目前熱區走廊中的座標格 (${activeHintStep.r + 1}, ${activeHintStep.c + 1})！`}
             </div>
           )}
           {hintLevel === 2 && <div>{activeHintStep.humanReadable[isEn ? 'en' : 'zh']}</div>}
           {hintLevel === 3 && (
             <div className="text-amber-300 font-bold">
               {isEn
-                ? `Decisive deduction: Must place a ${activeHintStep.state === 1 ? 'Light 💡' : 'Dot •'}!`
-                : `射線唯一收斂：此格必然為「${activeHintStep.state === 1 ? '燈泡 💡' : '防護點 •'}」，請親手點入！`}
+                ? `Definitive Step: Place ${activeHintStep.state === 1 ? 'Light 💡' : 'Dot •'}!`
+                : `定式收斂：此處必然為「${activeHintStep.state === 1 ? '燈泡 💡' : '防護點 •'}」！`}
             </div>
           )}
         </div>
       )}
 
-      {/* 無猜測模式警告浮動條 */}
-      {guessWarning && (
-        <div className="mt-2 px-3 py-1 bg-amber-950/90 border border-amber-500/70 text-amber-300 text-[8px] rounded-lg animate-bounce text-center max-w-xs font-bold">
-          {guessWarning}
-        </div>
-      )}
-
-      {/* 控制列 */}
-      <div className="flex items-center justify-between w-full max-w-xs mt-2 px-1">
-        <div className="flex gap-1.5">
-          {!tournamentMode && (
-            <button
-              onClick={() => setIsNoGuessMode((prev) => !prev)}
-              className={`px-2 py-1 text-[8px] font-bold rounded-md border transition cursor-pointer ${
-                isNoGuessMode
-                  ? 'bg-emerald-500/20 border-emerald-400 text-emerald-300 shadow-[0_0_8px_rgba(16,185,129,0.3)]'
-                  : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              🧠 {isEn ? `No-Guess: ${isNoGuessMode ? 'ON' : 'OFF'}` : `無猜測 ${isNoGuessMode ? 'ON' : 'OFF'}`}
-            </button>
-          )}
-
+      <div className="w-full max-w-xs mt-2 px-1 flex flex-col gap-1.5">
+        <div className="grid grid-cols-3 gap-1 bg-slate-950 p-1 border border-slate-800 rounded-lg">
           <button
-            onClick={() => setIsNoteMode((prev) => !prev)}
-            className={`px-2 py-1 text-[8px] font-bold rounded-md border transition cursor-pointer ${
-              isNoteMode
-                ? 'bg-cyan-500/20 border-cyan-400 text-cyan-300 shadow-[0_0_8px_rgba(6,182,212,0.3)]'
-                : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
+            onClick={() => setMobileMode('light')}
+            className={`py-1 text-[8px] font-bold rounded transition cursor-pointer flex items-center justify-center gap-1 ${
+              mobileMode === 'light'
+                ? 'bg-amber-400 text-slate-950 shadow-[0_0_8px_rgba(251,191,36,0.6)]'
+                : 'text-slate-400 hover:text-slate-200'
             }`}
           >
-            ✏️ {isEn ? `Notes ✕: ${isNoteMode ? 'ON' : 'OFF'}` : `草稿 ✕ ${isNoteMode ? 'ON' : 'OFF'}`}
+            💡 {isEn ? 'Light' : '燈泡'}
           </button>
+          <button
+            onClick={() => setMobileMode('dot')}
+            className={`py-1 text-[8px] font-bold rounded transition cursor-pointer flex items-center justify-center gap-1 ${
+              mobileMode === 'dot'
+                ? 'bg-slate-200 text-slate-950 shadow-[0_0_8px_rgba(255,255,255,0.4)]'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            • {isEn ? 'Dot' : '防護點'}
+          </button>
+          <button
+            onClick={() => setMobileMode('note')}
+            className={`py-1 text-[8px] font-bold rounded transition cursor-pointer flex items-center justify-center gap-1 ${
+              mobileMode === 'note'
+                ? 'bg-cyan-400 text-slate-950 shadow-[0_0_8px_rgba(6,182,212,0.6)]'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            ✕ {isEn ? 'Note' : '草稿'}
+          </button>
+        </div>
 
+        <div className="flex items-center justify-between text-[7px] text-slate-500 px-1">
+          <span>{isEn ? 'Desktop: L-Click 💡 | R-Click •' : '桌面端：左鍵 💡 | 右鍵 •'}</span>
           {!tournamentMode && (
             <button
               onClick={handleRequestHint}
-              className="px-2 py-1 text-[8px] font-bold rounded-md border bg-slate-900 border-amber-500/50 text-amber-300 hover:bg-amber-950/40 transition flex items-center gap-0.5 cursor-pointer"
+              className="text-amber-400 hover:text-amber-300 font-bold cursor-pointer"
             >
-              💡 {isEn ? 'Hint' : '提示'}
+              💡 {isEn ? 'Request Coach Hint' : '請求教練提示'}
             </button>
           )}
         </div>
-        <span className="text-[7px] text-slate-400">
-          {isNoteMode
-            ? (isEn ? 'Click to mark ✕' : '點擊標記草稿 ✕')
-            : (isEn ? 'Light ➔ Dot ➔ Clear' : '燈泡 ➔ 防護 ➔ 清空')}
-        </span>
       </div>
 
-      {/* 結算面板 */}
       {isCompleted && (
         <div className="mt-3 p-3 bg-slate-950/95 border border-amber-500/60 rounded-xl text-center w-full max-w-xs shadow-2xl animate-fade-in font-mono">
           <div className="text-amber-300 font-bold text-xs mb-0.5">✨ MUSEUM ILLUMINATED</div>
-          {tier === 'ultimate' && (
-            <div className="text-[8px] text-purple-400 font-extrabold mb-0.5">
-              ⚡ {isEn ? 'ULTIMATE 10×10 CONQUERED' : '極限級 10×10 完美通關'}
-            </div>
-          )}
-          {tier === 'legendary' && (
-            <div className="text-[8px] text-rose-400 font-extrabold mb-0.5">
-              👑 {isEn ? 'LEGENDARY 9×9 CONQUERED' : '傳奇級 9×9 完美通關'}
-            </div>
-          )}
-          {isNoGuessMode && (
-            <div className="text-[8px] text-amber-400 font-bold mb-1">
-              🏆 {isEn ? 'Pure Ray Casting Mastery (Zero Guessing)' : '傳奇純射線覆蓋（零猜測認證）'}
-            </div>
-          )}
           <div className="text-[9px] text-slate-400 mb-2">
             {isEn ? 'Time' : '耗時'}: {(elapsedMs / 1000).toFixed(2)}s | Gf: IQ {cci.standardIQ} | {isEn ? 'Spatial Scale' : '空間量尺'}: {sci.standardScore}/19
           </div>
 
-          {/* 定式推理診斷清單 */}
-          <div className="bg-slate-900/80 border border-slate-800 p-2 rounded-lg mb-2 text-left text-[7px]">
-            <div className="text-amber-300 font-bold mb-1">
-              🔬 {isEn ? 'Deduction Pattern Breakdown' : '因果定式診斷清單'}
+          <div className={`py-1.5 px-2.5 border rounded-lg mb-2 text-left transition-all ${certificationTier.color}`}>
+            <div className="flex items-center justify-between font-bold text-[8px] mb-0.5">
+              <span>🏆 {certificationTier.tag}</span>
+              <span className="text-[7px] opacity-80">{certificationTier.rank}</span>
             </div>
-            <div className="grid grid-cols-2 gap-1 text-slate-300">
-              <div>⬛ {isEn ? '0-Exclusion' : '0 禁絕定式'}: {techniqueCounts.zero} {isEn ? 'steps' : '次'}</div>
-              <div>📐 {isEn ? 'Forced Lights' : '缺額必放定式'}: {techniqueCounts.forced} {isEn ? 'steps' : '次'}</div>
-              <div>🔒 {isEn ? 'Saturated Dots' : '滿額防護定式'}: {techniqueCounts.saturated} {isEn ? 'steps' : '次'}</div>
-              <div>⚡ {isEn ? '1-2 XOR Compound' : '1-2 XOR 複合'}: {techniqueCounts.xor} {isEn ? 'steps' : '次'}</div>
-              <div>🔀 {isEn ? 'Diagonal Exclusion' : '對角互斥定式'}: {techniqueCounts.diagonal} {isEn ? 'steps' : '次'}</div>
-              <div>🔦 {isEn ? 'Isolated Ray Converge' : '孤立光源收斂'}: {techniqueCounts.isolated} {isEn ? 'steps' : '次'}</div>
+            <div className="text-[6.5px] opacity-90 leading-tight">
+              {certificationTier.desc}
+            </div>
+            <div className="mt-1 pt-1 border-t border-white/10 flex justify-between text-[6px] opacity-75">
+              <span>{isEn ? 'Lifetime Actions' : '生涯累計動作'}: {totalLifetimeAttemptsRef.current}</span>
+              <span>{isEn ? 'Net Linear Steps' : '最終有效步數'}: {totalActions}</span>
             </div>
           </div>
 
-          {/* 空間推理綜合指數 (SCI) 卡片 */}
+          <div className="bg-slate-900/80 border border-slate-800 p-2 rounded-lg mb-2 text-left text-[7px]">
+            <div className="text-amber-300 font-bold mb-1 flex justify-between">
+              <span>🔬 {isEn ? 'Player Action Audit' : '選手實操演繹審計'}</span>
+              <span className="text-cyan-300">{playerPureRate}% {isEn ? 'Pure Logic' : '純演繹率'}</span>
+            </div>
+            <div className="text-slate-300 space-y-0.5">
+              <div>有效推導步數：{totalActions} 步 | 回退/修正次數：{corrections} 次</div>
+              <div>解題流暢度：{corrections === 0 ? '✨ 完美零回退推演' : `回退率 ${Math.round((corrections / totalActions) * 100)}%`}</div>
+            </div>
+          </div>
+
           <div className="bg-slate-900/90 border border-cyan-800/80 p-2 rounded-lg mb-2 text-left text-[7.5px]">
             <div className="text-cyan-300 font-bold mb-1 flex justify-between">
-              <span>🧭 {isEn ? 'Spatial Composite Index (SCI)' : '空間綜合能力指數 (SCI)'}</span>
+              <span>🧭 {isEn ? 'Spatial Composite Index' : '空間綜合能力指數 (SCI)'}</span>
               <span className="text-emerald-400">PR {sci.spatialPercentile}%</span>
             </div>
             <div className="grid grid-cols-3 gap-1 text-center py-1 bg-slate-950/80 rounded mb-1 text-[7px]">
               <div>{isEn ? 'Loop Control' : '迴路控制'}: <strong className="text-cyan-300">{sci.eulerianLoopControl}</strong></div>
-              <div>{isEn ? 'Planar Partition' : '黑海分割'}: <strong className="text-cyan-300">{sci.planarPartitioning}</strong></div>
+              <div>{isEn ? 'Partition' : '黑海分割'}: <strong className="text-cyan-300">{sci.planarPartitioning}</strong></div>
               <div>{isEn ? 'Ray Casting' : '射線投射'}: <strong className="text-amber-300">{sci.rayTracingControl}</strong></div>
-            </div>
-            <div className="text-[6.5px] text-slate-400 mt-1">
-              💡 {sci.recommendedDrill}
-            </div>
-          </div>
-
-          {/* 思維風格進度條 */}
-          <div className="bg-slate-900/60 border border-slate-800 p-2 rounded-lg mb-2 text-left">
-            <div className="text-[8px] text-indigo-300 font-bold mb-1 flex justify-between">
-              <span>💡 {isEn ? 'Thinking Profile' : '幾何光學推導風格'}</span>
-              <span>{deductionStats.blockPercent}% {isEn ? 'Clue Driven' : '黑塊約束'}</span>
-            </div>
-            <div className="w-full h-2 bg-slate-800 rounded-full overflow-hidden flex">
-              <div
-                className="bg-amber-500 h-full transition-all duration-500"
-                style={{ width: `${deductionStats.blockPercent}%` }}
-              />
-              <div
-                className="bg-cyan-500 h-full transition-all duration-500"
-                style={{ width: `${deductionStats.rayPercent}%` }}
-              />
-            </div>
-            <div className="flex justify-between text-[7px] text-slate-400 mt-1">
-              <span>⬛ {isEn ? 'Block Clues' : '黑塊定式'}: {deductionStats.blockCount} {isEn ? 'steps' : '步'}</span>
-              <span>🔦 {isEn ? 'Ray Coverage' : '射線覆蓋'}: {deductionStats.rayCount} {isEn ? 'steps' : '步'}</span>
-            </div>
-
-            <div className="mt-2 pt-1.5 border-t border-slate-800 flex justify-between items-center text-[7.5px]">
-              <span className="text-slate-400">🎯 {isEn ? 'Max Forced Chain' : '最長連續定式鏈'}:</span>
-              <span className="text-cyan-300 font-bold">
-                {spec?.maxForcedChain || deductionStats.blockCount} {isEn ? 'steps' : '步連鎖推導'}
-              </span>
             </div>
           </div>
 
@@ -790,19 +873,17 @@ export const LightUpBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMo
             <CognitiveRadarChart dimensions={profile.cognitiveDimensions} size={130} />
           </div>
 
-          <div className="flex gap-1.5">
-            <button
-              onClick={exportLongitudinalDataset}
-              className="flex-1 py-1.5 bg-slate-900 hover:bg-slate-800 border border-cyan-600/50 text-cyan-300 text-[8px] font-bold rounded-lg transition cursor-pointer"
-            >
-              📊 {isEn ? 'Export Data' : '匯出數據'}
-            </button>
-          </div>
+          <button
+            onClick={exportLongitudinalDataset}
+            className="w-full py-1.5 bg-slate-900 hover:bg-slate-800 border border-cyan-600/50 text-cyan-300 text-[8px] font-bold rounded-lg transition cursor-pointer"
+          >
+            📊 {isEn ? 'Export Tournament Dossier' : '匯出個人競賽檔案'}
+          </button>
 
           {proofSignature && (
             <div className="mt-2 p-1.5 bg-slate-900 border border-slate-800 rounded text-left">
               <div className="text-[6.5px] font-mono text-cyan-400/80 break-all select-all">
-                {isEn ? '🛡️ SHA-256 Sanctioned Receipt:' : '🛡️ SHA-256 賽事認證:'} {proofSignature}
+                {isEn ? '🛡️ Sanctioned Signature:' : '🛡️ 賽事抗篡改證書:'} {proofSignature}
               </div>
             </div>
           )}
