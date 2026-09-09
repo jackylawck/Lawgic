@@ -69,10 +69,10 @@ export const ShikakuBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
     const secUnits = seconds % 10;
 
     for (let i = 0; i < secTens; i++) pattern.push(450, 120);
-    pattern.push(0, 250); // 位元間隔
+    pattern.push(0, 250);
     for (let i = 0; i < secUnits; i++) pattern.push(70, 90);
 
-    pattern.push(0, 600); // 維度間隔
+    pattern.push(0, 600);
 
     const moveTens = Math.floor(moves / 10);
     const moveUnits = moves % 10;
@@ -113,7 +113,6 @@ export const ShikakuBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
         for (let ic = r.c; ic < r.c + r.w; ic++) cover[ir][ic]++;
       }
 
-      // 拓撲頂點校驗：僅統計 4 個頂點落在邊界上的接觸點
       const corners: [number, number][] = [
         [r.r, r.c],
         [r.r, r.c + r.w],
@@ -166,6 +165,12 @@ export const ShikakuBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
           puzzleId: actualPuzzle.id,
           engineType: 'shikaku',
           tier: currentTier,
+          cognitiveLoad: actualPuzzle.cognitiveLoad || {
+            spatial: 0.96,
+            numeric: 0.94,
+            workingMemory: 0.92,
+            inhibition: 0.90,
+          },
           isSuccess: true,
           timeSpentSec: duration,
           conflictsCount: 0,
@@ -176,7 +181,7 @@ export const ShikakuBoard: React.FC<Props> = ({ puzzleData, puzzle }) => {
         });
       }, 850);
     }
-  }, [octantParity.isResolved, isCollapsing, isSingularityDormant, placedRects, cols, rows, actualPuzzle.id, currentTier, recordAttempt, emitSpacetimeHapticTelemetry]);
+  }, [octantParity.isResolved, isCollapsing, isSingularityDormant, placedRects, cols, rows, actualPuzzle, currentTier, recordAttempt, emitSpacetimeHapticTelemetry]);
 
   // 雙擊退火蒸發與單擊戰術冷審視
   const handleRectTouch = useCallback((idx: number, e: React.MouseEvent) => {
