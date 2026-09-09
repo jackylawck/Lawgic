@@ -98,7 +98,8 @@ export const TIER_EMD_THRESHOLDS: Record<TierKey, number> = {
   ultimate: 0.07,
 };
 
-export function mulberry32(a: number) {
+export function mulberry32(seed: number) {
+  let a = seed === 0 ? 0x6d2b79f5 : seed;
   return function () {
     let t = (a += 0x6d2b79f5);
     t = Math.imul(t ^ (t >>> 15), t | 1);
@@ -115,7 +116,7 @@ export async function generateYajilinSignature(payload: string): Promise<string>
       const hashArray = Array.from(new Uint8Array(hashBuffer));
       return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('').slice(0, 16).toUpperCase();
     } catch {
-      // 降級
+      // 降級處理
     }
   }
   let h = 0x811c9dc5;
@@ -248,7 +249,7 @@ export class WebYajilinGenerator {
     limit: number = 2
   ): number {
     let solutionCount = 0;
-    let stepBudget = 500;
+    let stepBudget = 800;
 
     const isClue = Array.from({ length: rows }, () => Array(cols).fill(false));
     clues.forEach((c) => { isClue[c.r][c.c] = true; });
@@ -311,7 +312,7 @@ export class WebYajilinGenerator {
         return;
       }
 
-      // 留白
+      // 留白分支
       blacks[r][c] = false;
       assigned[r][c] = true;
       let valid = true;
@@ -323,7 +324,7 @@ export class WebYajilinGenerator {
 
       if (solutionCount >= limit) return;
 
-      // 塗黑 (四向隔離)
+      // 塗黑分支 (正交相斥)
       const hasAdjBlack =
         (r > 0 && blacks[r - 1][c] && assigned[r - 1][c]) ||
         (c > 0 && blacks[r][c - 1] && assigned[r][c - 1]);
@@ -603,12 +604,12 @@ export class WebYajilinGenerator {
 
     const rnd = mulberry32(actualSeed);
     let attempts = 0;
-    const maxAttempts = 40;
+    const maxAttempts = 50;
 
     while (attempts++ < maxAttempts) {
       const isClue = Array.from({ length: rows }, () => Array(cols).fill(false));
       const solutionBlacks = Array.from({ length: rows }, () => Array(cols).fill(false));
-      const clues: ArrowClue[] = [];
+      let clues: ArrowClue[] = [];
 
       // 1. 對稱播撒線索格
       const halfCoords: [number, number][] = [];
@@ -687,12 +688,33 @@ export class WebYajilinGenerator {
         clue.count = cnt;
       }
 
-      // 4. 構造連續閉合環
+      // 4. 動態排版光學安全性驗證 (淘汰過度重疊平行的射線)
+      let opticalSafe = true;
+      for (let i = 0; i < clues.length; i++) {
+        for (let j = i + 1; j < clues.length; j++) {
+          const { isSafe } = DynamicTypographyEngine.evaluateDynamicOpticalSafety(clues[i], clues[j], rows, cols);
+          if (!isSafe) {
+            opticalSafe = false;
+            break;
+          }
+        }
+        if (!opticalSafe) break;
+      }
+      if (!opticalSafe) continue;
+
+      // 5. 構造連續閉合環
       const solutionLoop = this._generateFastHamiltonianLoop(rows, cols, isClue, solutionBlacks, rnd);
       if (!solutionLoop) continue;
 
-      // 5. 唯一性校驗
+      // 6. 唯一解嚴格驗證
       if (this.countYajilinSolutions(rows, cols, clues, 2) !== 1) continue;
+
+      // 7. 大師精準消減與心理錨點保留
+      clues = MasterHarmonizedPruner.pruneDeterministically(clues, rows, cols, actualSeed);
+
+      // 8. 模擬人類推導與認知 EMD 驗收
+      const simReport = CognitiveSolver.runFullSimulation(clues, rows, cols);
+      if (!simReport.isFullySolved) continue;
 
       const resilience = this.analyzeNetworkResilience(rows, cols, solutionLoop);
 
@@ -1005,22 +1027,22 @@ export class CognitiveSolver {
         continue;
       }
 
-      // 嘗試雙向 L3
+      // 雙向 L3
       const l3Step = OptimizedL3Engine.findFastBidirectionalContradiction(simState);
       if (l3Step) {
         l3Steps++;
         const fullL3: YajilinHintStep = {
           step: steps.length + 1,
-          r: l3Step.target.r,
-          c: l3Step.target.c,
-          forcedState: l3Step.inferredState,
+          r: l3Step.r,
+          c: l3Step.c,
+          forcedState: l3Step.forcedState,
           technique: l3Step.technique,
           constructType: 'Gf',
-          evidenceCells: l3Step.evidenceCells || [[l3Step.target.r, l3Step.target.c]],
+          evidenceCells: l3Step.evidenceCells || [[l3Step.r, l3Step.c]],
           rationale: '反證法約束排除',
           humanReadable: {
-            zh: `經反證測試，[${l3Step.target.r + 1},${l3Step.target.c + 1}] 強制鎖定。`,
-            en: `Hypothetical contradiction resolved cell [${l3Step.target.r + 1},${l3Step.target.c + 1}].`,
+            zh: `經反證測試，[${l3Step.r + 1},${l3Step.c + 1}] 強制鎖定。`,
+            en: `Hypothetical contradiction resolved cell [${l3Step.r + 1},${l3Step.c + 1}].`,
           },
           layer: 'L3_CONTRADICTION',
         };
@@ -1192,7 +1214,6 @@ export class MasterHarmonizedPruner {
     const prng = mulberry32(seed);
     let clues = [...initialClues];
 
-    const immutableClues = clues.filter((c) => c.isUntouchable);
     const candidates = clues.filter((c) => !c.isUntouchable);
 
     for (let i = candidates.length - 1; i > 0; i--) {
