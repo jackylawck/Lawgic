@@ -4,9 +4,9 @@
 
 ## 📖 關於本專案 / About This Project
 
-> **這是一個為了給兒子伴隨成長而親手打造的遊戲專案。**
-> 誠邀所有同好一同體驗、參與與交流，願我們都能重拾思維頓悟的純粹樂趣！
-> *A personal project handcrafted to accompany my son as he grows up.*
+> **這是一個為了給兒子伴隨成長而親手打造的遊戲專案。**  
+> 誠邀所有同好一同體驗、參與與交流，願我們都能重拾思維頓悟的純粹樂趣！  
+> *A personal project handcrafted to accompany my son as he grows up.*  
 > *Warmly inviting all puzzle enthusiasts to play, explore, and share the pure joy of logical insight!*
 
 ---
@@ -30,6 +30,7 @@
   * **天平不等 (`futoshiki`)**：T9 固定三欄盲打九宮格、雙擊數字鎖定注入模式（Injection Mode）、永久十字瞄準線、一鍵硬切無延遲渦輪模式（Turbo Mode）。
   * **隻眼獨尊 (`hitori`)**：左鍵主決策循環、右鍵紙本鉛筆草稿三態標記（Pencil Marking）、衝突與同數空間波浪底線視覺疊加、即時 APM 戰績追蹤。
   * **矢印連線 (`yajilin`) & 四角分割 (`shikaku`)**：正交迴路自避檢測、長方形面積幾何動態約束錨定。
+  * **燈泡照明 (`lightup`)**：左右鍵/長按瞬發分流（左鍵 💡 / 右鍵 •）、行動端零延遲模式鎖定棒（Mode Stick）、50 步環形 Undo/Redo 快照追蹤、反向暗區盲點凸顯（Blindspot Highlight）、雙因子空間熱區教練提示（Hot-Zone Hinting）、WPC 鉑金/金牌/銀牌後置不可逆操作審計。
 * **臨床級反作弊監控與專業監考（Proctoring & Anti-Cheat）**：整合 `useAntiCheatMonitor`、`clinicalProctoring` 與硬體級輸入防漂移偵測，確保錦標賽競技數據的客觀嚴密。
 * **嚴格賽事裸裝模式（Strict Tournament Mode）**：開啟賽事模式即強制隱蔽所有即時衝突紅框、波浪輔助線與虛假標稱配額，鎖定盤面禁止提示，還原國際大賽現場的「無輔助裸裝對決」。
 * **零信任防偽存證簽章（Zero-Trust Receipt）**：通關後透過 Web Crypto API 原生硬體加速生成 SHA-256 數位簽章與常數時間核驗，確保各項賽事通關憑證與個人最佳紀錄（PB）無法篡改。
@@ -57,7 +58,7 @@
 | `skyscraper` | **摩天透視** | 3D 心理旋轉、空間透視 | 4 面邊界視線滿足度即時反饋、立體高度推演 |
 | `slitherlink` | **迴路封閉** | 歐拉迴路、頂點度數約束 | 點網格拖曳畫線、0/3 經典定式推進、子環防早斷檢測 |
 | `tents` | **帳篷扎營** | 二分圖匹配、8-鄰域幾何 | 雙向抽屜原理閉鎖器、雙子樹角隅互斥破局器、Kuhn-Munkres 雙射唯一驗證 |
-| `lightup` | **燈泡照明** | 視線投射、正交覆蓋 | 射線即時追蹤渲染、燈泡直視相撞警示、暗區聚焦模式 |
+| `lightup` | **燈泡照明** | 視線投射、全域命題邏輯 | 偽布林（PB）基數不等式邊界收緊、全域 2-SAT Kosaraju SCC 蘊含圖傳播、雙向對稱歸謬探針（±Reductio）、動態美學拓撲（低階連通長城 / 高階孤島光阱）、頓悟峰值（Eureka Moments）心流計量、左鍵燈泡/右鍵防護點雙模極速落子、零延遲行動端模式鎖定棒（Mode Stick）、WPC 鉑金級無試錯實操審計 |
 | `masyu` | **珍珠迴路** | 空間拓撲、正交折角約束 | 隨機自避蜿蜒迴路、貼邊黑白定式、相鄰黑珍珠排斥、CSP 唯一解 |
 
 ---
@@ -71,7 +72,7 @@
 ### Architecture Highlights
 
 * **Zero-Copy WASM Core**: Computationally intensive solvers are written in Rust and compiled to WebAssembly, featuring compile-time static lookup tables (PEERS_TABLE) and zero-copy shared array memory mapping.
-* **Exact Cover Uniqueness Engine**: Mathematical certainty replacing heuristic timeouts. Across Sudoku, Nonogram, Dominoes, Hashi, Heyawake, Futoshiki, Hitori, Kakuro, Kropki, Yajilin, and Shikaku, exact MRV backtracking solvers and value-constrained bipartite matching proofs guarantee puzzle solution cardinality equals exactly 1.
+* **Exact Cover Uniqueness Engine**: Mathematical certainty replacing heuristic timeouts. Across Sudoku, Nonogram, Dominoes, Hashi, Heyawake, Futoshiki, Hitori, Kakuro, Kropki, Light Up, Yajilin, and Shikaku, exact MRV backtracking solvers and value-constrained bipartite matching proofs guarantee puzzle solution cardinality equals exactly 1.
 * **100% Pure Deduction Rate & Breakpoint Ratio**: Master, Legendary, and Ultimate tiers strictly enforce complete human deductive chain simulations with Breakpoint Depth Ratio $\ge 80\%$, discarding puzzles requiring trial-and-error branching during early and mid games.
 * **True Cognitive Crux via $\Delta\text{Domain}$ Reduction**: Crux points are quantified using weighted candidate domain entropy reductions and DAG topological radii rather than arbitrary heuristic weights.
 * **Speed-Solving Ergonomics**:
@@ -80,6 +81,7 @@
   * **Heyawake**: WASD/Arrow magnetic cursor scaling, dual-state speed toggle (Blank ↔ Black), silent cut-point radar.
   * **Futoshiki**: Fixed 3-column numpad, double-click number injection mode, permanent crosshair guide, zero-latency Turbo Mode.
   * **Hitori**: Primary click cycle, secondary pencil-marking (Pencil Marks), real-time action & APM metric tracker.
+  * **Light Up**: Dual-mode left/right instantaneous dispatch (Left: Light, Right: Dot), zero-latency Mobile Mode Stick, 50-step circular snapshot stack, inverted darkness focus, dual-factor hot-zone hinting, immutable Grandmaster Platinum post-audit.
   * **Yajilin & Shikaku**: Closed self-avoiding loop detection, dynamic geometric factoring for rectangular tiling.
 * **Clinical Proctoring & Integrity Monitoring**: Integrates `useAntiCheatMonitor`, `clinicalProctoring`, and hardware input drift heuristics to ensure objective competitive fidelity.
 * **Strict Tournament Mode**: Completely suppresses in-game conflict glows, wave overlays, and nominal quota labels for unassisted, competition-compliant solving.
@@ -102,7 +104,7 @@ flowchart TD
     Gv --> M1["Maze (心智導航 / 拓撲避障)"]
     Gv --> M2["Masyu / Slitherlink (拓撲封閉迴路)"]
     Gv --> M3["Nurikabe (平面分割)"]
-    Gv --> M4["Light Up / Skyscraper (射線投射與透視)"]
+    Gv --> M4["Light Up (雙向射線 / 2-SAT 全域覆蓋) / Skyscraper (透視推演)"]
     Gv --> M5["Nonogram (斷面掃描 / DAG關鍵深度)"]
     Gv --> M6["Hashi (泊松張力 / Tarjan割邊)"]
     Gv --> M7["Heyawake (L-Room咬合 / 射線閉包)"]
@@ -128,7 +130,7 @@ flowchart TD
 
 ```text
 ┌─────────────────────────────────────────────────────────────┐
-│                    Lawgic Presentation Layer                │
+│                     Lawgic Presentation Layer               │
 │  (React 18 + TailwindCSS + iOS Safe Area + PWA Hardened SW) │
 └──────────────┬───────────────────────────────┬──────────────┘
                │                               │
@@ -137,7 +139,7 @@ flowchart TD
 │      WASM Core (Rust)        │ │  Procedural TS Generators  │
 │  • Compile-time PEERS LUT    │ │ • Full Kropki Box Topology │
 │  • Bitmask MRV Propagation   │ │ • Run-Local Modulo-9 Sieve │
-│  • O(1) Backtrack Snapshot   │ │ • Tarjan Bridge Lowlink    │
+│  • O(1) Backtrack Snapshot   │ │ • 2-SAT Kosaraju SCC Blk   │
 └──────────────┬───────────────┘ └─────────────┬──────────────┘
                │                               │
                └───────────────┬───────────────┘
@@ -207,7 +209,7 @@ Lawgic/
 │   ├── src/
 │   │   ├── components/      # 18 款競速駕駛艙 (Board)、因果高亮、虛擬手把與互動元件
 │   │   ├── contexts/        # 語系切換 (LanguageContext) 與無障礙支援 (AccessibilityContext)
-│   │   ├── engines/         # 18 款競技級演算法 (Kropki Apex, Kakuro Perfect, Heyawake V6 等)
+│   │   ├── engines/         # 18 款競技級演算法 (Kropki Apex, LightUp 2-SAT WPC, Heyawake V6 等)
 │   │   ├── generated/       # 靜態種子庫與題目元數據預編譯快取 (JSON)
 │   │   ├── hooks/           # useLearnerProfile、useAntiCheatMonitor、useLongTermScheduler
 │   │   ├── registry/        # RendererRegistry (動態分發與容錯重試註冊中心)
