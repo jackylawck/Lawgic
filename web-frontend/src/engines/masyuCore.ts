@@ -169,7 +169,7 @@ export class DisjointSet {
 
 export class MasyuCoreEngine {
   public static createRng(seed: number) {
-    let s = BigInt(seed) >>> 0n;
+    let s = BigInt(seed >>> 0) & 0xffffffffffffffffn;
     return function next(): number {
       s = (s + 0x9e3779b97f4a7c15n) & 0xffffffffffffffffn;
       let z = s;
