@@ -236,4 +236,3 @@ Lawgic/
 
 本專案採用 [MIT License](https://www.google.com/search?q=LICENSE) 授權開放開源社群交流使用。
 
-
