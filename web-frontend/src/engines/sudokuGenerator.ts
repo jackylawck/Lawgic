@@ -13,10 +13,10 @@ export type TechniqueStage =
   | 'XWing'
   | 'XYWing'
   | 'Swordfish'
-  | 'AlternatingInferenceChain'
-  | 'ContinuousNiceLoop'
   | 'UniqueRectangle'
   | 'BUG_Plus_One'
+  | 'AlternatingInferenceChain'
+  | 'ContinuousNiceLoop'
   | 'JuniorExocet';
 
 export interface SudokuHintStep {
@@ -69,11 +69,11 @@ interface TierConfig {
 
 const TIER_SPECS: Record<TierKey, TierConfig> = {
   kids: { targetClues: 46, minTechniqueScore: 20, maxRetries: 8, allowStatisticalAsymmetric: false, baseIrt: 0.65, timeLimitSec: 90 },
-  intermediate: { targetClues: 36, minTechniqueScore: 45, maxRetries: 12, allowStatisticalAsymmetric: false, baseIrt: 1.45, timeLimitSec: 150 },
-  expert: { targetClues: 30, minTechniqueScore: 80, maxRetries: 16, allowStatisticalAsymmetric: false, baseIrt: 2.35, timeLimitSec: 240 },
-  master: { targetClues: 26, minTechniqueScore: 120, maxRetries: 22, allowStatisticalAsymmetric: false, baseIrt: 3.15, timeLimitSec: 360 },
-  legendary: { targetClues: 24, minTechniqueScore: 160, maxRetries: 28, allowStatisticalAsymmetric: false, baseIrt: 3.75, timeLimitSec: 480 },
-  ultimate: { targetClues: 22, minTechniqueScore: 210, maxRetries: 35, allowStatisticalAsymmetric: false, baseIrt: 4.35, timeLimitSec: 600 },
+  intermediate: { targetClues: 36, minTechniqueScore: 45, maxRetries: 14, allowStatisticalAsymmetric: false, baseIrt: 1.45, timeLimitSec: 150 },
+  expert: { targetClues: 30, minTechniqueScore: 80, maxRetries: 18, allowStatisticalAsymmetric: false, baseIrt: 2.35, timeLimitSec: 240 },
+  master: { targetClues: 26, minTechniqueScore: 110, maxRetries: 24, allowStatisticalAsymmetric: false, baseIrt: 3.15, timeLimitSec: 360 },
+  legendary: { targetClues: 24, minTechniqueScore: 145, maxRetries: 30, allowStatisticalAsymmetric: false, baseIrt: 3.75, timeLimitSec: 480 },
+  ultimate: { targetClues: 22, minTechniqueScore: 180, maxRetries: 36, allowStatisticalAsymmetric: false, baseIrt: 4.35, timeLimitSec: 600 },
 };
 
 const TECHNIQUE_WEIGHTS: Record<TechniqueStage, number> = {
@@ -99,16 +99,6 @@ function mulberry32(a: number) {
     t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
-}
-
-export interface ExtendedAICNode {
-  type: 'cell' | 'unit_fish';
-  r?: number;
-  c?: number;
-  d: number;
-  state: boolean;
-  baseUnits?: { type: 'row' | 'col'; indices: number[] };
-  coverUnits?: { type: 'row' | 'col'; indices: number[] };
 }
 
 export class WebSudokuGenerator {
@@ -172,11 +162,12 @@ export class WebSudokuGenerator {
           ).toFixed(2)
         );
 
-        const estimatedTime = Math.round(
-          30 +
-            (81 - currentClues) * 3.2 +
-            (sim.highestTechnique === 'JuniorExocet' ? 180 : sim.highestTechnique === 'AlternatingInferenceChain' ? 120 : 0)
-        );
+        const techBonus =
+          sim.highestTechnique === 'JuniorExocet' ? 180 :
+          sim.highestTechnique === 'AlternatingInferenceChain' || sim.highestTechnique === 'ContinuousNiceLoop' ? 120 :
+          sim.highestTechnique === 'Swordfish' || sim.highestTechnique === 'XYWing' ? 60 : 0;
+
+        const estimatedTime = Math.round(30 + (81 - currentClues) * 3.2 + techBonus);
 
         const spec: SudokuSpec = {
           rows: 9,
@@ -324,7 +315,7 @@ export class WebSudokuGenerator {
 
     fillRemaining(0, 3);
 
-    // Chute 與數位置換
+    // Chute 內行列置換
     for (let b = 0; b < 3; b++) {
       const r1 = b * 3 + Math.floor(rnd() * 3);
       const r2 = b * 3 + Math.floor(rnd() * 3);
@@ -462,7 +453,16 @@ export class WebSudokuGenerator {
     return cands;
   }
 
-  private static _simulateGrandmasterSolving(puzzle: number[][]) {
+  private static _simulateGrandmasterSolving(puzzle: number[][]): {
+    steps: SudokuStep[];
+    pathSummary: string[];
+    highestTechnique: TechniqueStage;
+    logicalComplexityScore: number;
+    remainingUnsolved: number;
+    hasPerfectLogicOrder: boolean;
+    load: { spatial: number; numeric: number; workingMemory: number; inhibition: number };
+    hints: SudokuHintStep[];
+  } {
     const board = puzzle.map((r) => [...r]);
     let cands = this._computeCandidateMatrix(board);
 
@@ -495,6 +495,12 @@ export class WebSudokuGenerator {
       return cnt;
     };
 
+    const updateHighest = (tech: TechniqueStage) => {
+      if (TECHNIQUE_WEIGHTS[tech] > TECHNIQUE_WEIGHTS[highestTechnique]) {
+        highestTechnique = tech;
+      }
+    };
+
     while (progressed) {
       progressed = false;
       cands = this._computeCandidateMatrix(board);
@@ -510,6 +516,7 @@ export class WebSudokuGenerator {
             stepCount++;
             pathCounts.NakedSingle++;
             complexityScore += TECHNIQUE_WEIGHTS.NakedSingle;
+            updateHighest('NakedSingle');
 
             steps.push({
               step: stepCount,
@@ -524,7 +531,7 @@ export class WebSudokuGenerator {
 
             if (hints.length === 0) {
               hints.push({ level: 1, row: r, col: c, targetNum: val, technique: 'NakedSingle', messageZh: `【區域聚焦】觀察第 ${r + 1} 行、第 ${c + 1} 列交會處。`, messageEn: `[Focus] Inspect cell at Row ${r + 1}, Col ${c + 1}.` });
-              hints.push({ level: 2, row: r, col: c, targetNum: val, technique: 'NakedSingle', messageZh: `【邏輯排除】此格行列宮交錯排除後僅剩唯一候選。`, messageEn: `[Elimination] Constraints leave a single candidate.` });
+              hints.push({ level: 2, row: r, col: c, targetNum: val, technique: 'NakedSingle', messageZh: `【邏輯排除】此格行列宮交錯排除後僅剩唯一候選。`, messageEn: `[Elimination] Constraints isolate single candidate.` });
               hints.push({ level: 3, row: r, col: c, targetNum: val, technique: 'NakedSingle', messageZh: `【落子決策】該格確立填入 ${val}。`, messageEn: `[Decision] Place digit ${val}.` });
             }
 
@@ -555,7 +562,7 @@ export class WebSudokuGenerator {
             stepCount++;
             pathCounts.HiddenSingle++;
             complexityScore += TECHNIQUE_WEIGHTS.HiddenSingle;
-            if (TECHNIQUE_WEIGHTS.HiddenSingle > TECHNIQUE_WEIGHTS[highestTechnique]) highestTechnique = 'HiddenSingle';
+            updateHighest('HiddenSingle');
 
             steps.push({
               step: stepCount,
@@ -576,13 +583,55 @@ export class WebSudokuGenerator {
       }
       if (foundHidden) continue;
 
-      // 3. 唯一矩形 (Unique Rectangle Type 1)
+      // 3. 區塊鎖定 (Locked Candidates - Pointing & Claiming)
+      const lockedRes = this._detectLockedCandidates(board, cands);
+      if (lockedRes) {
+        stepCount++;
+        pathCounts.LockedCandidates++;
+        complexityScore += TECHNIQUE_WEIGHTS.LockedCandidates;
+        updateHighest('LockedCandidates');
+        steps.push({
+          step: stepCount,
+          technique: 'LockedCandidates',
+          row: lockedRes.r,
+          col: lockedRes.c,
+          val: lockedRes.val,
+          weight: TECHNIQUE_WEIGHTS.LockedCandidates,
+          availableBranches: 1,
+          rationale: lockedRes.rationale,
+        });
+        progressed = true;
+        continue;
+      }
+
+      // 4. 顯性數對 (Naked Pair)
+      const nakedPairRes = this._detectNakedPair(board, cands);
+      if (nakedPairRes) {
+        stepCount++;
+        pathCounts.NakedPair++;
+        complexityScore += TECHNIQUE_WEIGHTS.NakedPair;
+        updateHighest('NakedPair');
+        steps.push({
+          step: stepCount,
+          technique: 'NakedPair',
+          row: nakedPairRes.r,
+          col: nakedPairRes.c,
+          val: nakedPairRes.val,
+          weight: TECHNIQUE_WEIGHTS.NakedPair,
+          availableBranches: 1,
+          rationale: nakedPairRes.rationale,
+        });
+        progressed = true;
+        continue;
+      }
+
+      // 5. 唯一矩形 (Unique Rectangle Type 1)
       const urResult = this._detectUniqueRectangle(board, cands);
       if (urResult) {
         stepCount++;
         pathCounts.UniqueRectangle++;
         complexityScore += TECHNIQUE_WEIGHTS.UniqueRectangle;
-        if (TECHNIQUE_WEIGHTS.UniqueRectangle > TECHNIQUE_WEIGHTS[highestTechnique]) highestTechnique = 'UniqueRectangle';
+        updateHighest('UniqueRectangle');
         steps.push({
           step: stepCount,
           technique: 'UniqueRectangle',
@@ -597,13 +646,13 @@ export class WebSudokuGenerator {
         continue;
       }
 
-      // 4. XY-Wing 樞紐雙翼定式
+      // 6. XY-Wing 雙翼定式
       const xyResult = this._detectXYWing(board, cands);
       if (xyResult) {
         stepCount++;
         pathCounts.XYWing++;
         complexityScore += TECHNIQUE_WEIGHTS.XYWing;
-        if (TECHNIQUE_WEIGHTS.XYWing > TECHNIQUE_WEIGHTS[highestTechnique]) highestTechnique = 'XYWing';
+        updateHighest('XYWing');
         steps.push({
           step: stepCount,
           technique: 'XYWing',
@@ -618,13 +667,34 @@ export class WebSudokuGenerator {
         continue;
       }
 
-      // 5. Junior Exocet 異魚偵測
+      // 7. 劍魚定式 (Swordfish)
+      const swordfishRes = this._detectSwordfish(board, cands);
+      if (swordfishRes) {
+        stepCount++;
+        pathCounts.Swordfish++;
+        complexityScore += TECHNIQUE_WEIGHTS.Swordfish;
+        updateHighest('Swordfish');
+        steps.push({
+          step: stepCount,
+          technique: 'Swordfish',
+          row: swordfishRes.r,
+          col: swordfishRes.c,
+          val: swordfishRes.val,
+          weight: TECHNIQUE_WEIGHTS.Swordfish,
+          availableBranches: 1,
+          rationale: swordfishRes.rationale,
+        });
+        progressed = true;
+        continue;
+      }
+
+      // 8. Junior Exocet 異魚偵測
       const exocetResult = this._detectJuniorExocet(board, cands);
       if (exocetResult) {
         stepCount++;
         pathCounts.JuniorExocet++;
         complexityScore += TECHNIQUE_WEIGHTS.JuniorExocet;
-        highestTechnique = 'JuniorExocet';
+        updateHighest('JuniorExocet');
         steps.push({
           step: stepCount,
           technique: 'JuniorExocet',
@@ -646,12 +716,11 @@ export class WebSudokuGenerator {
     });
 
     const remainingUnsolved = board.flat().filter((v) => v === 0).length;
-    const totalBlanks = 81 - puzzle.flat().filter((v) => v !== 0).length;
 
     const load = {
       spatial: Number(Math.min(0.95, 0.3 + (stepCount / 70) * 0.5).toFixed(2)),
       numeric: Number(Math.min(0.98, 0.35 + (complexityScore / 250) * 0.55).toFixed(2)),
-      workingMemory: Number(Math.min(0.99, 0.4 + (pathCounts.XYWing + pathCounts.JuniorExocet) * 0.2).toFixed(2)),
+      workingMemory: Number(Math.min(0.99, 0.4 + (pathCounts.XYWing + pathCounts.JuniorExocet + pathCounts.Swordfish) * 0.15).toFixed(2)),
       inhibition: Number(Math.min(0.98, 0.3 + pathCounts.UniqueRectangle * 0.15).toFixed(2)),
     };
 
@@ -665,6 +734,75 @@ export class WebSudokuGenerator {
       load,
       hints,
     };
+  }
+
+  private static _detectLockedCandidates(board: number[][], cands: Uint16Array[]): { r: number; c: number; val: number; rationale: string } | null {
+    for (let num = 1; num <= 9; num++) {
+      const mask = 1 << num;
+      for (let br = 0; br < 3; br++) {
+        for (let bc = 0; bc < 3; bc++) {
+          const rowsWithNum = new Set<number>();
+          for (let r = br * 3; r < br * 3 + 3; r++) {
+            for (let c = bc * 3; c < bc * 3 + 3; c++) {
+              if (board[r][c] === 0 && (cands[r][c] & mask)) {
+                rowsWithNum.add(r);
+              }
+            }
+          }
+          if (rowsWithNum.size === 1) {
+            const lockedR = Array.from(rowsWithNum)[0];
+            for (let c = 0; c < 9; c++) {
+              if ((c < bc * 3 || c >= bc * 3 + 3) && board[lockedR][c] === 0 && (cands[lockedR][c] & mask)) {
+                cands[lockedR][c] &= ~mask;
+                return {
+                  r: lockedR,
+                  c,
+                  val: num,
+                  rationale: `第 ${br * 3 + bc + 1} 宮鎖定第 ${lockedR + 1} 行數字 ${num}，排除外部候選數`,
+                };
+              }
+            }
+          }
+        }
+      }
+    }
+    return null;
+  }
+
+  private static _detectNakedPair(board: number[][], cands: Uint16Array[]): { r: number; c: number; val: number; rationale: string } | null {
+    const countBits = (m: number) => {
+      let cnt = 0;
+      for (let n = 1; n <= 9; n++) if (m & (1 << n)) cnt++;
+      return cnt;
+    };
+
+    for (let r = 0; r < 9; r++) {
+      const pairCols: number[] = [];
+      for (let c = 0; c < 9; c++) {
+        if (board[r][c] === 0 && countBits(cands[r][c]) === 2) pairCols.push(c);
+      }
+      for (let i = 0; i < pairCols.length; i++) {
+        for (let j = i + 1; j < pairCols.length; j++) {
+          const c1 = pairCols[i];
+          const c2 = pairCols[j];
+          if (cands[r][c1] === cands[r][c2]) {
+            const pairMask = cands[r][c1];
+            for (let oc = 0; oc < 9; oc++) {
+              if (oc !== c1 && oc !== c2 && board[r][oc] === 0 && (cands[r][oc] & pairMask)) {
+                cands[r][oc] &= ~pairMask;
+                return {
+                  r,
+                  c: oc,
+                  val: 0,
+                  rationale: `第 ${r + 1} 行之第 ${c1 + 1} 與 ${c2 + 1} 列構成顯性數對，排除其餘候選數`,
+                };
+              }
+            }
+          }
+        }
+      }
+    }
+    return null;
   }
 
   private static _detectUniqueRectangle(board: number[][], cands: Uint16Array[]): { r: number; c: number; val: number; rationale: string } | null {
@@ -708,7 +846,7 @@ export class WebSudokuGenerator {
                       r: targetCell.r,
                       c: targetCell.c,
                       val: remainCands[0],
-                      rationale: `唯一矩形 Type 1 破局：r${r1 + 1}c${c1 + 1}, r${r2 + 1}c${c2 + 1} 避免多解，直接確立 r${targetCell.r + 1}c${targetCell.c + 1} = ${remainCands[0]}`,
+                      rationale: `唯一矩形 Type 1 破局：r${r1 + 1}c${c1 + 1}, r${r2 + 1}c${c2 + 1} 避免多解，確立 r${targetCell.r + 1}c${targetCell.c + 1} = ${remainCands[0]}`,
                     };
                   }
                 }
@@ -798,6 +936,48 @@ export class WebSudokuGenerator {
     return null;
   }
 
+  private static _detectSwordfish(board: number[][], cands: Uint16Array[]): { r: number; c: number; val: number; rationale: string } | null {
+    for (let num = 1; num <= 9; num++) {
+      const mask = 1 << num;
+      const rowCols: { r: number; cols: number[] }[] = [];
+      for (let r = 0; r < 9; r++) {
+        const cols: number[] = [];
+        for (let c = 0; c < 9; c++) {
+          if (board[r][c] === 0 && (cands[r][c] & mask)) cols.push(c);
+        }
+        if (cols.length >= 2 && cols.length <= 3) rowCols.push({ r, cols });
+      }
+
+      if (rowCols.length >= 3) {
+        for (let i = 0; i < rowCols.length; i++) {
+          for (let j = i + 1; j < rowCols.length; j++) {
+            for (let k = j + 1; k < rowCols.length; k++) {
+              const colUnion = new Set([...rowCols[i].cols, ...rowCols[j].cols, ...rowCols[k].cols]);
+              if (colUnion.size === 3) {
+                const targetCols = Array.from(colUnion);
+                const targetRows = [rowCols[i].r, rowCols[j].r, rowCols[k].r];
+                for (const tc of targetCols) {
+                  for (let r = 0; r < 9; r++) {
+                    if (!targetRows.includes(r) && board[r][tc] === 0 && (cands[r][tc] & mask)) {
+                      cands[r][tc] &= ~mask;
+                      return {
+                        r,
+                        c: tc,
+                        val: num,
+                        rationale: `Swordfish 劍魚定式：行 (${targetRows.map((x) => x + 1).join(',')}) 投影至列 (${targetCols.map((x) => x + 1).join(',')})，排除外役候選數 ${num}`,
+                      };
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    return null;
+  }
+
   private static _detectJuniorExocet(board: number[][], cands: Uint16Array[]): { r: number; c: number; val: number; rationale: string } | null {
     const getCandidates = (mask: number): number[] => {
       const res: number[] = [];
@@ -824,7 +1004,6 @@ export class WebSudokuGenerator {
         const unionDigits = Array.from(new Set([...b1, ...b2]));
         if (unionDigits.length !== 2) continue;
 
-        // 嚴格 S-Row 約束驗證
         const isSRow = unionDigits.every((d) => {
           const mask = 1 << d;
           let outside = 0;
