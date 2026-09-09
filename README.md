@@ -24,6 +24,7 @@
 * **純邏輯閉環與因果推導率（100% Pure Deduction Rate & Breakpoint Ratio）**：高難度題目（Master / Legendary / Ultimate）嚴格執行人類邏輯求解鏈模擬，實裝真實邏輯斷點深度比（Breakpoint Ratio $\ge 80\%$），消滅早盤盲猜分支，確保試誤僅沈澱於尾盤收割。
 * **真實認知轉折點（$\Delta\text{Domain}$ Entropy Crux & Eureka Moments）**：告別機械式技巧標籤。以每一步手筋造成的「加權候選域熵減量（$\Delta\text{Domain}$）」與「DAG 拓撲影響半徑」精確錨定破局天王山（Crux），動態捕捉交響樂般的頓悟波峰（Eureka Peaks）。
 * **WPC 賽場級鍵位與心流防護（Speed-Solving Ergonomics）**：
+  * **暗夜數牆 (`nurikabe`)**：左鍵黑海 / 右鍵白點 / Shift 鍵直達三態分治、零顏色語義干擾之純邊框警告 HUD、全域必然性白名單校驗與雙割點假設態自動切換、無級歷史時間軸滑塊（Timeline Scrubber）與歷史違規幀快速跳轉、AI 覆盤殘局斷點無縫接管（Take Over）、雙軌時鐘（物理掛鐘 vs. 純粹運算時間）輸出客觀思考密度（Density of Thought）。
   * **黑白雙星 (`kropki`)**：標準數獨宮格拓撲、貫穿式負約束微結構細虛線（No-Dot Barrier）、同數戰場十字光環高亮、8ms 觸覺行程微震動反饋、可逆 Auto-Notes 快照避險、20% 分段配速條（Splits Telemetry）。
   * **數和密碼 (`kakuro`)**：跑道局部性解空間、180° 對稱區塊侵蝕黑牆、所見即所填候選條、極限和差集合閉包、真·正交容量閉區間擠壓（Capacity Squeeze）、中盤模 9 數字根同餘剪枝。
   * **黑白分明 (`heyawake`)**：方向鍵/WASD 游標磁吸縮放高亮、二態極速切換（空白 ↔ 填黑）、靜默咽喉割點雷達。
@@ -42,6 +43,7 @@
 
 | 代號 | 遊戲名稱 | 核心能力維度 (CHC) | 演算法與賽事級特點 |
 | --- | --- | --- | --- |
+| `nurikabe` | **暗夜數牆** | 平面連通、圖論割點、拓撲張力 | 多源形態發生競賽生長（Morphogenesis）、動量轉向纏繞度調控、雙割點拓撲奇點過濾（Dual-Cut Singularity）、傳播優先回溯（CP-Solver）唯一解驗證、純邊框 HUD 透視、時間軸違規熱點書籤、思考密度（Density of Thought）計量 |
 | `kropki` | **黑白雙星** | 數理偏序、宮格空間排他 | 正統數獨宮格拓撲（2x2/2x3/3x3）、全相鄰無點負約束（Full Kropki）、雙向 X-Wing 魚形排除、4x 超加權樞紐錨定、真實斷點深度比（$\ge 80\%$）、貫穿虛線屏障、8ms 觸覺行程鍵盤 |
 | `kakuro` | **數和密碼** | 整數分割、數論同餘閉包 | 跑道局部性獨立去重、180° 對稱區塊侵蝕黑牆、雙向極限和差集合閉包、真·正交容量閉區間擠壓（Capacity Squeeze）、中盤模 9 數字根同餘剪枝、封閉疊代局部傳播、所見即所填候選條 |
 | `maze` | **空間迷宮** | 空間導航、心智心圖 | 質數動態網格碎形、雙入口時間黑洞、視覺直線性後悔值、雙胞胎地標悖論、重疊率 $<40\%$ 逆向驗證、Boss 二階段精神污染 |
@@ -54,7 +56,6 @@
 | `hitori` | **隻眼獨尊** | 負向排除、候選域熵減 | 視覺優先手筋層（三連全推導/三明治）、計數白黑雙向閉環、防碰撞批量塗黑、$\Delta\text{Domain}$ 加權熵減 Crux、紙本鉛筆草稿系統、50ms 極速熔斷 |
 | `yajilin` | **矢印連線** | 正交迴路、射線指向計數 | 閉合迴路自避檢驗、箭頭射線黑格拓撲遮蔽、相鄰黑格互斥判定、角落單元閉鎖剪枝 |
 | `shikaku` | **四角分割** | 幾何整除、矩形空間鋪砌 | 質因數矩形分解列舉、數字包含唯一性約束、多矩形衝突割平面演算法、非重疊平面覆蓋驗證 |
-| `nurikabe` | **暗夜數牆** | 平面連通、圖論割點 | 多聯骨牌自由擴散（面積 1~7）、2×2 黑池紅色脈衝定位、點點候選標記 |
 | `skyscraper` | **摩天透視** | 3D 心理旋轉、空間透視 | 4 面邊界視線滿足度即時反饋、立體高度推演 |
 | `slitherlink` | **迴路封閉** | 歐拉迴路、頂點度數約束 | 點網格拖曳畫線、0/3 經典定式推進、子環防早斷檢測 |
 | `tents` | **帳篷扎營** | 二分圖匹配、8-鄰域幾何 | 雙向抽屜原理閉鎖器、雙子樹角隅互斥破局器、Kuhn-Munkres 雙射唯一驗證 |
@@ -72,10 +73,11 @@
 ### Architecture Highlights
 
 * **Zero-Copy WASM Core**: Computationally intensive solvers are written in Rust and compiled to WebAssembly, featuring compile-time static lookup tables (PEERS_TABLE) and zero-copy shared array memory mapping.
-* **Exact Cover Uniqueness Engine**: Mathematical certainty replacing heuristic timeouts. Across Sudoku, Nonogram, Dominoes, Hashi, Heyawake, Futoshiki, Hitori, Kakuro, Kropki, Light Up, Yajilin, and Shikaku, exact MRV backtracking solvers and value-constrained bipartite matching proofs guarantee puzzle solution cardinality equals exactly 1.
+* **Exact Cover Uniqueness Engine**: Mathematical certainty replacing heuristic timeouts. Across Sudoku, Nonogram, Dominoes, Hashi, Heyawake, Futoshiki, Hitori, Kakuro, Kropki, Light Up, Nurikabe, Yajilin, and Shikaku, exact MRV backtracking solvers and value-constrained bipartite matching proofs guarantee puzzle solution cardinality equals exactly 1.
 * **100% Pure Deduction Rate & Breakpoint Ratio**: Master, Legendary, and Ultimate tiers strictly enforce complete human deductive chain simulations with Breakpoint Depth Ratio $\ge 80\%$, discarding puzzles requiring trial-and-error branching during early and mid games.
 * **True Cognitive Crux via $\Delta\text{Domain}$ Reduction**: Crux points are quantified using weighted candidate domain entropy reductions and DAG topological radii rather than arbitrary heuristic weights.
 * **Speed-Solving Ergonomics**:
+  * **Nurikabe**: Left/right-click zero-latency dual dispatch, non-intrusive border-only HUD eliminating semantic color interference, strict deterministic whitelist with automatic Topological Hypothesis fallback, continuous timeline scrubber with violation bookmarks, seamless AI replay breakpoint take-over, and dual-clock Density of Thought telemetry.
   * **Kropki**: Standard box topology, linear dashed negative-constraint barriers, localized crosshair highlight, 8ms mechanical haptic feedback, reversible auto-notes infill, 20% pace splits.
   * **Kakuro**: Run-local solution spaces, blocky 180° erosion layout, clickable candidate strip, extreme sum set-closures, cross-capacity squeeze, deep modulo-9 digital root congruence filters.
   * **Heyawake**: WASD/Arrow magnetic cursor scaling, dual-state speed toggle (Blank ↔ Black), silent cut-point radar.
@@ -103,7 +105,7 @@ flowchart TD
 
     Gv --> M1["Maze (心智導航 / 拓撲避障)"]
     Gv --> M2["Masyu / Slitherlink (拓撲封閉迴路)"]
-    Gv --> M3["Nurikabe (平面分割)"]
+    Gv --> M3["Nurikabe (雙割點拓撲奇點 / 多源形態發生 / 平面連通)"]
     Gv --> M4["Light Up (雙向射線 / 2-SAT 全域覆蓋) / Skyscraper (透視推演)"]
     Gv --> M5["Nonogram (斷面掃描 / DAG關鍵深度)"]
     Gv --> M6["Hashi (泊松張力 / Tarjan割邊)"]
@@ -121,6 +123,8 @@ flowchart TD
     Gwm --> W1["候選數動態保留與鉛筆筆記 (Pencil Marks)"]
     Gwm --> W2["結構化前瞻反證樹沙盒"]
     Gwm --> W3["錯誤類型學與即時 APM 時序監測"]
+    Gwm --> W4["無級時間軸滑塊與歷史分支回溯 (Timeline Scrubber)"]
+    Gwm --> W5["雙軌思考密度計量 (Density of Thought)"]
 
 ```
 
@@ -130,7 +134,7 @@ flowchart TD
 
 ```text
 ┌─────────────────────────────────────────────────────────────┐
-│                     Lawgic Presentation Layer               │
+│                      Lawgic Presentation Layer              │
 │  (React 18 + TailwindCSS + iOS Safe Area + PWA Hardened SW) │
 └──────────────┬───────────────────────────────┬──────────────┘
                │                               │
@@ -139,7 +143,8 @@ flowchart TD
 │      WASM Core (Rust)        │ │  Procedural TS Generators  │
 │  • Compile-time PEERS LUT    │ │ • Full Kropki Box Topology │
 │  • Bitmask MRV Propagation   │ │ • Run-Local Modulo-9 Sieve │
-│  • O(1) Backtrack Snapshot   │ │ • 2-SAT Kosaraju SCC Blk   │
+│  • O(1) Backtrack Snapshot   │ │ • Dual-Cut Singularity Nur │
+│                              │ │ • 2-SAT Kosaraju SCC Blk   │
 └──────────────┬───────────────┘ └─────────────┬──────────────┘
                │                               │
                └───────────────┬───────────────┘
@@ -209,7 +214,7 @@ Lawgic/
 │   ├── src/
 │   │   ├── components/      # 18 款競速駕駛艙 (Board)、因果高亮、虛擬手把與互動元件
 │   │   ├── contexts/        # 語系切換 (LanguageContext) 與無障礙支援 (AccessibilityContext)
-│   │   ├── engines/         # 18 款競技級演算法 (Kropki Apex, LightUp 2-SAT WPC, Heyawake V6 等)
+│   │   ├── engines/         # 18 款競技級演算法 (Nurikabe Axiomatic, Kropki Apex, LightUp 2-SAT 等)
 │   │   ├── generated/       # 靜態種子庫與題目元數據預編譯快取 (JSON)
 │   │   ├── hooks/           # useLearnerProfile、useAntiCheatMonitor、useLongTermScheduler
 │   │   ├── registry/        # RendererRegistry (動態分發與容錯重試註冊中心)
@@ -230,3 +235,5 @@ Lawgic/
 ## 授權條款 / License
 
 本專案採用 [MIT License](https://www.google.com/search?q=LICENSE) 授權開放開源社群交流使用。
+
+
