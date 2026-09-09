@@ -28,7 +28,19 @@
 * **數學級唯一解證書（Exact Cover Uniqueness Engine）**：拒絕「算力不夠即判定唯一」的偽科學。全面實裝 AC-3 弧相容傳播、在軌動態 MRV 啟發式剪枝、12000 節點回溯防護與二分匹配，數學證明解空間基數精確為 1，杜絕多解殘局與超時作弊。
 * **純邏輯閉環與因果推導率（100% Pure Deduction Rate & Breakpoint Ratio）**：高難度題目（Master / Legendary / Ultimate）嚴格執行人類邏輯求解鏈模擬，實裝真實邏輯斷點深度比（Breakpoint Ratio $\ge 80\%$），消滅早盤盲猜分支，確保試誤僅沈澱於尾盤收割。
 * **真實認知轉折點（$\Delta\text{Domain}$ Entropy Crux & Eureka Moments）**：告別機械式技巧標籤。以每一步手筋造成的「加權候選域熵減量（$\Delta\text{Domain}$）」與「DAG 拓撲影響半徑」精確錨定破局天王山（Crux），動態捕捉交響樂般的頓悟波峰（Eureka Peaks）。
-* **WPC 賽場級鍵位與心流防護（Speed-Solving Ergonomics）**：
+* **WPC / WSC 賽場級鍵位與心流防護（Speed-Solving Ergonomics）**：
+  * **數獨魔陣 (`sudoku`)**：
+    * **雙向認知共振架構 (Bi-Directional Cognitive Engine, BDCE-v9.1)**：並聯「正向拓撲爆破」與「反向死局預判」。在進入深層搜尋前，主動掃描致命模式（Deadly Patterns），實裝 **唯一矩形 (Unique Rectangle Type 1~4)** 與 **全雙值致命墓地 (BUG+1)** 悖論排除，以元認知（Meta-Cognition）打破窮舉。
+    * **超維魚族與 Junior Exocet 嚴格約束**：超越傳統 X-Wing，原生支援 **Swordfish (3x3 空間投影)**、**XY-Wing 雙值樞紐** 與頂級決賽圈專屬的 **Junior Exocet (JE)** 遠程同位素映射，並實裝嚴格 **S-Row / S-Col 閉包驗證**，杜絕幾何偽陽性。
+    * **集合覆蓋 A\* 與連續環雪崩 (A\* AIC & Continuous Nice Loops)**：以集合覆蓋維度收斂（Set-Cover Distance）作為啟發函數 $h(n)$，突破傳統 BFS 的 Depth-8 指數爆炸；支援動態信賴深度（Dynamic Trust Depth，最高穿透至 22 步）與連續環（Nice Loop）閉合，實現弱連結全面晉升後的單步多點候選數雪崩。
+    * **Miller 7±2 認知波束與工作記憶衰減剪枝**：將 A\* 優先佇列限縮為嚴格 7 寬度波束（Beam-7），配合早期閉合引力場（Early Closure Gravity）剪除發散盲枝；尾盤剩餘 <15 格時動態收縮為 4±1 波束，完美擬合人類極限狀態下的注意力流向。
+    * **因果必要性審計 (Causal Necessity Test)**：淘汰單純同行同列覆蓋的偽標記，以反事實介入驗證（Counterfactual Intervention）確保留存的每個提示格皆實質參與求解路徑，100% 剷除「邏輯孤兒（Dangling Clues）」。
+    * **DLX 精確覆蓋骨架植入 (Skeleton-Driven Implantation)**：高階題型摒棄隨機 Monte Carlo 碰撞，採用 Dancing Links (DLX) 將頂級定式骨架種子毫秒級精確覆蓋回填，實現 50ms 級確定性落地，並施加同構置換模糊化以抹除「人工刻意指紋」。
+    * **微秒級事件循環脫鉤 (<5ms Input Latency)**：鍵盤落子響應與 `checkVictory` / 密碼學雜湊計算以 `queueMicrotask` 完全脫鉤，杜絕重度演算法阻塞按鍵渲染循環。
+    * **次視覺化合法候選底紋 (Sub-visual Auto-Candidates)**：選中空格即時以 `text-slate-600/40` 極低對比度灰階浮現合法數字，僅在注視時提供潛意識驗證，杜絕高亮藍光引發的無意識注意力捕捉。
+    * **雙軌 800ms 防誤觸投降機制 (Hold-to-Resign)**：滑鼠長按與鍵盤長按 `[R]` 鍵共享 800ms 時間閥與 requestAnimationFrame 進度填充，徹底消除終局緊張時誤觸「🕊️」導致的心流崩潰。
+    * **零延遲 Web Audio 聲學回饋**：內建原生 AudioContext 合成振盪器，以 20ms 1200Hz 正弦波提示落子成功、260Hz 鋸齒波執行評測硬阻斷警告，提供競技級實體打擊感。
+    * **外圈 A-I / 1-9 坐標錨點與向量 SVG 拓撲導引**：外圍標註標準國際棋規坐標；推導步驟支援編譯為紅強藍弱的向量線段數據，實現賽後復盤的拓撲光影直接投影。
   * **摩天透視 (`skyscraper`)**：
     * **無模態時間動態輸入 (Modeless Temporal Keypress)**：敲擊（<200ms）確信落子、長按（≥200ms）自然切換草稿候選數（Pencil Marks），徹底終結傳統數獨/天際線工具中「頻繁切換鉛筆開關」的工作記憶磨損。
     * **Vim 級全主鍵位盲打 (Home-Row Ergonomics)**：全面支援 `H/J/K/L` 與 `W/A/S/D` 游標磁吸平移，搭配 QWERTY 鍵位直映數字（`Q~O` / `A~L`），實現雙手完全不離主鍵區的競速操控。
@@ -74,7 +86,7 @@
 | `kropki` | **黑白雙星** | 數理偏序、宮格空間排他 | 正統數獨宮格拓撲（2x2/2x3/3x3）、全相鄰無點負約束（Full Kropki）、雙向 X-Wing 魚形排除、4x 超加權樞紐錨定、真實斷點深度比（$\ge 80\%$）、貫穿虛線屏障、8ms 觸覺行程鍵盤 |
 | `kakuro` | **數和密碼** | 整數分割、數論同餘閉包 | 跑道局部性獨立去重、180° 對稱區塊侵蝕黑牆、雙向極限和差集合閉包、真·正交容量閉區間擠壓（Capacity Squeeze）、中盤模 9 數字根同餘剪枝、封閉疊代局部傳播、所見即所填候選條 |
 | `maze` | **空間迷宮** | 空間導航、心智心圖 | 質數動態網格碎形、雙入口時間黑洞、視覺直線性後悔值、雙胞胎地標悖論、重疊率 $<40\%$ 逆向驗證、Boss 二階段精神污染 |
-| `sudoku` | **數獨魔陣** | 約束傳播、工作記憶 | Rust/WASM 零拷貝引擎、MRV 位元剪枝、全向 Naked/Hidden Pairs、雙向 X-Wing 魚形定式、純定式 Lookahead-3 演繹反證探針 |
+| `sudoku` | **數獨魔陣** | 約束傳播 (Gf)、工作記憶 (Gwm)、反向悖論驗證 | **雙向認知共振引擎 (BDCE-v9.1)**、DLX 骨架植入、集合覆蓋 A\* AIC (動態深度 22 步)、連續環閉合雪崩、Junior Exocet (S-Row 嚴格驗證)、Unique Rectangle (Type 1~4) / BUG+1 悖論破局、因果必要性無孤兒審計、Miller 7±2 動態認知波束、尤里卡突刺 (Eureka Prominence $\ge 6$) 與後置雪崩率檢驗、微秒級 microtask 脫鉤、次視覺化底紋、雙軌 800ms 投降保護、A-I 坐標系、Web Audio 實體反饋 |
 | `nonogram` | **像素數織** | 離散斷面掃描、衝動抑制 | 全向量化 Bitmask DP 單行交集、二維全域泛洪反證、DAG 依賴樹、Master Key 咽喉雪崩、400px 逐行光波斜向綻放、50 步 Undo 堆疊 |
 | `dominoes` | **骨牌矩陣** | 二維鋪砌、全域配對覆蓋 | 數值感知二分匹配瓶頸割裂、MRV 前置剪枝無預算作弊、結構化棋譜反證鏈、行列雙重殘餘容量檢驗、邊角優先釘定與 32px 擴展抗干擾熱區 |
 | `hashi` | **星際數橋** | 拓撲連通、生成樹度數 | 泊松圓盤四向張力均勻度、真 Tarjan 割邊雙橋暴力美學、前向最大容量擠壓（Max Capacity Fail）吃滿深度反證探針、連續純度光譜、42px 防漂移觸控外圈 |
@@ -111,7 +123,7 @@ flowchart TD
     Gv --> M9["Yajilin (方向線索 / 迴路避障)"]
     Gv --> M10["Shikaku (互鎖拓撲 / 邊界頂點奇偶 / 因果張量質量)"]
 
-    Nq --> N1["Sudoku (交叉排他 / 魚定式)"]
+    Nq --> N1["Sudoku (雙向認知共振 / 反向致命悖論 UR / 集合覆蓋 A* AIC / Junior Exocet 異魚投影)"]
     Nq --> N2["Kakuro (跑道局部性 / 數論模9同餘)"]
     Nq --> N3["Futoshiki (無偏拉丁方 / 數對鎖定)"]
     Nq --> N4["Dominoes (二分匹配 / 鋪砌全集)"]
@@ -126,6 +138,7 @@ flowchart TD
     Gwm --> W6["Shikaku 觸覺震動引力波解碼 (Haptic Telemetry Recall)"]
     Gwm --> W7["Skyscraper (Cowan 4-Chunk 依賴鏈 / 格式塔模塊壓縮 / 實時節奏標尺)"]
     Gwm --> W8["Slitherlink (7步人類認知極限波束反證 / 雙態飢餓死鎖預警 / 轉折點追蹤)"]
+    Gwm --> W9["Sudoku (Miller 7±2 認知波束動態衰竭 / 次視覺化 Auto-Candidates 潛意識讀取)"]
 
 ```
 
@@ -135,7 +148,7 @@ flowchart TD
 
 ```text
 ┌─────────────────────────────────────────────────────────────┐
-│                       Lawgic Presentation Layer             │
+│                        Lawgic Presentation Layer            │
 │   (React 18 + TailwindCSS + iOS Safe Area + PWA Hardened SW)│
 └──────────────┬───────────────────────────────┬──────────────┘
                │                               │
@@ -149,6 +162,7 @@ flowchart TD
 │                              │ │ • Fast Line-CSP Skyscraper │
 │                              │ │ • 2-SAT Kosaraju SCC Blk   │
 │                              │ │ • Beam-3 BFS Slitherlink   │
+│                              │ │ • Bi-Directional BDCE-v9.1 │
 └──────────────┬───────────────┘ └─────────────┬──────────────┘
                │                               │
                └───────────────┬───────────────┘
@@ -176,6 +190,20 @@ flowchart TD
 * **100% Pure Deduction Rate & Breakpoint Ratio**: Master, Legendary, and Ultimate tiers strictly enforce complete human deductive chain simulations with Breakpoint Depth Ratio $\ge 80\%$, discarding puzzles requiring trial-and-error branching during early and mid games.
 * **True Cognitive Crux via $\Delta\text{Domain}$ Reduction**: Crux points are quantified using weighted candidate domain entropy reductions and DAG topological radii rather than arbitrary heuristic weights.
 * **Speed-Solving Ergonomics**:
+* **Sudoku**:
+* **Bi-Directional Cognitive Engine (BDCE-v9.1)**: Synthesizes forward topological propagation with reverse paradox verification. Scans Deadly Patterns before deep exploration, executing Unique Rectangle (Type 1~4) and BUG+1 meta-cognitive eliminations.
+* **Hyper-Dimensional Fish & Junior Exocet**: Native support for Swordfish (3x3 spatial projection), XY-Wing, and championship-tier Junior Exocet (JE) with strict S-Row/S-Col closure validation.
+* **Set-Cover A* & Continuous Nice Loops**: Employs Set-Cover Dimensional Convergence as the heuristic function $h(n)$, piercing through the Depth-8 exponential explosion with Dynamic Trust Depth up to 22 steps.
+* **Miller 7±2 Beam & Memory Decay Pruning**: Restricts the A* priority queue to a strict Beam-7 width with early closure gravity pruning, dynamically contracting to 4±1 beams in the endgame.
+* **Causal Necessity Audit**: Replaces naive unit-coverage with counterfactual interventions, ensuring every remaining clue directly impacts the deduction sequence.
+* **DLX Skeleton-Driven Implantation**: Implants seed structures via Dancing Links (DLX) for deterministic sub-50ms synthesis, followed by isomorphic blurring.
+* **Microsecond Microtask Decoupling (<5ms)**: Decouples input state transitions from victory evaluation via `queueMicrotask`.
+* **Sub-visual Auto-Candidates**: Passive grayscale candidate matrix (`text-slate-600/40`) providing subconscious verification without involuntary attentional capture.
+* **Dual-Track Hold-to-Resign (800ms)**: Synchronizes mouse hold and keyboard `[R]` hold with `requestAnimationFrame` progress telemetry to prevent accidental resignations.
+* **Zero-Latency Web Audio Synthesizer**: Native AudioContext synthesized feedback (20ms 1200Hz sine for success, 260Hz sawtooth for assessment rejection).
+* **Perimeter A-I / 1-9 Coordinates & Vector SVG Anchors**: Full tournament-compliant alphanumeric labeling paired with vector coordinate exports for visual replay.
+
+
 * **Skyscraper**:
 * **Modeless Temporal Input**: Tap (<200ms) for firm placement; hold (≥200ms) for candidate pencil marks, eliminating modal toggling friction.
 * **Vim-Style Home-Row Ergonomics**: Zero-travel `HJKL` / `WASD` cursor navigation paired with direct QWERTY number mapping (`Q-O` / `A-L`) for pure touch-typing speed.
@@ -270,9 +298,9 @@ Lawgic/
 ├── web-frontend/
 │   ├── public/               # PWA manifest、安全 Service Worker (sw.js) 與靜態圖示
 │   ├── src/
-│   │   ├── components/       # 18 款競速駕駛艙 (含 SkyscraperBoard、SlitherlinkBoard)
+│   │   ├── components/       # 18 款競速駕駛艙 (含 SudokuBoard、SkyscraperBoard)
 │   │   ├── contexts/         # 語系切換 (LanguageContext) 與無障礙支援 (AccessibilityContext)
-│   │   ├── engines/          # 18 款競技級演算法 (含 Slitherlink Beam-3 BFS 與 DAG 拓撲分析)
+│   │   ├── engines/          # 18 款競技級演算法 (含 BDCE-v9.1 數獨引擎與圖論分析)
 │   │   ├── generated/        # 靜態種子庫與題目元數據預編譯快取 (JSON)
 │   │   ├── hooks/            # useLearnerProfile、useSkyscraperGame、useAntiCheatMonitor
 │   │   ├── registry/         # RendererRegistry (動態分發與容錯重試註冊中心)
@@ -287,6 +315,14 @@ Lawgic/
 └── README.md                 # 專案說明文件
 
 ```
+
+---
+
+## 隱私、家長承諾與資料治理 / Privacy & Child Safety Commitment
+
+* **極致本地化 (Local-First & Offline Resilience)**：所有個人最佳紀錄（PB）、認知維度雷達圖與作答軌跡完全留存於瀏覽器本機 IndexedDB / LocalStorage，無伺服器側資料蒐集。
+* **兒童隱私守護 (Zero Tracking)**：全站絕不使用第三方追蹤腳本（No Google Analytics, No Meta Pixel）、無 Cookie 追蹤、無跨站指紋搜集，符合 COPPA 與歐盟 GDPR-K 兒童數位隱私最高標準。
+* **純粹透明度 (Pure Auditability)**：所有賽事級通關證書均由瀏覽器原生 Web Crypto API 生成不可篡改的 SHA-256 數位憑證，供家長與選手完全掌控自己的心智成長軌跡。
 
 ---
 
