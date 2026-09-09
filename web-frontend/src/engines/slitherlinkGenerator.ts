@@ -10,7 +10,9 @@ export type SlitherDeductionType =
   | 'corner_three'
   | 'corner_one_two'
   | 'adjacent_threes'
+  | 'one_three_conflict'
   | 'chain_of_twos'
+  | 'diagonal_twos'
   | 'diagonal_30'
   | 'degree_extension'
   | 'degree_saturation'
@@ -18,17 +20,66 @@ export type SlitherDeductionType =
   | 'hypothesis_contradiction'
   | 'clue_completion';
 
-export type HumanSolvingStyle =
-  | 'strictly_ordered'
-  | 'pure_logic'
-  | 'hypothesis_light'
-  | 'hypothesis_deep'
-  | 'championship_mastery';
+export type CognitiveDomain = 'candidate' | 'geometric' | 'topological' | 'hypothetical';
+
+export const TECHNIQUE_DOMAINS: Record<SlitherDeductionType, CognitiveDomain> = {
+  zero_cross: 'candidate',
+  clue_completion: 'candidate',
+  corner_three: 'geometric',
+  corner_one_two: 'geometric',
+  adjacent_threes: 'geometric',
+  one_three_conflict: 'geometric',
+  diagonal_30: 'geometric',
+  chain_of_twos: 'geometric',
+  diagonal_twos: 'geometric',
+  degree_extension: 'topological',
+  degree_saturation: 'topological',
+  premature_avoidance: 'topological',
+  hypothesis_contradiction: 'hypothetical',
+};
+
+export const TECHNIQUE_WEIGHTS: Record<SlitherDeductionType, number> = {
+  zero_cross: 1,
+  clue_completion: 2,
+  degree_saturation: 2,
+  degree_extension: 3,
+  corner_one_two: 5,
+  corner_three: 4,
+  adjacent_threes: 6,
+  one_three_conflict: 7,
+  diagonal_30: 8,
+  chain_of_twos: 9,
+  diagonal_twos: 9,
+  premature_avoidance: 10,
+  hypothesis_contradiction: 16,
+};
+
+export const TECHNIQUE_I18N: Record<string, { zh: string; en: string; ja: string; de: string }> = {
+  zero_cross: { zh: '零線標叉', en: 'Zero Cross', ja: 'ゼロ交差', de: 'Null-Kreuz' },
+  corner_three: { zh: '角落線索 3', en: 'Corner 3', ja: '角の3定石', de: 'Ecken-3' },
+  corner_one_two: { zh: '角落幾何約束', en: 'Corner Constraint', ja: '角の幾何制約', de: 'Ecken-Bedingung' },
+  adjacent_threes: { zh: '相鄰雙 3 平行線', en: 'Adjacent 3-3', ja: '隣接ダブル3', de: 'Benachbarte 3-3' },
+  one_three_conflict: { zh: '1-3 相鄰互斥', en: '1-3 Conflict', ja: '1-3 隣接排他', de: '1-3 Konflikt' },
+  diagonal_twos: { zh: '對角雙 2 排斥', en: 'Diagonal 2-2', ja: '対角ダブル2', de: 'Diagonale 2-2' },
+  diagonal_30: { zh: '斜對角 3-0 排斥', en: 'Diagonal 3-0 Lock', ja: '斜め3-0ロック', de: 'Diagonale 3-0' },
+  degree_saturation: { zh: '頂點度數飽和', en: 'Degree Saturation', ja: '頂点次数飽和', de: 'Knotengrad-Sättigung' },
+  degree_extension: { zh: '防斷頭延伸', en: 'Loop Extension', ja: 'ループ延伸', de: 'Schleifen-Verlängerung' },
+  premature_avoidance: { zh: '防早熟閉環死鎖', en: 'Premature Loop Defense', ja: '早熟閉環回避', de: 'Anti-Subschleife' },
+  hypothesis_contradiction: { zh: '長鏈反證矛盾', en: 'Proof by Contradiction', ja: '背理法矛盾', de: 'Widerspruchsbeweis' },
+  clue_completion: { zh: '單元格線索收斂', en: 'Clue Completion', ja: 'ヒント確定収束', de: 'Hinweis-Abschluss' },
+};
 
 export interface SlitherEdge {
   type: EdgeType;
   r: number;
   c: number;
+}
+
+export interface ContradictionNode {
+  edge: SlitherEdge;
+  assumedState: 1 | 2;
+  step: number;
+  reason: string;
 }
 
 export interface SlitherStep {
@@ -39,6 +90,9 @@ export interface SlitherStep {
   complexityWeight: number;
   candidateFanOut: number;
   rationale: string;
+  isTrial?: boolean;
+  contradictionChain?: ContradictionNode[];
+  contradictionDepth?: number;
   humanReadable: {
     zh: string;
     en: string;
@@ -60,6 +114,28 @@ export interface SlitherlinkHintStep {
   };
 }
 
+export interface WpcDiagnosticReport {
+  pureRate: number;
+  diversityIndex: number;
+  strictlyOrdered: boolean;
+  meanFanOut: number;
+  stdDevFanOut: number;
+  startingAnchorCount: number;
+  maxContradictionDepth: number;
+  spatialEntropy: number;
+  humanTraceabilityScore: number;
+  techniqueCategories: Record<CognitiveDomain, number>;
+  cognitiveInflectionPoints: { step: number; fromDomain: CognitiveDomain; toDomain: CognitiveDomain; technique: string }[];
+  wpcGrade: 'S' | 'A' | 'B' | 'C';
+  wpcCommentZh: string;
+  mentalTemplate: {
+    openingGambit: string;
+    midgameTheme: string;
+    climaxLocation: string;
+    closingSequence: string;
+  };
+}
+
 export interface SlitherlinkSpec {
   rows: number;
   cols: number;
@@ -74,20 +150,13 @@ export interface SlitherlinkSpec {
   isSymmetric180: boolean;
   tier: TierKey;
   seed: number;
-  hasPerfectLogicOrder: boolean;
-  humanProfile?: {
-    style: HumanSolvingStyle;
-    hypothesisCount: number;
-    diagnosticTitleZh: string;
-    diagnosticTitleEn: string;
-  };
+  wpcReport: WpcDiagnosticReport;
 }
 
 interface TierConfig {
   rows: number;
   cols: number;
   clueRemovalRate: number;
-  minForcedChain: number;
   minTechniqueWeight: number;
   allowSymmetry: boolean;
   baseIrt: number;
@@ -95,26 +164,12 @@ interface TierConfig {
 }
 
 const TIER_SPECS: Record<TierKey, TierConfig> = {
-  kids: { rows: 4, cols: 4, clueRemovalRate: 0.15, minForcedChain: 4, minTechniqueWeight: 10, allowSymmetry: true, baseIrt: 0.65, timeLimitSec: 90 },
-  intermediate: { rows: 5, cols: 5, clueRemovalRate: 0.28, minForcedChain: 6, minTechniqueWeight: 22, allowSymmetry: true, baseIrt: 1.45, timeLimitSec: 150 },
-  expert: { rows: 6, cols: 6, clueRemovalRate: 0.38, minForcedChain: 8, minTechniqueWeight: 45, allowSymmetry: false, baseIrt: 2.35, timeLimitSec: 240 },
-  master: { rows: 7, cols: 7, clueRemovalRate: 0.46, minForcedChain: 10, minTechniqueWeight: 70, allowSymmetry: false, baseIrt: 3.15, timeLimitSec: 360 },
-  legendary: { rows: 8, cols: 8, clueRemovalRate: 0.52, minForcedChain: 12, minTechniqueWeight: 100, allowSymmetry: false, baseIrt: 3.75, timeLimitSec: 480 },
-  ultimate: { rows: 10, cols: 10, clueRemovalRate: 0.58, minForcedChain: 15, minTechniqueWeight: 140, allowSymmetry: false, baseIrt: 4.35, timeLimitSec: 600 },
-};
-
-const TECHNIQUE_WEIGHTS: Record<SlitherDeductionType, number> = {
-  zero_cross: 1,
-  clue_completion: 2,
-  degree_saturation: 2,
-  degree_extension: 3,
-  corner_one_two: 5,
-  corner_three: 4,
-  adjacent_threes: 6,
-  chain_of_twos: 9,
-  diagonal_30: 8,
-  premature_avoidance: 10,
-  hypothesis_contradiction: 16,
+  kids: { rows: 4, cols: 4, clueRemovalRate: 0.15, minTechniqueWeight: 10, allowSymmetry: true, baseIrt: 0.65, timeLimitSec: 90 },
+  intermediate: { rows: 5, cols: 5, clueRemovalRate: 0.28, minTechniqueWeight: 22, allowSymmetry: true, baseIrt: 1.45, timeLimitSec: 150 },
+  expert: { rows: 6, cols: 6, clueRemovalRate: 0.38, minTechniqueWeight: 45, allowSymmetry: false, baseIrt: 2.35, timeLimitSec: 240 },
+  master: { rows: 7, cols: 7, clueRemovalRate: 0.46, minTechniqueWeight: 70, allowSymmetry: false, baseIrt: 3.15, timeLimitSec: 360 },
+  legendary: { rows: 8, cols: 8, clueRemovalRate: 0.52, minTechniqueWeight: 100, allowSymmetry: false, baseIrt: 3.75, timeLimitSec: 480 },
+  ultimate: { rows: 10, cols: 10, clueRemovalRate: 0.58, minTechniqueWeight: 140, allowSymmetry: false, baseIrt: 4.35, timeLimitSec: 600 },
 };
 
 function mulberry32(a: number) {
@@ -164,15 +219,6 @@ class FastVertexDSU {
 }
 
 export class WebSlitherlinkGenerator {
-  public static verifySingleLoop(
-    rows: number,
-    cols: number,
-    hEdges: boolean[][],
-    vEdges: boolean[][]
-  ): boolean {
-    return this.isStrictSingleLoop(hEdges, vEdges, rows, cols);
-  }
-
   public static isStrictSingleLoop(
     hEdges: boolean[][],
     vEdges: boolean[][],
@@ -255,9 +301,15 @@ export class WebSlitherlinkGenerator {
     return visitedEdges === totalEdges;
   }
 
-  /**
-   * 螺旋漢密爾頓擾動演算法：打造流暢高熵的自然迴路
-   */
+  public static verifySingleLoop(
+    rows: number,
+    cols: number,
+    hEdges: boolean[][],
+    vEdges: boolean[][]
+  ): boolean {
+    return this.isStrictSingleLoop(hEdges, vEdges, rows, cols);
+  }
+
   private static generateOrganicValidLoop(
     rows: number,
     cols: number,
@@ -265,9 +317,8 @@ export class WebSlitherlinkGenerator {
     rnd: () => number
   ): { hEdges: boolean[][]; vEdges: boolean[][] } {
     const inside: boolean[][] = Array.from({ length: rows }, () => Array(cols).fill(false));
-
-    // 1. 初始化自然流動的蛇形主體
     const halfR = Math.floor(rows / 2);
+
     for (let r = 0; r < rows; r++) {
       const fillAll = r % 2 === 0;
       for (let c = 0; c < cols; c++) {
@@ -280,17 +331,14 @@ export class WebSlitherlinkGenerator {
     if (isSymmetric) {
       for (let r = 0; r < rows; r++) {
         for (let c = 0; c < cols; c++) {
-          if (inside[r][c]) {
-            inside[rows - 1 - r][cols - 1 - c] = true;
-          }
+          if (inside[r][c]) inside[rows - 1 - r][cols - 1 - c] = true;
         }
       }
     }
 
-    // 2. 進行多輪對偶 2-opt 邊界微擾
     const dirs: [number, number][] = [[-1, 0], [1, 0], [0, -1], [0, 1]];
     let mutations = 0;
-    while (mutations++ < 120) {
+    while (mutations++ < 140) {
       const r = Math.floor(rnd() * rows);
       const c = Math.floor(rnd() * cols);
 
@@ -366,48 +414,6 @@ export class WebSlitherlinkGenerator {
     return clues;
   }
 
-  private static computeTopologicalEntropy(
-    hEdges: boolean[][],
-    vEdges: boolean[][],
-    rows: number,
-    cols: number
-  ): number {
-    let turns = 0;
-    let totalActive = 0;
-
-    for (let r = 0; r <= rows; r++) {
-      for (let c = 0; c <= cols; c++) {
-        const left = c > 0 && !!hEdges[r]?.[c - 1];
-        const right = c < cols && !!hEdges[r]?.[c];
-        const top = r > 0 && !!vEdges[r - 1]?.[c];
-        const bottom = r < rows && !!vEdges[r]?.[c];
-
-        const activeCount = (left ? 1 : 0) + (right ? 1 : 0) + (top ? 1 : 0) + (bottom ? 1 : 0);
-        if (activeCount === 2 && (left || right) && (top || bottom)) {
-          turns++;
-        }
-      }
-    }
-
-    for (let r = 0; r <= rows; r++) {
-      for (let c = 0; c < cols; c++) {
-        if (hEdges[r]?.[c]) totalActive++;
-      }
-    }
-    for (let r = 0; r < rows; r++) {
-      for (let c = 0; c <= cols; c++) {
-        if (vEdges[r]?.[c]) totalActive++;
-      }
-    }
-
-    const turnRatio = totalActive > 0 ? turns / totalActive : 0.5;
-    const density = totalActive / ((rows + 1) * cols + rows * (cols + 1));
-    return Number((turnRatio * 0.7 + density * 0.3).toFixed(3));
-  }
-
-  /**
-   * 拓撲嚴格定式演繹引擎（無硬編碼閾值，具備真正早熟死環防禦）
-   */
   public static getStrictDeductions(
     rows: number,
     cols: number,
@@ -415,11 +421,7 @@ export class WebSlitherlinkGenerator {
     curH: number[][],
     curV: number[][]
   ): Map<string, { edge: SlitherEdge; state: 1 | 2; type: SlitherDeductionType; rationale: string; humanReadable: { zh: string; en: string } }> {
-    const deductions = new Map<
-      string,
-      { edge: SlitherEdge; state: 1 | 2; type: SlitherDeductionType; rationale: string; humanReadable: { zh: string; en: string } }
-    >();
-
+    const deductions = new Map<string, { edge: SlitherEdge; state: 1 | 2; type: SlitherDeductionType; rationale: string; humanReadable: { zh: string; en: string } }>();
     const ptCols = cols + 1;
     const totalVertices = (rows + 1) * ptCols;
     const dsu = new FastVertexDSU(totalVertices);
@@ -448,7 +450,6 @@ export class WebSlitherlinkGenerator {
       }
     }
 
-    // 檢查全盤是否仍有尚未滿足的線索需求
     let remainingClueDemand = 0;
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
@@ -464,8 +465,7 @@ export class WebSlitherlinkGenerator {
       }
     }
 
-    // 定式 1: 嚴格過早閉合迴避 (Premature Loop Avoidance)
-    // 兩頂點若在同一個 DSU 集合且盤面上仍有其他開放端點或未滿足線索，強制標叉！
+    // 定式 1: 嚴格早熟死環防禦 (Premature Avoidance)
     for (let r = 0; r <= rows; r++) {
       for (let c = 0; c < cols; c++) {
         if (curH[r][c] === 0) {
@@ -477,10 +477,10 @@ export class WebSlitherlinkGenerator {
                 edge: { type: 'h', r, c },
                 state: 2,
                 type: 'premature_avoidance',
-                rationale: '嚴格早熟死環防禦：此處連線將導致迴路局部提前封閉',
+                rationale: '拓撲防早熟閉環定理：其餘線索未完備，此處連線形成死鎖',
                 humanReadable: {
-                  zh: '防早熟閉環定理：其餘線索尚未完備，此處連線將形成封閉死環，強制標叉 (x)！',
-                  en: 'Anti-subloop theorem: Loop will prematurely close while clues remain; must mark cross (x)!',
+                  zh: '防早熟閉環定理：其餘線索未完備，此處連線將形成封閉死環，強制標叉 (x)！',
+                  en: 'Anti-subloop theorem: Premature closure while clues remain; must mark cross (x)!',
                 },
               });
             }
@@ -500,10 +500,10 @@ export class WebSlitherlinkGenerator {
                 edge: { type: 'v', r, c },
                 state: 2,
                 type: 'premature_avoidance',
-                rationale: '嚴格早熟死環防禦：此處連線將導致迴路局部提前封閉',
+                rationale: '拓撲防早熟閉環定理：其餘線索未完備，此處連線形成死鎖',
                 humanReadable: {
-                  zh: '防早熟閉環定理：其餘線索尚未完備，此處連線將形成封閉死環，強制標叉 (x)！',
-                  en: 'Anti-subloop theorem: Loop will prematurely close while clues remain; must mark cross (x)!',
+                  zh: '防早熟閉環定理：其餘線索未完備，此處連線將形成封閉死環，強制標叉 (x)！',
+                  en: 'Anti-subloop theorem: Premature closure while clues remain; must mark cross (x)!',
                 },
               });
             }
@@ -523,7 +523,7 @@ export class WebSlitherlinkGenerator {
                 edge: { type, r: er, c: ec },
                 state: 2,
                 type: 'zero_cross',
-                rationale: '線索 0 周圍禁絕一切線段',
+                rationale: '線索 0 四周禁絕任何線段',
                 humanReadable: {
                   zh: '線索 0 四周不能有任何線段，必須標記叉號 (x)。',
                   en: 'Zero clue forbids surrounding lines; mark cross (x).',
@@ -539,7 +539,7 @@ export class WebSlitherlinkGenerator {
       }
     }
 
-    // 定式 3: 角落 3 定式 (Corner 3)
+    // 定式 3: 角落 3 定式
     const corners3: [number, number, [EdgeType, number, number][]][] = [
       [0, 0, [['h', 0, 0], ['v', 0, 0]]],
       [0, cols - 1, [['h', 0, cols - 1], ['v', 0, cols]]],
@@ -568,89 +568,7 @@ export class WebSlitherlinkGenerator {
       }
     }
 
-    // 定式 4: 角落 1 與角落 2 幾何約束 (Corner 1 & 2)
-    const cornersOther: [number, number, [EdgeType, number, number][], [EdgeType, number, number][]][] = [
-      [0, 0, [['h', 0, 0], ['v', 0, 0]], [['h', 1, 0], ['v', 0, 1]]],
-      [0, cols - 1, [['h', 0, cols - 1], ['v', 0, cols]], [['h', 1, cols - 1], ['v', 0, cols - 1]]],
-      [rows - 1, 0, [['h', rows, 0], ['v', rows - 1, 0]], [['h', rows - 1, 0], ['v', rows - 1, 1]]],
-      [rows - 1, cols - 1, [['h', rows, cols - 1], ['v', rows - 1, cols]], [['h', rows - 1, cols - 1], ['v', rows - 1, cols - 1]]],
-    ];
-
-    for (let i = 0; i < 4; i++) {
-      const [cr, cc, outer, inner] = cornersOther[i];
-      const cl = clues[cr][cc];
-      if (cl === 1) {
-        // 角落 1：兩條外側邊若已確定一條，其外角頂點必不可形成轉折
-        if ((curH[outer[0][1]][outer[0][2]] === 1 || curV[outer[1][1]][outer[1][2]] === 1)) {
-          for (const [it, ir, ic] of inner) {
-            if ((it === 'h' ? curH[ir][ic] : curV[ir][ic]) === 0) {
-              deductions.set(`${it}_${ir}_${ic}`, {
-                edge: { type: it, r: ir, c: ic },
-                state: 2,
-                type: 'corner_one_two',
-                rationale: '角落 1 幾何排除定式：內側邊界阻斷',
-                humanReadable: {
-                  zh: '角落線索 1 外側已連線，內側對偶邊必須標叉 (x)！',
-                  en: 'Corner 1 outer connected; inner dual edge must be crossed out!',
-                },
-              });
-            }
-          }
-        }
-      } else if (cl === 2) {
-        // 角落 2：兩外邊等價性約束
-        const v1 = outer[0][0] === 'h' ? curH[outer[0][1]][outer[0][2]] : curV[outer[0][1]][outer[0][2]];
-        const v2 = outer[1][0] === 'h' ? curH[outer[1][1]][outer[1][2]] : curV[outer[1][1]][outer[1][2]];
-        if (v1 === 2 && v2 === 0) {
-          deductions.set(`${outer[1][0]}_${outer[1][1]}_${outer[1][2]}`, {
-            edge: { type: outer[1][0], r: outer[1][1], c: outer[1][2] },
-            state: 1,
-            type: 'corner_one_two',
-            rationale: '角落 2 轉折補償：一外側邊受阻則另一外側邊必出線',
-            humanReadable: {
-              zh: '角落線索 2 一側受阻標叉，另一外側軌道必須受迫通線！',
-              en: 'Corner 2 one side blocked; other outer track must connect!',
-            },
-          });
-        }
-      }
-    }
-
-    // 定式 5: 斜對角 3-0 排斥定式 (Diagonal 3-0 Lock)
-    for (let r = 0; r < rows; r++) {
-      for (let c = 0; c < cols; c++) {
-        if (clues[r][c] === 3) {
-          const diagChecks: [number, number, [EdgeType, number, number][]][] = [
-            [r - 1, c - 1, [['h', r + 1, c], ['v', r, c + 1]]],
-            [r - 1, c + 1, [['h', r + 1, c], ['v', r, c]]],
-            [r + 1, c - 1, [['h', r, c], ['v', r, c + 1]]],
-            [r + 1, c + 1, [['h', r, c], ['v', r, c]]],
-          ];
-          for (let d = 0; d < 4; d++) {
-            const [or, oc, farEdges] = diagChecks[d];
-            if (or >= 0 && or < rows && oc >= 0 && oc < cols && clues[or][oc] === 0) {
-              for (let fe = 0; fe < farEdges.length; fe++) {
-                const [ft, fr, fc] = farEdges[fe];
-                if ((ft === 'h' ? curH[fr][fc] : curV[fr][fc]) === 0) {
-                  deductions.set(`${ft}_${fr}_${fc}`, {
-                    edge: { type: ft, r: fr, c: fc },
-                    state: 1,
-                    type: 'diagonal_30',
-                    rationale: '斜對角 3-0 排斥定式：遠離 0 的兩條外側邊必須連線',
-                    humanReadable: {
-                      zh: '3 與 0 對角相鄰：遠離 0 的兩條外側邊必須連線！',
-                      en: 'Diagonal 3-0 pattern forces opposite edges to connect!',
-                    },
-                  });
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-
-    // 定式 6: 相鄰雙 3 定式 (Adjacent 3s)
+    // 定式 4: 相鄰雙 3
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         if (c + 1 < cols && clues[r][c] === 3 && clues[r][c + 1] === 3) {
@@ -666,10 +584,10 @@ export class WebSlitherlinkGenerator {
                 edge: { type: t, r: er, c: ec },
                 state: 1,
                 type: 'adjacent_threes',
-                rationale: '水平相鄰雙 3 必然形成三重平行走線',
+                rationale: '相鄰雙 3 經典定式：外側與共用邊連線',
                 humanReadable: {
                   zh: '相鄰雙 3 經典定式：外側與共用邊必須連線。',
-                  en: 'Adjacent 3-3 pattern forces outer and common edges to connect.',
+                  en: 'Adjacent 3-3 forces outer and common edges to connect.',
                 },
               });
             }
@@ -700,33 +618,82 @@ export class WebSlitherlinkGenerator {
       }
     }
 
-    // 定式 7: 相鄰雙 2 深度連鎖傳播 (Chain of 2-2)
+    // 定式 5: 相鄰 1-3 互斥與對偶定式
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
-        if (c + 1 < cols && clues[r][c] === 2 && clues[r][c + 1] === 2) {
-          if (curV[r][c] === 2 && curV[r][c + 2] === 0) {
-            deductions.set(`v_${r}_${c + 2}`, {
-              edge: { type: 'v', r, c: c + 2 },
+        if (c + 1 < cols) {
+          const c1 = clues[r][c];
+          const c2 = clues[r][c + 1];
+          if ((c1 === 1 && c2 === 3) || (c1 === 3 && c2 === 1)) {
+            const outerV = c1 === 3 ? c : c + 2;
+            if (curV[r][c + 1] === 2 && curV[r][outerV] === 0) {
+              deductions.set(`v_${r}_${outerV}`, {
+                edge: { type: 'v', r, c: outerV },
+                state: 1,
+                type: 'one_three_conflict',
+                rationale: '1-3 相鄰定式：共用邊標叉推動線索 3 外側邊通線',
+                humanReadable: {
+                  zh: '1 與 3 相鄰：共用邊標叉時，線索 3 外側邊必通！',
+                  en: 'Adjacent 1-3: Blocked shared edge forces 3 outer edge.',
+                },
+              });
+            }
+          }
+        }
+      }
+    }
+
+    // 定式 6: 對角雙 2 定式 (Diagonal 2-2 Lock)
+    for (let r = 0; r < rows - 1; r++) {
+      for (let c = 0; c < cols - 1; c++) {
+        if (clues[r][c] === 2 && clues[r + 1][c + 1] === 2) {
+          if (curH[r][c] === 2 && curV[r + 1][c + 2] === 0) {
+            deductions.set(`v_${r + 1}_${c + 2}`, {
+              edge: { type: 'v', r: r + 1, c: c + 2 },
               state: 1,
-              type: 'chain_of_twos',
-              rationale: '相鄰雙 2 鏈式傳播：外側受阻推動對側出線',
+              type: 'diagonal_twos',
+              rationale: '對角雙 2 約束：主對角左上外側受阻，右下對偶外邊受迫通線',
               humanReadable: {
-                zh: '相鄰雙 2 鏈式定式：左外側受阻標叉，右外側必須受迫通線！',
-                en: 'Chain of 2s: Blocked outer edge forces opposite boundary to connect!',
+                zh: '對角雙 2 定式：左上受阻，右下外側垂直邊必須連線！',
+                en: 'Diagonal 2-2: Upper-left blocked forces lower-right outer line.',
+              },
+            });
+          }
+          if (curV[r][c] === 2 && curH[r + 2][c + 1] === 0) {
+            deductions.set(`h_${r + 2}_${c + 1}`, {
+              edge: { type: 'h', r: r + 2, c: c + 1 },
+              state: 1,
+              type: 'diagonal_twos',
+              rationale: '對角雙 2 約束：主對角左側外立邊受阻，底部對偶橫邊必須通線',
+              humanReadable: {
+                zh: '對角雙 2 定式：左側立邊標叉，底部對偶橫邊強制通線！',
+                en: 'Diagonal 2-2: Left vertical blocked forces bottom outer horizontal line.',
               },
             });
           }
         }
-        if (r + 1 < rows && clues[r][c] === 2 && clues[r + 1][c] === 2) {
-          if (curH[r][c] === 2 && curH[r + 2][c] === 0) {
+        if (clues[r][c + 1] === 2 && clues[r + 1][c] === 2) {
+          if (curH[r][c + 1] === 2 && curV[r + 1][c] === 0) {
+            deductions.set(`v_${r + 1}_${c}`, {
+              edge: { type: 'v', r: r + 1, c },
+              state: 1,
+              type: 'diagonal_twos',
+              rationale: '對角雙 2 約束：副對角右上外側受阻，左下對偶外邊受迫通線',
+              humanReadable: {
+                zh: '對角雙 2 定式：右上受阻，左下外側垂直邊必須連線！',
+                en: 'Diagonal 2-2: Upper-right blocked forces lower-left outer line.',
+              },
+            });
+          }
+          if (curV[r][c + 2] === 2 && curH[r + 2][c] === 0) {
             deductions.set(`h_${r + 2}_${c}`, {
               edge: { type: 'h', r: r + 2, c },
               state: 1,
-              type: 'chain_of_twos',
-              rationale: '垂直雙 2 鏈式傳播：頂部受阻底部必通線',
+              type: 'diagonal_twos',
+              rationale: '對角雙 2 約束：副對角右側外立邊受阻，底部對偶橫邊必須通線',
               humanReadable: {
-                zh: '垂直雙 2 鏈式定式：頂部標叉則底部橫邊必須通線！',
-                en: 'Vertical chain of 2s: Top blocked forces bottom edge to connect!',
+                zh: '對角雙 2 定式：右側標叉，底部左側橫邊強制通線！',
+                en: 'Diagonal 2-2: Right blocked forces bottom-left horizontal line.',
               },
             });
           }
@@ -734,7 +701,41 @@ export class WebSlitherlinkGenerator {
       }
     }
 
-    // 定式 8: 頂點度數飽和與延伸 (Degree 2 Saturation & Extension)
+    // 定式 7: 斜對角 3-0 排斥定式
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        if (clues[r][c] === 3) {
+          const diagChecks: [number, number, [EdgeType, number, number][]][] = [
+            [r - 1, c - 1, [['h', r + 1, c], ['v', r, c + 1]]],
+            [r - 1, c + 1, [['h', r + 1, c], ['v', r, c]]],
+            [r + 1, c - 1, [['h', r, c], ['v', r, c + 1]]],
+            [r + 1, c + 1, [['h', r, c], ['v', r, c]]],
+          ];
+          for (let d = 0; d < 4; d++) {
+            const [or, oc, farEdges] = diagChecks[d];
+            if (or >= 0 && or < rows && oc >= 0 && oc < cols && clues[or][oc] === 0) {
+              for (let fe = 0; fe < farEdges.length; fe++) {
+                const [ft, fr, fc] = farEdges[fe];
+                if ((ft === 'h' ? curH[fr][fc] : curV[fr][fc]) === 0) {
+                  deductions.set(`${ft}_${fr}_${fc}`, {
+                    edge: { type: ft, r: fr, c: fc },
+                    state: 1,
+                    type: 'diagonal_30',
+                    rationale: '斜對角 3-0 排斥定式：遠離 0 的兩條外側邊必須連線',
+                    humanReadable: {
+                      zh: '3 與 0 對角相鄰：遠離 0 的兩條外側邊必須連線！',
+                      en: 'Diagonal 3-0 forces opposite outer edges to connect.',
+                    },
+                  });
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // 定式 8: 頂點度數飽和與延伸
     for (let r = 0; r <= rows; r++) {
       for (let c = 0; c <= cols; c++) {
         const edges: { type: EdgeType; er: number; ec: number; val: number }[] = [];
@@ -755,7 +756,7 @@ export class WebSlitherlinkGenerator {
                 rationale: '頂點度數已滿 (2)，其餘分支邊標叉',
                 humanReadable: {
                   zh: '交叉點已有兩條線進出，其餘方向必須標記叉號 (x)。',
-                  en: 'Vertex has reached degree 2; remaining edges must be crossed out.',
+                  en: 'Vertex reached degree 2; remaining edges crossed out.',
                 },
               });
             }
@@ -771,7 +772,7 @@ export class WebSlitherlinkGenerator {
               rationale: '單一連續迴路禁止斷頭，線路必須向前延伸',
               humanReadable: {
                 zh: '迴路不能有孤立死胡同，此邊必須繼續向前延伸。',
-                en: 'Loop cannot end here; line must continue through open edge.',
+                en: 'Loop cannot terminate; line extends through open edge.',
               },
             });
           }
@@ -779,7 +780,7 @@ export class WebSlitherlinkGenerator {
       }
     }
 
-    // 定式 9: 線索完成與剩餘邊收尾 (Clue Completion)
+    // 定式 9: 線索完成與剩餘邊收尾
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         const clue = clues[r][c];
@@ -805,7 +806,7 @@ export class WebSlitherlinkGenerator {
                 rationale: `線索 ${clue} 已滿足，剩餘空白邊全數標叉`,
                 humanReadable: {
                   zh: `單元格已滿足線索 ${clue}，其餘邊全部標記叉號 (x)。`,
-                  en: `Cell has reached clue ${clue}; remaining open edges must be crossed out.`,
+                  en: `Cell has reached clue ${clue}; remaining open edges crossed out.`,
                 },
               });
             }
@@ -860,214 +861,190 @@ export class WebSlitherlinkGenerator {
     };
   }
 
-  /**
-   * 帶有高影響力啟發式排序與非阻塞熔斷的唯一解求解器
-   */
-  public static countSolutions(
+  private static checkImmediateConflict(
     rows: number,
     cols: number,
     clues: (number | null)[][],
-    limit: number = 2
-  ): number {
+    h: number[][],
+    v: number[][]
+  ): { conflict: boolean; reason: string } {
     const ptCols = cols + 1;
-    const curH: boolean[][] = Array.from({ length: rows + 1 }, () => Array(cols).fill(false));
-    const curV: boolean[][] = Array.from({ length: rows }, () => Array(cols + 1).fill(false));
-    const ptDeg = new Uint8Array((rows + 1) * ptCols);
-
-    let solutions = 0;
-    let stepBudget = 320;
-    const startTime = typeof performance !== 'undefined' ? performance.now() : Date.now();
-
-    // 啟發式排序：優先決策圍繞 3 與 0 的關鍵高權重邊界
-    const edgeScoreMap = new Map<string, number>();
-    const allEdges: { type: EdgeType; r: number; c: number }[] = [];
+    const dsu = new FastVertexDSU((rows + 1) * ptCols);
+    const deg = new Uint8Array((rows + 1) * ptCols);
 
     for (let r = 0; r <= rows; r++) {
-      for (let c = 0; c < cols; c++) allEdges.push({ type: 'h', r, c });
+      for (let c = 0; c < cols; c++) {
+        if (h[r][c] === 1) {
+          const u = r * ptCols + c;
+          const w = r * ptCols + c + 1;
+          if (++deg[u] > 2 || ++deg[w] > 2) return { conflict: true, reason: '度數溢出 (Degree > 2)' };
+          dsu.union(u, w);
+        }
+      }
     }
     for (let r = 0; r < rows; r++) {
-      for (let c = 0; c <= cols; c++) allEdges.push({ type: 'v', r, c });
+      for (let c = 0; c <= cols; c++) {
+        if (v[r][c] === 1) {
+          const u = r * ptCols + c;
+          const w = (r + 1) * ptCols + c;
+          if (++deg[u] > 2 || ++deg[w] > 2) return { conflict: true, reason: '度數溢出 (Degree > 2)' };
+          dsu.union(u, w);
+        }
+      }
     }
 
-    for (let i = 0; i < allEdges.length; i++) {
-      const e = allEdges[i];
-      let score = 0;
-      if (e.type === 'h') {
-        if (e.r > 0 && clues[e.r - 1][e.c] !== null) score += (clues[e.r - 1][e.c] === 3 || clues[e.r - 1][e.c] === 0 ? 5 : 2);
-        if (e.r < rows && clues[e.r][e.c] !== null) score += (clues[e.r][e.c] === 3 || clues[e.r][e.c] === 0 ? 5 : 2);
-      } else {
-        if (e.c > 0 && clues[e.r][e.c - 1] !== null) score += (clues[e.r][e.c - 1] === 3 || clues[e.r][e.c - 1] === 0 ? 5 : 2);
-        if (e.c < cols && clues[e.r][e.c] !== null) score += (clues[e.r][e.c] === 3 || clues[e.r][e.c] === 0 ? 5 : 2);
+    let remainingClueDemand = 0;
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const clue = clues[r][c];
+        if (clue === null) continue;
+        const lines = (h[r][c] === 1 ? 1 : 0) + (h[r + 1][c] === 1 ? 1 : 0) + (v[r][c] === 1 ? 1 : 0) + (v[r][c + 1] === 1 ? 1 : 0);
+        const crosses = (h[r][c] === 2 ? 1 : 0) + (h[r + 1][c] === 2 ? 1 : 0) + (v[r][c] === 2 ? 1 : 0) + (v[r][c + 1] === 2 ? 1 : 0);
+        if (lines > clue) return { conflict: true, reason: `線索 ${clue} 超額飽和` };
+        if (4 - crosses < clue) return { conflict: true, reason: `線索 ${clue} 可用邊不足` };
+        if (clue > lines) remainingClueDemand += (clue - lines);
       }
-      edgeScoreMap.set(`${e.type}_${e.r}_${e.c}`, score);
     }
 
-    allEdges.sort((a, b) => (edgeScoreMap.get(`${b.type}_${b.r}_${b.c}`) || 0) - (edgeScoreMap.get(`${a.type}_${a.r}_${a.c}`) || 0));
-
-    const backtrack = (idx: number): void => {
-      if (solutions >= limit || stepBudget-- <= 0) return;
-      if (stepBudget % 50 === 0) {
-        const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
-        if (now - startTime > 45) {
-          solutions = 999; // 標記為超時捨棄
-          return;
+    for (let r = 0; r <= rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        if (h[r][c] === 0) {
+          const u = r * ptCols + c;
+          const w = r * ptCols + c + 1;
+          if (deg[u] === 1 && deg[w] === 1 && dsu.find(u) === dsu.find(w) && remainingClueDemand > 0) {
+            return { conflict: true, reason: '局部提前閉環死鎖' };
+          }
         }
       }
+    }
 
-      if (idx === allEdges.length) {
-        let allCluesSatisfied = true;
-        for (let r = 0; r < rows; r++) {
-          for (let c = 0; c < cols; c++) {
-            const cl = clues[r][c];
-            if (cl !== null) {
-              let count = 0;
-              if (curH[r][c]) count++;
-              if (curH[r + 1][c]) count++;
-              if (curV[r][c]) count++;
-              if (curV[r][c + 1]) count++;
-              if (count !== cl) {
-                allCluesSatisfied = false;
-                break;
-              }
-            }
-          }
-          if (!allCluesSatisfied) break;
-        }
-
-        if (allCluesSatisfied && WebSlitherlinkGenerator.isStrictSingleLoop(curH, curV, rows, cols)) {
-          solutions++;
-        }
-        return;
-      }
-
-      const e = allEdges[idx];
-      const p1Idx = e.r * ptCols + e.c;
-      const p2Idx = e.type === 'h' ? e.r * ptCols + (e.c + 1) : (e.r + 1) * ptCols + e.c;
-
-      // 分支 1: 置為連線
-      if (ptDeg[p1Idx] < 2 && ptDeg[p2Idx] < 2) {
-        if (e.type === 'h') curH[e.r][e.c] = true;
-        else curV[e.r][e.c] = true;
-
-        ptDeg[p1Idx]++;
-        ptDeg[p2Idx]++;
-
-        let validClue = true;
-        if (e.type === 'h') {
-          if (e.r > 0 && clues[e.r - 1][e.c] !== null) {
-            let count = 0;
-            if (curH[e.r - 1][e.c]) count++;
-            if (curH[e.r][e.c]) count++;
-            if (curV[e.r - 1][e.c]) count++;
-            if (curV[e.r - 1][e.c + 1]) count++;
-            if (count > clues[e.r - 1][e.c]!) validClue = false;
-          }
-          if (validClue && e.r < rows && clues[e.r][e.c] !== null) {
-            let count = 0;
-            if (curH[e.r][e.c]) count++;
-            if (curH[e.r + 1][e.c]) count++;
-            if (curV[e.r][e.c]) count++;
-            if (curV[e.r][e.c + 1]) count++;
-            if (count > clues[e.r][e.c]!) validClue = false;
-          }
-        } else {
-          if (e.c > 0 && clues[e.r][e.c - 1] !== null) {
-            let count = 0;
-            if (curH[e.r][e.c - 1]) count++;
-            if (curH[e.r + 1][e.c - 1]) count++;
-            if (curV[e.r][e.c - 1]) count++;
-            if (curV[e.r][e.c]) count++;
-            if (count > clues[e.r][e.c - 1]!) validClue = false;
-          }
-          if (validClue && e.c < cols && clues[e.r][e.c] !== null) {
-            let count = 0;
-            if (curH[e.r][e.c]) count++;
-            if (curH[e.r + 1][e.c]) count++;
-            if (curV[e.r][e.c]) count++;
-            if (curV[e.r][e.c + 1]) count++;
-            if (count > clues[e.r][e.c]!) validClue = false;
-          }
-        }
-
-        if (validClue) {
-          backtrack(idx + 1);
-        }
-
-        if (e.type === 'h') curH[e.r][e.c] = false;
-        else curV[e.r][e.c] = false;
-
-        ptDeg[p1Idx]--;
-        ptDeg[p2Idx]--;
-      }
-
-      // 分支 2: 不選該邊
-      backtrack(idx + 1);
-    };
-
-    backtrack(0);
-    return solutions;
+    return { conflict: false, reason: '' };
   }
 
-  /**
-   * 深度 3 步反證法探針與推導樹分析器
-   */
-  private static simulateChampionshipSolving(
+  private static probeHumanBoundedContradiction(
+    rows: number,
+    cols: number,
+    clues: (number | null)[][],
+    curH: number[][],
+    curV: number[][]
+  ): {
+    edge: SlitherEdge;
+    state: 2;
+    chain: ContradictionNode[];
+    depth: number;
+    rationale: string;
+    humanReadable: { zh: string; en: string };
+  } | null {
+    const edgeCandidates: SlitherEdge[] = [];
+    for (let r = 0; r <= rows; r++) {
+      for (let c = 0; c < cols; c++) if (curH[r][c] === 0) edgeCandidates.push({ type: 'h', r, c });
+    }
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c <= cols; c++) if (curV[r][c] === 0) edgeCandidates.push({ type: 'v', r, c });
+    }
+
+    const MAX_HUMAN_DEPTH = 7;
+    const BEAM_WIDTH = 3;
+
+    for (const cand of edgeCandidates) {
+      const rootH = curH.map((row) => [...row]);
+      const rootV = curV.map((row) => [...row]);
+      if (cand.type === 'h') rootH[cand.r][cand.c] = 1;
+      else rootV[cand.r][cand.c] = 1;
+
+      interface ProbeState {
+        h: number[][];
+        v: number[][];
+        chain: ContradictionNode[];
+        depth: number;
+      }
+
+      const frontier: ProbeState[] = [{
+        h: rootH,
+        v: rootV,
+        chain: [{ edge: cand, assumedState: 1, step: 0, reason: '假設實線' }],
+        depth: 0,
+      }];
+
+      while (frontier.length > 0) {
+        const current = frontier.shift()!;
+        const conflictCheck = this.checkImmediateConflict(rows, cols, clues, current.h, current.v);
+
+        if (conflictCheck.conflict) {
+          return {
+            edge: cand,
+            state: 2,
+            chain: current.chain,
+            depth: current.depth,
+            rationale: `第 ${current.depth} 步觸發矛盾：${conflictCheck.reason}`,
+            humanReadable: {
+              zh: `可追溯反證：前向推演 ${current.depth} 步引發${conflictCheck.reason}，此處強制標叉 (x)！`,
+              en: `Human Traceable Proof: Depth ${current.depth} leads to ${conflictCheck.reason}; forced cross (x)!`,
+            },
+          };
+        }
+
+        if (current.depth >= MAX_HUMAN_DEPTH) continue;
+
+        const deductions = this.getStrictDeductions(rows, cols, clues, current.h, current.v);
+        if (deductions.size === 0) continue;
+
+        const sortedDeductions = Array.from(deductions.values())
+          .sort((a, b) => (TECHNIQUE_WEIGHTS[b.type] || 0) - (TECHNIQUE_WEIGHTS[a.type] || 0))
+          .slice(0, BEAM_WIDTH);
+
+        for (const d of sortedDeductions) {
+          const nextH = current.h.map((r) => [...r]);
+          const nextV = current.v.map((r) => [...r]);
+          if (d.edge.type === 'h') nextH[d.edge.r][d.edge.c] = d.state;
+          else nextV[d.edge.r][d.edge.c] = d.state;
+
+          frontier.push({
+            h: nextH,
+            v: nextV,
+            chain: [...current.chain, { edge: d.edge, assumedState: d.state, step: current.depth + 1, reason: d.rationale }],
+            depth: current.depth + 1,
+          });
+        }
+      }
+    }
+
+    return null;
+  }
+
+  public static countSolutionsCognitivelyBounded(
     rows: number,
     cols: number,
     clues: (number | null)[][]
-  ): {
-    steps: SlitherStep[];
-    maxForcedChain: number;
-    totalTechniqueWeight: number;
-    pureRate: number;
-    hypothesisCount: number;
-    style: HumanSolvingStyle;
-    hasPerfectLogicOrder: boolean;
-    diagnosticTitleZh: string;
-    diagnosticTitleEn: string;
-  } {
+  ): { count: number; steps: SlitherStep[] } {
     const curH: number[][] = Array.from({ length: rows + 1 }, () => Array(cols).fill(0));
     const curV: number[][] = Array.from({ length: rows }, () => Array(cols + 1).fill(0));
     const steps: SlitherStep[] = [];
 
-    let progressed = true;
     let stepCount = 0;
-    let currentChain = 0;
-    let maxChain = 0;
-    let totalTechniqueWeight = 0;
-    let hypothesisCount = 0;
-    let strictlyOrderedCount = 0;
+    let progressed = true;
 
     while (progressed) {
       progressed = false;
       const deductions = this.getStrictDeductions(rows, cols, clues, curH, curV);
 
       if (deductions.size > 0) {
-        if (deductions.size === 1) strictlyOrderedCount++;
-
-        let chosenItem = Array.from(deductions.values()).find(
-          (d) => d.type === 'premature_avoidance' || d.type === 'diagonal_30' || d.type === 'chain_of_twos' || d.type === 'adjacent_threes'
+        let chosen = Array.from(deductions.values()).find(
+          (d) => d.type === 'premature_avoidance' || d.type === 'diagonal_twos' || d.type === 'adjacent_threes'
         );
-        if (!chosenItem) {
-          chosenItem = deductions.values().next().value;
-        }
+        if (!chosen) chosen = deductions.values().next().value;
 
-        const { edge, state, type, rationale, humanReadable } = chosenItem!;
+        const { edge, state, type, rationale, humanReadable } = chosen!;
         if (edge.type === 'h') curH[edge.r][edge.c] = state;
         else curV[edge.r][edge.c] = state;
 
         stepCount++;
-        currentChain++;
-        maxChain = Math.max(maxChain, currentChain);
-        const weight = TECHNIQUE_WEIGHTS[type] || 2;
-        totalTechniqueWeight += weight;
-
         steps.push({
           step: stepCount,
           type,
           edge,
           state,
-          complexityWeight: weight,
+          complexityWeight: TECHNIQUE_WEIGHTS[type] || 2,
           candidateFanOut: deductions.size,
           rationale,
           humanReadable,
@@ -1075,99 +1052,315 @@ export class WebSlitherlinkGenerator {
 
         progressed = true;
       } else {
-        // 錦標賽冠軍思維：啟動深度 3 步反證法探針 (Lookahead-3 Trial & Error)
-        outerLookahead: for (let r = 0; r <= rows; r++) {
-          for (let c = 0; c < cols; c++) {
-            if (curH[r][c] === 0) {
-              curH[r][c] = 1;
-              let isContradiction = false;
+        const contra = this.probeHumanBoundedContradiction(rows, cols, clues, curH, curV);
+        if (contra) {
+          if (contra.edge.type === 'h') curH[contra.edge.r][contra.edge.c] = 2;
+          else curV[contra.edge.r][contra.edge.c] = 2;
 
-              // 深度 3 步遞迴推導
-              for (let depth = 0; depth < 3; depth++) {
-                const subDeductions = this.getStrictDeductions(rows, cols, clues, curH, curV);
-                for (const [, d] of subDeductions) {
-                  if (d.type === 'degree_saturation' && d.state === 1) isContradiction = true;
-                }
-                if (isContradiction || subDeductions.size === 0) break;
-                // 套用第一條定式繼續深探
-                const nextSub = subDeductions.values().next().value;
-                if (nextSub) {
-                  if (nextSub.edge.type === 'h') curH[nextSub.edge.r][nextSub.edge.c] = nextSub.state;
-                  else curV[nextSub.edge.r][nextSub.edge.c] = nextSub.state;
-                }
-              }
+          stepCount++;
+          steps.push({
+            step: stepCount,
+            type: 'hypothesis_contradiction',
+            edge: contra.edge,
+            state: 2,
+            complexityWeight: TECHNIQUE_WEIGHTS.hypothesis_contradiction,
+            candidateFanOut: 1,
+            contradictionChain: contra.chain,
+            contradictionDepth: contra.depth,
+            rationale: contra.rationale,
+            humanReadable: contra.humanReadable,
+          });
 
-              // 復原現場
-              curH[r][c] = 0;
-
-              if (isContradiction) {
-                curH[r][c] = 2; // 反證確定標叉
-                stepCount++;
-                hypothesisCount++;
-                totalTechniqueWeight += TECHNIQUE_WEIGHTS.hypothesis_contradiction;
-                steps.push({
-                  step: stepCount,
-                  type: 'hypothesis_contradiction',
-                  edge: { type: 'h', r, c },
-                  state: 2,
-                  complexityWeight: TECHNIQUE_WEIGHTS.hypothesis_contradiction,
-                  candidateFanOut: 1,
-                  rationale: '深度 3 步反證矛盾：假設此邊連線將在 3 步內引發連鎖飽和崩潰',
-                  humanReadable: {
-                    zh: 'WPC 優勝者級反證法：經 3 步前向探測引發度數溢出，反證此邊必須標叉 (x)！',
-                    en: 'Championship Lookahead-3: Branch leads to saturation contradiction; forced cross (x)!',
-                  },
-                });
-                progressed = true;
-                break outerLookahead;
-              }
-            }
-          }
+          progressed = true;
         }
       }
     }
 
-    const totalEdges = (rows + 1) * cols + rows * (cols + 1);
-    const pureRate = totalEdges > 0 ? Number((steps.length / (totalEdges * 0.7)).toFixed(2)) : 1.0;
-    const isStrictlyOrdered = hypothesisCount === 0 && (strictlyOrderedCount / Math.max(1, steps.length)) >= 0.7;
+    const finalH = curH.map((r) => r.map((cell) => cell === 1));
+    const finalV = curV.map((r) => r.map((cell) => cell === 1));
+    const isSingleLoop = this.isStrictSingleLoop(finalH, finalV, rows, cols);
 
-    const style: HumanSolvingStyle =
-      isStrictlyOrdered
-        ? 'strictly_ordered'
-        : hypothesisCount >= 2
-        ? 'hypothesis_deep'
-        : hypothesisCount === 1
-        ? 'hypothesis_light'
-        : 'pure_logic';
+    let allCluesSatisfied = true;
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const cl = clues[r][c];
+        if (cl !== null) {
+          let count = 0;
+          if (finalH[r][c]) count++;
+          if (finalH[r + 1][c]) count++;
+          if (finalV[r][c]) count++;
+          if (finalV[r][c + 1]) count++;
+          if (count !== cl) {
+            allCluesSatisfied = false;
+            break;
+          }
+        }
+      }
+      if (!allCluesSatisfied) break;
+    }
 
     return {
+      count: isSingleLoop && allCluesSatisfied ? 1 : 0,
       steps,
-      maxForcedChain: maxChain,
-      totalTechniqueWeight,
-      pureRate: Math.min(1.0, pureRate),
-      hypothesisCount,
-      style,
-      hasPerfectLogicOrder: isStrictlyOrdered,
-      diagnosticTitleZh:
-        style === 'strictly_ordered'
-          ? '🎯 絕對決定論之美（單一因果推導鏈）'
-          : style === 'hypothesis_deep'
-          ? '🏆 錦標賽冠軍思維（深度 3 步反證剪枝）'
-          : style === 'hypothesis_light'
-          ? '🧠 Mensa 級高階探測（精準試錯反證）'
-          : '⚡ 純幾何定理大師（100% 邏輯直覺收斂）',
-      diagnosticTitleEn:
-        style === 'strictly_ordered'
-          ? 'Strictly Ordered Determinism (Single-Path Deduction)'
-          : style === 'hypothesis_deep'
-          ? 'Championship Victor (Lookahead-3 Proof by Contradiction)'
-          : style === 'hypothesis_light'
-          ? 'Mensa-Grade Explorer (Precision Contradiction Probe)'
-          : 'Pure Theorem Master (100% Deterministic Convergence)',
     };
   }
 
-  private static createSafeFallbackLoop(rows: number, cols: number): { hEdges: boolean[][]; vEdges: boolean[][] } {
+  public static evaluateWpcMastery(
+    rows: number,
+    cols: number,
+    steps: SlitherStep[],
+    startingAnchors: number
+  ): WpcDiagnosticReport {
+    const n = steps.length;
+    if (n === 0) {
+      return {
+        pureRate: 1.0,
+        diversityIndex: 0,
+        strictlyOrdered: true,
+        meanFanOut: 1.0,
+        stdDevFanOut: 0.0,
+        startingAnchorCount: startingAnchors,
+        maxContradictionDepth: 0,
+        spatialEntropy: 1.0,
+        humanTraceabilityScore: 1.0,
+        techniqueCategories: { candidate: 0, geometric: 0, topological: 0, hypothetical: 0 },
+        cognitiveInflectionPoints: [],
+        wpcGrade: 'A',
+        wpcCommentZh: '空白盤面或已完成狀態。',
+        mentalTemplate: {
+          openingGambit: '無起始線索',
+          midgameTheme: '無中局演進',
+          climaxLocation: '無轉折高潮',
+          closingSequence: '直接閉合',
+        },
+      };
+    }
+
+    const domainCounts: Record<CognitiveDomain, number> = {
+      candidate: 0,
+      geometric: 0,
+      topological: 0,
+      hypothetical: 0,
+    };
+    const techFreq = new Map<string, number>();
+    let weightedScore = 0;
+    let hypoPenalty = 0;
+    let maxHypoDepth = 0;
+
+    const quadCounts = [0, 0, 0, 0];
+    const midR = rows / 2;
+    const midC = cols / 2;
+
+    for (const s of steps) {
+      const domain = TECHNIQUE_DOMAINS[s.type] || 'candidate';
+      domainCounts[domain]++;
+      techFreq.set(s.type, (techFreq.get(s.type) || 0) + 1);
+
+      const w = TECHNIQUE_WEIGHTS[s.type] || 2;
+      if (s.type === 'hypothesis_contradiction') {
+        hypoPenalty += w;
+        maxHypoDepth = Math.max(maxHypoDepth, s.contradictionDepth || 1);
+      } else {
+        weightedScore += w;
+      }
+
+      const qIdx = (s.edge.r < midR ? 0 : 2) + (s.edge.c < midC ? 0 : 1);
+      quadCounts[qIdx]++;
+    }
+
+    let spatialEntropy = 0;
+    for (let i = 0; i < 4; i++) {
+      if (quadCounts[i] > 0) {
+        const p = quadCounts[i] / n;
+        spatialEntropy -= p * Math.log2(p);
+      }
+    }
+    spatialEntropy = Number((spatialEntropy / 2).toFixed(3));
+
+    const pureRate = Number((weightedScore / Math.max(1, weightedScore + hypoPenalty)).toFixed(3));
+    let sumSq = 0;
+    for (const c of techFreq.values()) {
+      const p = c / n;
+      sumSq += p * p;
+    }
+    const diversityIndex = Number((1 - sumSq).toFixed(3));
+
+    const fanOuts = steps.map((s) => s.candidateFanOut || 1);
+    const meanFanOut = fanOuts.reduce((a, b) => a + b, 0) / n;
+    const variance = fanOuts.reduce((a, b) => a + Math.pow(b - meanFanOut, 2), 0) / n;
+    const stdDevFanOut = Math.sqrt(variance);
+
+    let depthFactor = 1.0;
+    if (maxHypoDepth > 3) depthFactor = Math.max(0.2, 1.0 - (maxHypoDepth - 3) * 0.2);
+    const anchorFactor = startingAnchors === 1 ? 1.0 : startingAnchors <= 3 ? 0.92 : 0.82;
+    const humanTraceabilityScore = Number(
+      (pureRate * 0.45 + depthFactor * 0.25 + anchorFactor * 0.15 + spatialEntropy * 0.15).toFixed(3)
+    );
+
+    const cognitiveInflectionPoints: WpcDiagnosticReport['cognitiveInflectionPoints'] = [];
+    for (let i = 1; i < n; i++) {
+      const prevDom = TECHNIQUE_DOMAINS[steps[i - 1].type] || 'candidate';
+      const currDom = TECHNIQUE_DOMAINS[steps[i].type] || 'candidate';
+      if (prevDom !== currDom) {
+        cognitiveInflectionPoints.push({
+          step: steps[i].step,
+          fromDomain: prevDom,
+          toDomain: currDom,
+          technique: steps[i].type,
+        });
+      }
+    }
+
+    let wpcGrade: 'S' | 'A' | 'B' | 'C' = 'C';
+    let wpcCommentZh = '';
+
+    const zeroContradiction = domainCounts.hypothetical === 0;
+    if (zeroContradiction && diversityIndex >= 0.65 && meanFanOut <= 1.06 && spatialEntropy >= 0.85) {
+      wpcGrade = 'S';
+      wpcCommentZh = '傳奇神話之作：全盤零假設反證，100% 純定式收斂。空間呼吸感均勻，四象限展開行雲流水，屬世界錦標賽決賽席位封神題。';
+    } else if (maxHypoDepth <= 2 && humanTraceabilityScore >= 0.85) {
+      wpcGrade = 'A';
+      wpcCommentZh = '世界級頂尖題：僅包含極短前向直覺探測，定式覆蓋緊湊均衡，具備卓越的推導張力。';
+    } else if (maxHypoDepth <= 5 && humanTraceabilityScore >= 0.70) {
+      wpcGrade = 'B';
+      wpcCommentZh = '標準競技題：推導流暢，定式具備一定挑戰度，適合計時排位選拔。';
+    } else {
+      wpcGrade = 'C';
+      wpcCommentZh = '計算發散題：局部依賴深度試錯或熱點空間高度偏置。';
+    }
+
+    const firstStep = steps[0];
+    const topTechnique = Array.from(techFreq.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] || 'clue_completion';
+    const majorInflection = cognitiveInflectionPoints[0];
+
+    const mentalTemplate = {
+      openingGambit: `開局以 (${firstStep.edge.r}, ${firstStep.edge.c}) 處的【${firstStep.type}】作為唯一精準錨點建立突破口。`,
+      midgameTheme: `中盤核心仰賴【${topTechnique}】主導走線，維持極低的分支發散度。`,
+      climaxLocation: majorInflection
+        ? `第 ${majorInflection.step} 步發生範疇躍遷，由【${majorInflection.fromDomain}】切入【${majorInflection.toDomain}】，引發全域拓撲定局。`
+        : '全局保持平滑推導，無劇烈範疇衝突。',
+      closingSequence: `收官階段由連鎖候選數與頂點延伸安全收斂閉環。`,
+    };
+
+    return {
+      pureRate,
+      diversityIndex,
+      strictlyOrdered: zeroContradiction && meanFanOut <= 1.05 && stdDevFanOut <= 0.3,
+      meanFanOut: Number(meanFanOut.toFixed(3)),
+      stdDevFanOut: Number(stdDevFanOut.toFixed(3)),
+      startingAnchorCount: startingAnchors,
+      maxContradictionDepth: maxHypoDepth,
+      spatialEntropy,
+      humanTraceabilityScore,
+      techniqueCategories: domainCounts,
+      cognitiveInflectionPoints,
+      wpcGrade,
+      wpcCommentZh,
+      mentalTemplate,
+    };
+  }
+
+  public static generate(tier: TierKey = 'expert', inputSeed?: number): PuzzleEntity {
+    const config = TIER_SPECS[tier] || TIER_SPECS.expert;
+    const { rows, cols, clueRemovalRate, minTechniqueWeight, allowSymmetry, baseIrt, timeLimitSec } = config;
+    const seed = inputSeed ?? Math.floor(Math.random() * 0x7fffffff);
+    const rnd = mulberry32(seed);
+
+    let attempts = 0;
+    const maxAttempts = 40;
+
+    while (attempts++ < maxAttempts) {
+      const { hEdges, vEdges } = this.generateOrganicValidLoop(rows, cols, allowSymmetry, rnd);
+      if (!this.isStrictSingleLoop(hEdges, vEdges, rows, cols)) continue;
+
+      const fullClues = this.extractClues(rows, cols, hEdges, vEdges);
+      const puzzleClues = fullClues.map((row) => [...row]);
+
+      for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+          if (rnd() < clueRemovalRate) {
+            puzzleClues[r][c] = null;
+            if (allowSymmetry) puzzleClues[rows - 1 - r][cols - 1 - c] = null;
+          }
+        }
+      }
+
+      const curHInit = Array.from({ length: rows + 1 }, () => Array(cols).fill(0));
+      const curVInit = Array.from({ length: rows }, () => Array(cols + 1).fill(0));
+      const initialDeductions = this.getStrictDeductions(rows, cols, puzzleClues, curHInit, curVInit);
+      const startingAnchors = initialDeductions.size;
+      if (startingAnchors === 0) continue;
+
+      const boundedResult = this.countSolutionsCognitivelyBounded(rows, cols, puzzleClues);
+      if (boundedResult.count !== 1) continue;
+
+      const totalWeight = boundedResult.steps.reduce((acc, s) => acc + s.complexityWeight, 0);
+      if (totalWeight < minTechniqueWeight) continue;
+
+      const wpcReport = this.evaluateWpcMastery(rows, cols, boundedResult.steps, startingAnchors);
+
+      if ((tier === 'master' || tier === 'legendary' || tier === 'ultimate') && wpcReport.wpcGrade === 'C') {
+        continue;
+      }
+
+      const puzzleId = `slither_${tier}_s${seed}`;
+      const spec: SlitherlinkSpec = {
+        rows,
+        cols,
+        clues: puzzleClues,
+        grid: puzzleClues,
+        solutionH: hEdges,
+        solutionV: vEdges,
+        solvingSteps: boundedResult.steps,
+        maxForcedChain: boundedResult.steps.length,
+        pureDeductionRate: wpcReport.pureRate,
+        topologicalEntropy: wpcReport.spatialEntropy,
+        isSymmetric180: allowSymmetry,
+        seed,
+        tier,
+        wpcReport,
+      };
+
+      return {
+        id: puzzleId,
+        category: 'loop_logic',
+        engine_type: 'slitherlink',
+        tier,
+        checksum: `SLITHER_${rows}x${cols}_MYTHIC_${seed}`,
+        puzzle: spec,
+        solution: { solutionH: hEdges, solutionV: vEdges },
+        cognitiveLoad: {
+          spatial: 0.98,
+          numeric: 0.3,
+          workingMemory: Number(Math.min(1.0, 0.4 + (totalWeight / 180) * 0.5).toFixed(2)),
+          inhibition: 0.95,
+        },
+        metrics: {
+          grid_size: rows,
+          rows,
+          cols,
+          estimated_time_sec: timeLimitSec,
+          irt_logit_difficulty: baseIrt,
+          wpc_grade: wpcReport.wpcGrade,
+          human_traceability_score: wpcReport.humanTraceabilityScore,
+          spatial_entropy: wpcReport.spatialEntropy,
+          seed,
+          actualTier: tier,
+        } as any,
+      };
+    }
+
+    return this._generateFallback(tier, rows, cols, seed, baseIrt, timeLimitSec);
+  }
+
+  private static _generateFallback(
+    tier: TierKey,
+    rows: number,
+    cols: number,
+    seed: number,
+    baseIrt: number,
+    timeLimitSec: number
+  ): PuzzleEntity {
     const hEdges: boolean[][] = Array.from({ length: rows + 1 }, () => Array(cols).fill(false));
     const vEdges: boolean[][] = Array.from({ length: rows }, () => Array(cols + 1).fill(false));
 
@@ -1180,142 +1373,14 @@ export class WebSlitherlinkGenerator {
       vEdges[r][cols] = true;
     }
 
-    return { hEdges, vEdges };
-  }
-
-  public static generate(tier: TierKey = 'kids', inputSeed?: number): PuzzleEntity {
-    const config = TIER_SPECS[tier] || TIER_SPECS.kids;
-    const { rows, cols, clueRemovalRate, minForcedChain, minTechniqueWeight, allowSymmetry, baseIrt, timeLimitSec } = config;
-    const seed = inputSeed ?? Math.floor(Math.random() * 0x7fffffff);
-    const rnd = mulberry32(seed);
-
-    let attempts = 0;
-    const maxAttempts = 35;
-
-    while (attempts++ < maxAttempts) {
-      const { hEdges, vEdges } = this.generateOrganicValidLoop(rows, cols, allowSymmetry, rnd);
-
-      if (!this.isStrictSingleLoop(hEdges, vEdges, rows, cols)) {
-        continue;
-      }
-
-      const fullClues = this.extractClues(rows, cols, hEdges, vEdges);
-      const entropy = this.computeTopologicalEntropy(hEdges, vEdges, rows, cols);
-
-      const puzzleClues = fullClues.map((row) => [...row]);
-      for (let r = 0; r < rows; r++) {
-        for (let c = 0; c < cols; c++) {
-          if (rnd() < clueRemovalRate) {
-            puzzleClues[r][c] = null;
-            if (allowSymmetry) {
-              puzzleClues[rows - 1 - r][cols - 1 - c] = null;
-            }
-          }
-        }
-      }
-
-      let hasAnchor = false;
-      for (let r = 0; r < rows; r++) {
-        for (let c = 0; c < cols; c++) {
-          if (puzzleClues[r][c] === 3 || puzzleClues[r][c] === 0) {
-            hasAnchor = true;
-            break;
-          }
-        }
-        if (hasAnchor) break;
-      }
-      if (!hasAnchor) puzzleClues[0][0] = fullClues[0][0];
-
-      const solutionsCount = this.countSolutions(rows, cols, puzzleClues, 2);
-      if (solutionsCount !== 1) {
-        continue;
-      }
-
-      const simResult = this.simulateChampionshipSolving(rows, cols, puzzleClues);
-
-      if ((tier === 'master' || tier === 'legendary' || tier === 'ultimate') &&
-          (simResult.maxForcedChain < Math.min(minForcedChain, 8) || simResult.totalTechniqueWeight < minTechniqueWeight)) {
-        continue;
-      }
-
-      // 對數懲罰技術積分，杜絕難度通膨
-      const dynamicIrt = Number((baseIrt + entropy * 0.30 + Math.log2(Math.max(1, simResult.totalTechniqueWeight)) * 0.25).toFixed(2));
-      const puzzleId = `slither_${tier}_s${seed}`;
-
-      const spec: SlitherlinkSpec = {
-        rows,
-        cols,
-        clues: puzzleClues,
-        grid: puzzleClues,
-        solutionH: hEdges,
-        solutionV: vEdges,
-        solvingSteps: simResult.steps,
-        maxForcedChain: simResult.maxForcedChain,
-        pureDeductionRate: simResult.pureRate,
-        topologicalEntropy: entropy,
-        isSymmetric180: allowSymmetry,
-        seed,
-        tier,
-        hasPerfectLogicOrder: simResult.hasPerfectLogicOrder,
-        humanProfile: {
-          style: simResult.style,
-          hypothesisCount: simResult.hypothesisCount,
-          diagnosticTitleZh: simResult.diagnosticTitleZh,
-          diagnosticTitleEn: simResult.diagnosticTitleEn,
-        },
-      };
-
-      return {
-        id: puzzleId,
-        category: 'loop_logic',
-        engine_type: 'slitherlink',
-        tier,
-        checksum: `SLITHER_${rows}x${cols}_WPC_${seed}`,
-        puzzle: spec,
-        solution: { solutionH: hEdges, solutionV: vEdges },
-        cognitiveLoad: {
-          spatial: 0.98,
-          numeric: 0.3,
-          workingMemory: Number(Math.min(1.0, 0.4 + (simResult.totalTechniqueWeight / 180) * 0.5).toFixed(2)),
-          inhibition: 0.95,
-        },
-        metrics: {
-          grid_size: rows,
-          rows,
-          cols,
-          estimated_time_sec: timeLimitSec,
-          irt_logit_difficulty: dynamicIrt,
-          human_sim_steps: simResult.steps.length,
-          topologicalEntropy: entropy,
-          seed,
-          actualTier: tier,
-          hasPerfectLogicOrder: simResult.hasPerfectLogicOrder,
-          hypothesisCount: simResult.hypothesisCount,
-        } as any,
-      };
-    }
-
-    return this._generateFallback(tier, rows, cols, seed, config.baseIrt, config.timeLimitSec);
-  }
-
-  private static _generateFallback(
-    tier: TierKey,
-    rows: number,
-    cols: number,
-    seed: number,
-    baseIrt: number,
-    timeLimitSec: number
-  ): PuzzleEntity {
-    const { hEdges: fallbackH, vEdges: fallbackV } = this.createSafeFallbackLoop(rows, cols);
-    const fallbackClues = this.extractClues(rows, cols, fallbackH, fallbackV);
-
-    const fallbackSpec: SlitherlinkSpec = {
+    const fallbackClues = this.extractClues(rows, cols, hEdges, vEdges);
+    const spec: SlitherlinkSpec = {
       rows,
       cols,
       clues: fallbackClues,
       grid: fallbackClues,
-      solutionH: fallbackH,
-      solutionV: fallbackV,
+      solutionH: hEdges,
+      solutionV: vEdges,
       solvingSteps: [],
       maxForcedChain: 4,
       pureDeductionRate: 1.0,
@@ -1323,12 +1388,26 @@ export class WebSlitherlinkGenerator {
       isSymmetric180: true,
       seed,
       tier,
-      hasPerfectLogicOrder: true,
-      humanProfile: {
-        style: 'strictly_ordered',
-        hypothesisCount: 0,
-        diagnosticTitleZh: '🎯 絕對決定論之美（單一因果推導鏈）',
-        diagnosticTitleEn: 'Strictly Ordered Determinism (Single-Path Deduction)',
+      wpcReport: {
+        pureRate: 1.0,
+        diversityIndex: 0.5,
+        strictlyOrdered: true,
+        meanFanOut: 1.0,
+        stdDevFanOut: 0.0,
+        startingAnchorCount: 1,
+        maxContradictionDepth: 0,
+        spatialEntropy: 1.0,
+        humanTraceabilityScore: 1.0,
+        techniqueCategories: { candidate: 1, geometric: 0, topological: 0, hypothetical: 0 },
+        cognitiveInflectionPoints: [],
+        wpcGrade: 'B',
+        wpcCommentZh: '保底邊界迴路。',
+        mentalTemplate: {
+          openingGambit: '邊界外圍開局',
+          midgameTheme: '單一路徑延伸',
+          climaxLocation: '無轉折點',
+          closingSequence: '直接封閉',
+        },
       },
     };
 
@@ -1338,8 +1417,8 @@ export class WebSlitherlinkGenerator {
       engine_type: 'slitherlink',
       tier,
       checksum: `SLITHER_FB_${rows}x${cols}_${seed}`,
-      puzzle: fallbackSpec,
-      solution: { solutionH: fallbackH, solutionV: fallbackV },
+      puzzle: spec,
+      solution: { solutionH: hEdges, solutionV: vEdges },
       cognitiveLoad: { spatial: 0.9, numeric: 0.3, workingMemory: 0.6, inhibition: 0.8 },
       metrics: {
         grid_size: rows,
