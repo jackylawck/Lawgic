@@ -41,6 +41,13 @@
     * **四維因果張量質量場 (Causal Tensor Field)**：預覽框輝度直接反映其對未解質數與邊界線索走向的空間拘束密度，徹底擺脫單純貼邊長度的平面誤導。
     * **雙擊退火蒸發 (Double-Tap Annealing)**：單擊戰術冷審視高亮、280ms 雙擊觸發 150ms 幾何向心退火縮小消失並伴隨 45ms 頓挫震動，徹底杜絕指尖靜電誤觸導致的心流崩塌。
     * **奇異點引力坍縮與無字觸覺遙測 (Singularity Collapse & Haptic Wave)**：結算瞬間矩形向最後落子質心向心爆炸塌陷為點；全盤徹底無字化，賽後秒數與步數透過 Web Vibration API 原生編碼為**長短脈衝引力波**（長震為十位、短震為個位），觸碰事件視界即可隨時觸覺重讀。
+  * **迴路封閉 (`slitherlink`)**：
+    * **7 步認知極限波束反證 (Human-Bounded Beam-3 BFS)**：拋棄電腦無上限暴力窮舉，將前向試錯深度嚴格錨定在人類短期工作記憶極限（$\le 7$ 步），配合寬度為 3 的波束搜尋（Beam-3 BFS）同時驗證度數溢出、線索餓死與 DSU 拓撲死環，杜絕非人道計算題。
+    * **四維認知範疇與破局轉折點 (Cognitive Inflection Tracking)**：演繹步進全面語意範疇化（候選域收斂 ➔ 幾何定式 ➔ 拓撲死環防禦 ➔ 反證假說），精確標記思維維度躍遷的「邏輯高潮點」，配合四象限空間 Shannon 熵（$\ge 0.85$）確保題目兼具時間韻律與空間呼吸感。
+    * **雙態幾何衝突透視 (Overflow vs. Starvation Radar)**：超越傳統單一線條超標報警，即時運算「邊界殘餘容量閉包（$4 - \text{Crosses} < \text{Clue}$）」，以琥珀色高亮提前警示「局部線索餓死死鎖」，將無效推理扼殺於萌芽。
+    * **Zen 專注心流與寧靜閉合 (Zen Mode & Pure Finish)**：支援全主鍵盲打操控（`[F]` 專注模式、`[H]` 定式因果、`[N]` 無猜測開關、`[Ctrl+Z/Y]` 撤銷重做），通關瞬間以非侵入式微型光環橫幅取代喧鬧彈窗；支援 `Shift + 點擊` 戰術強制覆寫與 `🧪 [Trial]` 試錯純度獨立標記，兼顧新手護欄與大師實驗自由。
+    * **多語言定式因果字典 (Multilingual Technique Registry)**：徹底廢棄機械代碼，即時以母語（中/英/日/德）展示「對角雙 2 排斥」、「1-3 相鄰互斥」、「斜對角 3-0 鎖定」等世界錦標賽定式名稱與因果解析鏈。
+    * **跨分頁無感秒級恢復 (Session Resilience)**：底層綁定 `sessionStorage` 狀態快照，長達數十分鐘的 Ultimate 終極棋譜即時自動固化，誤觸重整無縫續盤。
   * **暗夜數牆 (`nurikabe`)**：左鍵黑海 / 右鍵白點 / Shift 鍵直達三態分治、零顏色語義干擾之純邊框警告 HUD、全域必然性白名單校驗與雙割點假設態自動切換、無級歷史時間軸滑塊（Timeline Scrubber）與歷史違規幀快速跳轉、AI 覆盤殘局斷點無縫接管（Take Over）、雙軌時鐘（物理掛鐘 vs. 純粹運算時間）輸出客觀思考密度（Density of Thought）。
   * **黑白雙星 (`kropki`)**：標準數獨宮格拓撲、貫穿式負約束微結構細虛線（No-Dot Barrier）、同數戰場十字光環高亮、8ms 觸覺行程微震動反饋、可逆 Auto-Notes 快照避險、20% 分段配速條（Splits Telemetry）。
   * **數和密碼 (`kakuro`)**：跑道局部性解空間、180° 對稱區塊侵蝕黑牆、所見即所填候選條、極限和差集合閉包、真·正交容量閉區間擠壓（Capacity Squeeze）、中盤模 9 數字根同餘剪枝。
@@ -62,6 +69,7 @@
 | --- | --- | --- | --- |
 | `skyscraper` | **摩天透視** | 3D 心理旋轉 (Gv)、圖論約束傳播 (Gf)、工作記憶 (Gwm) | 雙向視線帶剪枝 Line-CSP 排列求解器、推導依賴有向無環圖 (Derivation DAG)、破局天王山張力評估 (The Crux Metric)、Cowan 4-Chunk 記憶極限校準懲罰、格式塔模塊壓縮率 (0.35~0.45)、終局反機械化審美濾鏡、四邊線索視覺熵和諧度檢驗、無模態長按草稿標記、Vim 盲打、預測性沙盤微光、賽後破局點劇本覆盤 |
 | `shikaku` | **四角分割** | 幾何整除、空間張量、頂點奇偶 | 互鎖咬合波前生長（Interlocking Growth）、破缺對稱（90/10 誘敵背刺）、邊界頂點奇偶閉合鎖定（Boundary Vertex Parity Lock）、因果張量質量場預覽、雙擊退火蒸發、奇異點向心引力坍縮、純觸覺震動脈衝電碼遙測（Zero-Text Haptic Telemetry） |
+| `slitherlink` | **迴路封閉** | 拓撲閉環、空間幾何定式 (Gv)、歸謬推理 (Gf) | 螺旋漢密爾頓擾動自然環路、雙向對角雙 2 / 1-3 相鄰互斥定式、7 步認知極限 Beam-3 BFS 反證探針、四象限空間 Shannon 熵平衡、語意範疇轉折點、Zen 專注模式、超標/飢餓雙態衝突雷達、Shift 戰術試錯覆寫標記、WPC 冠軍思路模板生成 |
 | `nurikabe` | **暗夜數牆** | 平面連通、圖論割點、拓撲張力 | 多源形態發生競賽生長（Morphogenesis）、動量轉向纏繞度調控、雙割點拓撲奇點過濾（Dual-Cut Singularity）、傳播優先回溯（CP-Solver）唯一解驗證、純邊框 HUD 透視、時間軸違規熱點書籤、思考密度（Density of Thought）計量 |
 | `kropki` | **黑白雙星** | 數理偏序、宮格空間排他 | 正統數獨宮格拓撲（2x2/2x3/3x3）、全相鄰無點負約束（Full Kropki）、雙向 X-Wing 魚形排除、4x 超加權樞紐錨定、真實斷點深度比（$\ge 80\%$）、貫穿虛線屏障、8ms 觸覺行程鍵盤 |
 | `kakuro` | **數和密碼** | 整數分割、數論同餘閉包 | 跑道局部性獨立去重、180° 對稱區塊侵蝕黑牆、雙向極限和差集合閉包、真·正交容量閉區間擠壓（Capacity Squeeze）、中盤模 9 數字根同餘剪枝、封閉疊代局部傳播、所見即所填候選條 |
@@ -74,7 +82,6 @@
 | `futoshiki` | **天平不等** | 有向無環圖 (DAG)、傳遞閉包 | Knuth 無偏真隨機拉丁方、全量 Naked Pair 雙格數對引擎、Floyd-Warshall 矩陣全域複用、中局平行分支度（$\ge 2.4$）、雙擊鎖定注入模式、殘局調度加速 |
 | `hitori` | **隻眼獨尊** | 負向排除、候選域熵減 | 視覺優先手筋層（三連全推導/三明治）、計數白黑雙向閉環、防碰撞批量塗黑、$\Delta\text{Domain}$ 加權熵減 Crux、紙本鉛筆草稿系統、50ms 極速熔斷 |
 | `yajilin` | **矢印連線** | 正交迴路、射線指向計數 | 閉合迴路自避檢驗、箭頭射線黑格拓撲遮蔽、相鄰黑格互斥判定、角落單元閉鎖剪枝 |
-| `slitherlink` | **迴路封閉** | 歐拉迴路、頂點度數約束 | 點網格拖曳畫線、0/3 經典定式推進、子環防早斷檢測 |
 | `tents` | **帳篷扎營** | 二分圖匹配、8-鄰域幾何 | 雙向抽屜原理閉鎖器、雙子樹角隅互斥破局器、Kuhn-Munkres 雙射唯一驗證 |
 | `lightup` | **燈泡照明** | 視線投射、全域命題邏輯 | 偽布林（PB）基數不等式邊界收緊、全域 2-SAT Kosaraju SCC 蘊含圖傳播、雙向對稱歸謬探針（±Reductio）、動態美學拓撲（低階連通長城 / 高階孤島光阱）、頓悟峰值（Eureka Moments）心流計量、左鍵燈泡/右鍵防護點雙模極速落子、零延遲行動端模式鎖定棒（Mode Stick）、WPC 鉑金級無試錯實操審計 |
 | `masyu` | **珍珠迴路** | 空間拓撲、正交折角約束 | 隨機自避蜿蜒迴路、貼邊黑白定式、相鄰黑珍珠排斥、CSP 唯一解 |
@@ -94,7 +101,7 @@ flowchart TD
     Gf --> Gwm["⚡ Gwm (工作記憶 / Working Memory)"]
 
     Gv --> M1["Maze (心智導航 / 拓撲避障)"]
-    Gv --> M2["Masyu / Slitherlink (拓撲封閉迴路)"]
+    Gv --> M2["Slitherlink / Masyu (拓撲封閉迴路 / 對角雙2幾何排斥 / 空間Shannon熵)"]
     Gv --> M3["Nurikabe (雙割點拓撲奇點 / 多源形態發生 / 平面連通)"]
     Gv --> M4["Light Up (雙向射線 / 2-SAT 全域覆蓋)"]
     Gv --> M5["Skyscraper (3D 視線遮擋 / 空間透視推演)"]
@@ -118,6 +125,7 @@ flowchart TD
     Gwm --> W5["雙軌思考密度計量 (Density of Thought)"]
     Gwm --> W6["Shikaku 觸覺震動引力波解碼 (Haptic Telemetry Recall)"]
     Gwm --> W7["Skyscraper (Cowan 4-Chunk 依賴鏈 / 格式塔模塊壓縮 / 實時節奏標尺)"]
+    Gwm --> W8["Slitherlink (7步人類認知極限波束反證 / 雙態飢餓死鎖預警 / 轉折點追蹤)"]
 
 ```
 
@@ -127,19 +135,20 @@ flowchart TD
 
 ```text
 ┌─────────────────────────────────────────────────────────────┐
-│                      Lawgic Presentation Layer              │
-│  (React 18 + TailwindCSS + iOS Safe Area + PWA Hardened SW) │
+│                       Lawgic Presentation Layer             │
+│   (React 18 + TailwindCSS + iOS Safe Area + PWA Hardened SW)│
 └──────────────┬───────────────────────────────┬──────────────┘
                │                               │
                ▼ (Zero-Copy Pointer)           ▼ (Causal Step Stream)
 ┌──────────────────────────────┐ ┌────────────────────────────┐
-│      WASM Core (Rust)        │ │  Procedural TS Generators  │
+│      WASM Core (Rust)        │ │  Procedural TS Engines     │
 │  • Compile-time PEERS LUT    │ │ • Full Kropki Box Topology │
 │  • Bitmask MRV Propagation   │ │ • Run-Local Modulo-9 Sieve │
 │  • O(1) Backtrack Snapshot   │ │ • Dual-Cut Singularity Nur │
 │                              │ │ • Vertex Parity Shikaku    │
 │                              │ │ • Fast Line-CSP Skyscraper │
 │                              │ │ • 2-SAT Kosaraju SCC Blk   │
+│                              │ │ • Beam-3 BFS Slitherlink   │
 └──────────────┬───────────────┘ └─────────────┬──────────────┘
                │                               │
                └───────────────┬───────────────┘
@@ -163,7 +172,7 @@ flowchart TD
 ### Architecture Highlights
 
 * **Zero-Copy WASM Core**: Computationally intensive solvers are written in Rust and compiled to WebAssembly, featuring compile-time static lookup tables (PEERS_TABLE) and zero-copy shared array memory mapping.
-* **Exact Cover Uniqueness Engine**: Mathematical certainty replacing heuristic timeouts. Across Sudoku, Nonogram, Dominoes, Hashi, Heyawake, Futoshiki, Hitori, Kakuro, Kropki, Light Up, Nurikabe, Yajilin, Shikaku, and Skyscraper, exact MRV backtracking solvers, Line-CSP engines, and value-constrained bipartite matching proofs guarantee puzzle solution cardinality equals exactly 1.
+* **Exact Cover Uniqueness Engine**: Mathematical certainty replacing heuristic timeouts. Across Sudoku, Nonogram, Dominoes, Hashi, Heyawake, Futoshiki, Hitori, Kakuro, Kropki, Light Up, Nurikabe, Yajilin, Shikaku, Slitherlink, and Skyscraper, exact MRV backtracking solvers, Line-CSP engines, and value-constrained bipartite matching proofs guarantee puzzle solution cardinality equals exactly 1.
 * **100% Pure Deduction Rate & Breakpoint Ratio**: Master, Legendary, and Ultimate tiers strictly enforce complete human deductive chain simulations with Breakpoint Depth Ratio $\ge 80\%$, discarding puzzles requiring trial-and-error branching during early and mid games.
 * **True Cognitive Crux via $\Delta\text{Domain}$ Reduction**: Crux points are quantified using weighted candidate domain entropy reductions and DAG topological radii rather than arbitrary heuristic weights.
 * **Speed-Solving Ergonomics**:
@@ -172,7 +181,7 @@ flowchart TD
 * **Vim-Style Home-Row Ergonomics**: Zero-travel `HJKL` / `WASD` cursor navigation paired with direct QWERTY number mapping (`Q-O` / `A-L`) for pure touch-typing speed.
 * **Pre-flight Ray Projection**: Real-time orthogonal sightline simulation predicting feasibility before commitment, casting subtle warning halos on prospective violations.
 * **Metacognitive Hint Hierarchy**: Progressive 3-tier coaching disclosure (Macro Strategy ➔ Tactical Mechanism ➔ Actionable Placement) preserving organic Eureka discovery.
-* **Explainable Occlusion Diagnostics**: Real-time detection of prefix saturation and capacity squeeze failures, clicking red clues immediately displays mathematical diagnostics (e.g. "Visible count exceeded before line completion").
+* **Explainable Occlusion Diagnostics**: Real-time detection of prefix saturation and capacity squeeze failures, clicking red clues immediately displays mathematical diagnostics.
 * **Real-time Pacing Metronome**: Live delta bar benchmarking time against 3-act cognitive allocations (Opening 20%, Midgame Crux 55%, Endgame Cascade 25%).
 
 
@@ -181,6 +190,14 @@ flowchart TD
 * **4D Causal Tensor Field**: Real-time mass luminance projecting constraints onto prime and corner degrees of freedom, discarding superficial edge-length brightness.
 * **Double-Tap Annealing**: Single-tap cold tactical inspection; 280ms double-tap triggers a 150ms geometric implosion disappearance accompanied by a 45ms tactile notch, preventing misclick-induced cognitive blackout.
 * **Singularity Collapse & Haptic Waves**: Centroid-directed implosion upon completion; full textless canvas with elapsed time and moves encoded into Web Vibration pulses (long pulse for tens, short for units).
+
+
+* **Slitherlink**:
+* **Human-Bounded Beam-3 Lookahead**: Strictly caps proof-by-contradiction depth to 7 steps (aligning with human working memory limits) with a Beam-3 BFS engine checking degree overflow, clue starvation, and topological subloops simultaneously.
+* **4-Tier Cognitive Domain & Inflection Point Telemetry**: Deductive steps categorized semantically (Candidate ➔ Geometric ➔ Topological ➔ Hypothetical), dynamically identifying Crux phase shifts with 4-quadrant spatial Shannon entropy ($\ge 0.85$).
+* **Dual-State Geometry Conflict Radar**: Instantaneously evaluates both line overflow and clue starvation ($4 - \text{Crosses} < \text{Clue}$), visually warning players of premature edge exhaustion with an amber warning halo.
+* **Zen Focus Mode & Quiet Resolution**: Full home-row keybindings (`F` for Zen toggle, `H` for hint, `N` for no-guess, `Ctrl+Z/Y` for undo/redo), replacing celebratory modal popups with an elegant completion banner; supports `Shift+Click` tactical bypass with explicit `[Trial]` purity ledger tagging.
+* **Multilingual Technique Registry & Session Resilience**: Full i18n deduction labels (EN/ZH/JA/DE) replacing raw snake_case keys, backed by seamless `sessionStorage` crash-proof state restoration.
 
 
 * **Nurikabe**: Left/right-click zero-latency dual dispatch, non-intrusive border-only HUD eliminating semantic color interference, strict deterministic whitelist with automatic Topological Hypothesis fallback, continuous timeline scrubber with violation bookmarks, seamless AI replay breakpoint take-over, and dual-clock Density of Thought telemetry.
@@ -251,23 +268,23 @@ Lawgic/
 │   ├── maze_generator.py
 │   └── smt_welder.py
 ├── web-frontend/
-│   ├── public/              # PWA manifest、安全 Service Worker (sw.js) 與靜態圖示
+│   ├── public/               # PWA manifest、安全 Service Worker (sw.js) 與靜態圖示
 │   ├── src/
-│   │   ├── components/      # 18 款競速駕駛艙 (含 SkyscraperBoard 盲打微光神經座艙)
-│   │   ├── contexts/        # 語系切換 (LanguageContext) 與無障礙支援 (AccessibilityContext)
-│   │   ├── engines/         # 18 款競技級演算法 (含 Skyscraper Line-CSP 與 DAG 拓撲分析)
-│   │   ├── generated/       # 靜態種子庫與題目元數據預編譯快取 (JSON)
-│   │   ├── hooks/           # useLearnerProfile、useSkyscraperGame、useAntiCheatMonitor
-│   │   ├── registry/        # RendererRegistry (動態分發與容錯重試註冊中心)
-│   │   ├── utils/           # 臨床監考、動態常模、密碼學簽章、金庫存儲與排行榜
-│   │   ├── App.tsx          # 主儀表板、非同步時間切片生成與賽事模式路由
-│   │   └── main.tsx         # 應用程式入口
+│   │   ├── components/       # 18 款競速駕駛艙 (含 SkyscraperBoard、SlitherlinkBoard)
+│   │   ├── contexts/         # 語系切換 (LanguageContext) 與無障礙支援 (AccessibilityContext)
+│   │   ├── engines/          # 18 款競技級演算法 (含 Slitherlink Beam-3 BFS 與 DAG 拓撲分析)
+│   │   ├── generated/        # 靜態種子庫與題目元數據預編譯快取 (JSON)
+│   │   ├── hooks/            # useLearnerProfile、useSkyscraperGame、useAntiCheatMonitor
+│   │   ├── registry/         # RendererRegistry (動態分發與容錯重試註冊中心)
+│   │   ├── utils/            # 臨床監考、動態常模、密碼學簽章、金庫存儲與排行榜
+│   │   ├── App.tsx           # 主儀表板、非同步時間切片生成與賽事模式路由
+│   │   └── main.tsx          # 應用程式入口
 │   ├── package.json
 │   ├── tsconfig.json
 │   └── vite.config.ts
 ├── GOVERNANCE_AND_COMPLIANCE.md # 合規性審計與資料治理政策聲明
-├── LICENSE                  # MIT 授權條款
-└── README.md                # 專案說明文件
+├── LICENSE                   # MIT 授權條款
+└── README.md                 # 專案說明文件
 
 ```
 
@@ -276,3 +293,4 @@ Lawgic/
 ## 授權條款 / License
 
 本專案採用 [MIT License](https://www.google.com/search?q=LICENSE) 授權開放開源社群交流使用。
+
