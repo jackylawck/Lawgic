@@ -41,13 +41,11 @@ export const YajilinBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
     getBenchmarkMetrics,
     profile,
     getCompositeCognitiveIndex,
-    exportLongitudinalDataset,
   } = useLearnerProfile();
 
   const { lang } = useLanguage();
   const isEn = lang === 'en';
 
-  // 提前返回守衛：保證 actualPuzzle 非空，徹底消除 TS18048
   if (!actualPuzzle) {
     return (
       <div className="flex items-center justify-center p-8 text-xs font-mono text-slate-500">
@@ -59,7 +57,7 @@ export const YajilinBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
   const t = useMemo(() => ({
     speed: isEn ? 'Speed' : '競速',
     moves: isEn ? 'Moves' : '步數',
-    conflicts: isEn ? 'Conflicts' : '衝突累加',
+    conflicts: isEn ? 'Conflicts' : '衝突',
     format: isEn ? 'Format' : '格式',
     symbol: isEn ? 'Symbol' : '純符號',
     number: isEn ? 'Number' : '數字符號',
@@ -73,10 +71,10 @@ export const YajilinBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
     undo: isEn ? 'Undo' : '撤銷',
     redo: isEn ? 'Redo' : '重做',
     seed: isEn ? 'Seed' : '種子碼',
-    instruction: isEn ? 'Click: Empty ➔ Black ➔ Dot | Click neighbor: Line' : '點擊格子循環 / 點擊相鄰格連線',
-    seedToast: isEn ? '📋 Seed copied! Share with your rival on Discord!' : '📋 種子短碼已複製！可發送給好友直接發起同題對決！',
-    resolvedTitle: isEn ? 'YAJILIN RESOLVED' : '矢印迴路・標準化測驗認證',
-    resolvedSubtitle: isEn ? 'Continuous Loop Closed' : '單一迴路封閉・幾何約束完全收斂',
+    instruction: isEn ? 'Drag: Line | Tap: State cycle' : '拖曳：畫線 / 點擊：循環狀態',
+    seedToast: isEn ? '📋 Seed copied!' : '📋 種子碼已複製！',
+    resolvedTitle: isEn ? 'YAJILIN RESOLVED' : '矢印迴路・標準化認證',
+    resolvedSubtitle: isEn ? 'Continuous Loop Closed' : '單一迴路封閉・幾何約束收斂',
     constructTitle: isEn ? 'Construct Decomposition' : '心理計量構念分離分析',
     timeElapsed: isEn ? 'Time' : '耗時',
     opsCount: isEn ? 'Operations' : '操作步數',
@@ -92,8 +90,6 @@ export const YajilinBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
       isEn
         ? `Focus on Cell [${r}, ${c}]. [Construct: ${type}]`
         : `請關注單元格 [${r}, ${c}]。【構念：${type === 'Gf' ? '流體推理' : '空間視覺'}】`,
-    noGuessBlocked: (reason: string) =>
-      isEn ? `[No-Guess Blocked] Strictly deduce: ${reason}` : `【無猜測攔截】依據定式應優先推導：${reason}`,
   }), [isEn]);
 
   const spec: YajilinSpec = (actualPuzzle as any)?.puzzle;
@@ -124,17 +120,21 @@ export const YajilinBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
   const [redoStack, setRedoStack] = useState<YajilinDelta[]>([]);
 
   const [noGuessMode, setNoGuessMode] = useState<boolean>(false);
-  const [noGuessWarning, setNoGuessWarning] = useState<string | null>(null);
+  const [shakeCellKey, setShakeCellKey] = useState<string | null>(null);
+  const [diagonalResetCell, setDiagonalResetCell] = useState<string | null>(null);
+
   const [activeHint, setActiveHint] = useState<YajilinHintStep | null>(null);
-  const [hintLadderLevel, setHintLadderLevel] = useState<1 | 2 | 3>(1);
+  const [hintLadderLevel, setHintLadderLevel] = useState<1 | 2 | 3>(3);
   const [animatedEvidenceSet, setAnimatedEvidenceSet] = useState<Set<string>>(new Set());
 
   const [isReplaying, setIsReplaying] = useState<boolean>(false);
+  const [replaySpeed, setReplaySpeed] = useState<number>(1);
   const [replayStepIndex, setReplayStepIndex] = useState<number>(0);
   const [replayDeductionList, setReplayDeductionList] = useState<YajilinHintStep[]>([]);
   const [copyToast, setCopyToast] = useState<boolean>(false);
 
   const [isCompleted, setIsCompleted] = useState<boolean>(false);
+  const [celebrationStage, setCelebrationStage] = useState<0 | 1 | 2 | 3>(0);
   const [showPBModal, setShowPBModal] = useState<boolean>(false);
   const [showSubmitModal, setShowSubmitModal] = useState<boolean>(false);
   const [proofSignature, setProofSignature] = useState<string | null>(null);
@@ -145,6 +145,18 @@ export const YajilinBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
   const [conflictDisplay, setConflictDisplay] = useState<number>(0);
   const movesCountRef = useRef<number>(0);
   const hasRecordedRef = useRef<boolean>(false);
+
+  // 指針拖曳狀態機
+  const dragActiveRef = useRef<boolean>(false);
+  const dragStartCellRef = useRef<[number, number] | null>(null);
+  const hasDraggedRef = useRef<boolean>(false);
+
+  const triggerLocalCellShake = useCallback((r: number, c: number) => {
+    if (navigator.vibrate) navigator.vibrate(28);
+    const key = `${r},${c}`;
+    setShakeCellKey(key);
+    setTimeout(() => setShakeCellKey(null), 220);
+  }, []);
 
   useEffect(() => {
     setCellStates(Array.from({ length: rows }, () => Array(cols).fill(0)));
@@ -157,14 +169,14 @@ export const YajilinBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
     setHistory([]);
     setRedoStack([]);
     setIsCompleted(false);
+    setCelebrationStage(0);
     setActiveHint(null);
-    setHintLadderLevel(1);
+    setHintLadderLevel(3);
     setAnimatedEvidenceSet(new Set());
     setIsReplaying(false);
     setReplayStepIndex(0);
     setReplayDeductionList([]);
     setProofSignature(null);
-    setNoGuessWarning(null);
     if (tournamentMode) setIsNonVerbal(true);
     startTimeRef.current = Date.now();
     setElapsedMs(0);
@@ -184,23 +196,6 @@ export const YajilinBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
     frameId = requestAnimationFrame(updateTimer);
     return () => cancelAnimationFrame(frameId);
   }, [isCompleted, isReplaying]);
-
-  useEffect(() => {
-    if (!activeHint || activeHint.evidenceCells.length === 0) {
-      setAnimatedEvidenceSet(new Set());
-      return;
-    }
-    setAnimatedEvidenceSet(new Set());
-    const timers: ReturnType<typeof setTimeout>[] = [];
-    activeHint.evidenceCells.forEach(([er, ec], idx) => {
-      const timer = setTimeout(() => {
-        setAnimatedEvidenceSet((prev) => new Set(prev).add(`${er},${ec}`));
-        if (navigator.vibrate) navigator.vibrate(4);
-      }, idx * 120);
-      timers.push(timer);
-    });
-    return () => timers.forEach(clearTimeout);
-  }, [activeHint]);
 
   const analysis = useMemo(() => {
     const adjacentBlacks = new Set<string>();
@@ -227,7 +222,7 @@ export const YajilinBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
       let r = clue.r + dr;
       let c = clue.c + dc;
       let cnt = 0;
-      while (r >= 0 && r < rows && c >= 0 && c < cols) {
+      while (WebYajilinGenerator.inBounds(r, c, rows, cols)) {
         if (cellStates[r][c] === 1) cnt++;
         r += dr;
         c += dc;
@@ -271,10 +266,7 @@ export const YajilinBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
           const isTarget = step.r === r && step.c === c;
           const isStateMatch = step.forcedState === targetState;
           if (!isTarget || !isStateMatch) {
-            if (navigator.vibrate) navigator.vibrate([25, 35, 25]);
-            const reason = isEn ? step.humanReadable.en : step.humanReadable.zh;
-            setNoGuessWarning(t.noGuessBlocked(reason));
-            setTimeout(() => setNoGuessWarning(null), 3000);
+            triggerLocalCellShake(r, c);
             return;
           }
         }
@@ -298,7 +290,7 @@ export const YajilinBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
         setActiveHint(null);
       }
     },
-    [isCompleted, isReplaying, clueMap, cellStates, noGuessMode, rows, cols, clues, edges, activeHint, isEn, t]
+    [isCompleted, isReplaying, clueMap, cellStates, noGuessMode, rows, cols, clues, edges, activeHint, triggerLocalCellShake]
   );
 
   const toggleEdge = useCallback(
@@ -322,6 +314,25 @@ export const YajilinBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
       const currentEdge = edges[r1][c1][d1];
       const targetEdge = !currentEdge;
 
+      // 剛性無猜測 (No-Guess) 邊界白名單攔截
+      if (noGuessMode) {
+        const step = WebYajilinGenerator.getNextForcedDeduction(rows, cols, clues, cellStates, edges);
+        if (step && step.forcedEdges) {
+          const isFocusCell1 = step.r === r1 && step.c === c1;
+          const isFocusCell2 = step.r === r2 && step.c === c2;
+
+          if (isFocusCell1 || isFocusCell2) {
+            const targetD = isFocusCell1 ? d1 : d2;
+            const isAllowed = step.forcedEdges[targetD] === true;
+
+            if (!isAllowed || currentEdge === true) {
+              triggerLocalCellShake(r1, c1);
+              return;
+            }
+          }
+        }
+      }
+
       if (navigator.vibrate) navigator.vibrate(6);
       movesCountRef.current++;
 
@@ -330,35 +341,67 @@ export const YajilinBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
       setRedoStack([]);
 
       setEdges((prev) => {
-        const next = [...prev];
-        next[r1] = [...next[r1]];
+        const next = prev.map((row) => [...row]);
         next[r1][c1] = [...next[r1][c1]] as YajilinCellEdges;
         next[r1][c1][d1] = targetEdge;
 
-        next[r2] = [...next[r2]];
         next[r2][c2] = [...next[r2][c2]] as YajilinCellEdges;
         next[r2][c2][d2] = targetEdge;
 
         return next;
       });
     },
-    [isCompleted, isReplaying, clueMap, cellStates, edges]
+    [isCompleted, isReplaying, clueMap, cellStates, edges, noGuessMode, rows, cols, clues, triggerLocalCellShake]
   );
 
-  const handleCellClick = (r: number, c: number) => {
-    if (clueMap.has(`${r},${c}`) || isReplaying) return;
-    if (selectedCell !== null) {
-      const [pr, pc] = selectedCell;
-      if (Math.abs(r - pr) + Math.abs(c - pc) === 1) {
-        toggleEdge(pr, pc, r, c);
-        setSelectedCell(null);
-        return;
+  const handlePointerDown = (r: number, c: number) => {
+    if (isCompleted || isReplaying || clueMap.has(`${r},${c}`)) return;
+    dragActiveRef.current = true;
+    dragStartCellRef.current = [r, c];
+    hasDraggedRef.current = false;
+  };
+
+  const handlePointerEnter = (r: number, c: number) => {
+    if (!dragActiveRef.current || !dragStartCellRef.current) return;
+    const [pr, pc] = dragStartCellRef.current;
+
+    const dr = Math.abs(r - pr);
+    const dc = Math.abs(c - pc);
+
+    // 正交相鄰：連線推移
+    if (dr + dc === 1) {
+      hasDraggedRef.current = true;
+      toggleEdge(pr, pc, r, c);
+      dragStartCellRef.current = [r, c];
+      return;
+    }
+
+    // 對角跳躍：斷開並即時吸附重置，給予 10ms 微震顫 + 視覺微符號
+    if (dr + dc > 1) {
+      dragStartCellRef.current = [r, c];
+      hasDraggedRef.current = true;
+
+      if (navigator.vibrate) navigator.vibrate(10);
+      const key = `${r},${c}`;
+      setDiagonalResetCell(key);
+      setTimeout(() => setDiagonalResetCell(null), 120);
+    }
+  };
+
+  const handlePointerUp = (r: number, c: number) => {
+    if (!dragActiveRef.current) return;
+    dragActiveRef.current = false;
+
+    // 純單擊操作 (無拖曳)：切換格狀態 0 -> 1 -> 2 -> 0
+    if (!hasDraggedRef.current && dragStartCellRef.current) {
+      const [sr, sc] = dragStartCellRef.current;
+      if (sr === r && sc === c && !clueMap.has(`${r},${c}`)) {
+        const curr = cellStates[r][c];
+        const next: YajilinCellState = curr === 0 ? 1 : curr === 1 ? 2 : 0;
+        mutateCell(r, c, next);
       }
     }
-    setSelectedCell([r, c]);
-    const curr = cellStates[r][c];
-    const next: YajilinCellState = curr === 0 ? 1 : curr === 1 ? 2 : 0;
-    mutateCell(r, c, next);
+    dragStartCellRef.current = null;
   };
 
   const handleUndo = useCallback(() => {
@@ -374,19 +417,17 @@ export const YajilinBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
         return next;
       });
     } else if (last.type === 'edge' && last.dirIndex !== undefined) {
-      const dirs = [[-1, 0], [0, 1], [1, 0], [0, -1]];
-      const oppDir = [2, 3, 0, 1];
-      const nr = last.r + dirs[last.dirIndex][0];
-      const nc = last.c + dirs[last.dirIndex][1];
+      const nr = last.r + WebYajilinGenerator.DELTAS[last.dirIndex][0];
+      const nc = last.c + WebYajilinGenerator.DELTAS[last.dirIndex][1];
       setEdges((prev) => {
         const next = [...prev];
         next[last.r] = [...next[last.r]];
         next[last.r][last.c] = [...next[last.r][last.c]] as YajilinCellEdges;
         next[last.r][last.c][last.dirIndex!] = last.from;
-        if (nr >= 0 && nr < rows && nc >= 0 && nc < cols) {
+        if (WebYajilinGenerator.inBounds(nr, nc, rows, cols)) {
           next[nr] = [...next[nr]];
           next[nr][nc] = [...next[nr][nc]] as YajilinCellEdges;
-          next[nr][nc][oppDir[last.dirIndex!]] = last.from;
+          next[nr][nc][WebYajilinGenerator.OPP_DIRS[last.dirIndex!]] = last.from;
         }
         return next;
       });
@@ -409,19 +450,17 @@ export const YajilinBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
         return next;
       });
     } else if (nextDelta.type === 'edge' && nextDelta.dirIndex !== undefined) {
-      const dirs = [[-1, 0], [0, 1], [1, 0], [0, -1]];
-      const oppDir = [2, 3, 0, 1];
-      const nr = nextDelta.r + dirs[nextDelta.dirIndex][0];
-      const nc = nextDelta.c + dirs[nextDelta.dirIndex][1];
+      const nr = nextDelta.r + WebYajilinGenerator.DELTAS[nextDelta.dirIndex][0];
+      const nc = nextDelta.c + WebYajilinGenerator.DELTAS[nextDelta.dirIndex][1];
       setEdges((prev) => {
         const next = [...prev];
         next[nextDelta.r] = [...next[nextDelta.r]];
         next[nextDelta.r][nextDelta.c] = [...next[nextDelta.r][nextDelta.c]] as YajilinCellEdges;
         next[nextDelta.r][nextDelta.c][nextDelta.dirIndex!] = nextDelta.to;
-        if (nr >= 0 && nr < rows && nc >= 0 && nc < cols) {
+        if (WebYajilinGenerator.inBounds(nr, nc, rows, cols)) {
           next[nr] = [...next[nr]];
           next[nr][nc] = [...next[nr][nc]] as YajilinCellEdges;
-          next[nr][nc][oppDir[nextDelta.dirIndex!]] = nextDelta.to;
+          next[nr][nc][WebYajilinGenerator.OPP_DIRS[nextDelta.dirIndex!]] = nextDelta.to;
         }
         return next;
       });
@@ -431,6 +470,7 @@ export const YajilinBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
     setRedoStack((prev) => prev.slice(0, -1));
   }, [redoStack, isCompleted, isReplaying, rows, cols]);
 
+  // 鍵盤導航支援
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (isCompleted || isReplaying) return;
@@ -468,6 +508,7 @@ export const YajilinBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isCompleted, isReplaying, handleUndo, handleRedo, selectedCell, rows, cols, clueMap, cellStates, mutateCell]);
 
+  // 勝利驗證與感官回饋
   useEffect(() => {
     if (isCompleted || isReplaying || analysis.totalConflicts > 0) return;
 
@@ -486,6 +527,16 @@ export const YajilinBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
 
     if (isSolved) {
       setIsCompleted(true);
+      setCelebrationStage(1);
+
+      const isTouch = typeof window !== 'undefined' && ('ontouchstart' in window || navigator.maxTouchPoints > 0);
+      if (isTouch && navigator.vibrate) {
+        navigator.vibrate([30, 40, 40, 40, 80]);
+      }
+
+      const t1 = setTimeout(() => setCelebrationStage(2), 800);
+      const t2 = setTimeout(() => setCelebrationStage(3), 2200);
+
       const timeSpent = Math.max(1, Math.round((Date.now() - startTimeRef.current) / 1000));
 
       if (!hasRecordedRef.current && actualPuzzle) {
@@ -527,22 +578,27 @@ export const YajilinBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
           setShowPBModal(true);
         }
       }
+
+      return () => {
+        clearTimeout(t1);
+        clearTimeout(t2);
+      };
     }
   }, [edges, cellStates, analysis.totalConflicts, isCompleted, isReplaying, actualPuzzle, rows, cols, clueMap, currentTier, recordAttempt, profile.personalBest.fastestTime, activeHint, tournamentMode]);
 
   const handleRequestHint = () => {
     if (isCompleted || tournamentMode || isReplaying) return;
-    if (navigator.vibrate) navigator.vibrate(12);
+    if (navigator.vibrate) navigator.vibrate(10);
 
     if (!activeHint) {
       const step = WebYajilinGenerator.getNextForcedDeduction(rows, cols, clues, cellStates, edges);
       if (step) {
         setActiveHint(step);
         setSelectedCell([step.r, step.c]);
-        setHintLadderLevel(1);
+        setHintLadderLevel(3); // 默認直接直達 Lv.3 結論
       }
     } else {
-      setHintLadderLevel((prev) => (prev === 1 ? 2 : 3));
+      setHintLadderLevel((prev) => (prev === 1 ? 2 : prev === 2 ? 3 : 1));
     }
   };
 
@@ -561,6 +617,15 @@ export const YajilinBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
       simCellStates[step.r][step.c] = step.forcedState;
       if (step.forcedEdges) {
         simEdges[step.r][step.c] = [...step.forcedEdges];
+        for (let d = 0; d < 4; d++) {
+          if (step.forcedEdges[d]) {
+            const nr = step.r + WebYajilinGenerator.DELTAS[d][0];
+            const nc = step.c + WebYajilinGenerator.DELTAS[d][1];
+            if (WebYajilinGenerator.inBounds(nr, nc, rows, cols)) {
+              simEdges[nr][nc][WebYajilinGenerator.OPP_DIRS[d]] = true;
+            }
+          }
+        }
       }
     }
 
@@ -571,38 +636,75 @@ export const YajilinBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
     setEdges(Array.from({ length: rows }, () => Array.from({ length: cols }, () => [false, false, false, false])));
   };
 
+  // AI 覆盤迴圈 (含 MAX 模式不可變批量快進)
   useEffect(() => {
     if (!isReplaying || replayDeductionList.length === 0) return;
 
     if (replayStepIndex >= replayDeductionList.length) {
-      const timer = setTimeout(() => setIsReplaying(false), 1200);
+      const timer = setTimeout(() => setIsReplaying(false), 800);
       return () => clearTimeout(timer);
     }
 
+    if (replaySpeed === 99) {
+      let curStates = cellStates.map((row) => [...row]);
+      let curEdges = edges.map((row) => row.map((cell) => [...cell] as YajilinCellEdges));
+
+      for (const st of replayDeductionList) {
+        curStates[st.r][st.c] = st.forcedState;
+        if (st.forcedEdges) {
+          curEdges[st.r][st.c] = [...st.forcedEdges];
+          for (let d = 0; d < 4; d++) {
+            if (st.forcedEdges[d]) {
+              const nr = st.r + WebYajilinGenerator.DELTAS[d][0];
+              const nc = st.c + WebYajilinGenerator.DELTAS[d][1];
+              if (WebYajilinGenerator.inBounds(nr, nc, rows, cols)) {
+                curEdges[nr][nc][WebYajilinGenerator.OPP_DIRS[d]] = true;
+              }
+            }
+          }
+        }
+      }
+
+      setCellStates(curStates);
+      setEdges(curEdges);
+      setReplayStepIndex(replayDeductionList.length);
+      setAnimatedEvidenceSet(new Set());
+      setIsReplaying(false);
+      return;
+    }
+
+    const interval = Math.max(50, Math.floor(450 / replaySpeed));
     const timer = setTimeout(() => {
       const curStep = replayDeductionList[replayStepIndex];
       setCellStates((prev) => {
-        const next = [...prev];
-        next[curStep.r] = [...next[curStep.r]];
+        const next = prev.map((r) => [...r]);
         next[curStep.r][curStep.c] = curStep.forcedState;
         return next;
       });
 
       if (curStep.forcedEdges) {
         setEdges((prev) => {
-          const next = [...prev];
-          next[curStep.r] = [...next[curStep.r]];
+          const next = prev.map((r) => [...r]);
           next[curStep.r][curStep.c] = [...curStep.forcedEdges!];
+          for (let d = 0; d < 4; d++) {
+            if (curStep.forcedEdges![d]) {
+              const nr = curStep.r + WebYajilinGenerator.DELTAS[d][0];
+              const nc = curStep.c + WebYajilinGenerator.DELTAS[d][1];
+              if (WebYajilinGenerator.inBounds(nr, nc, rows, cols)) {
+                next[nr][nc][WebYajilinGenerator.OPP_DIRS[d]] = true;
+              }
+            }
+          }
           return next;
         });
       }
 
       setAnimatedEvidenceSet(new Set(curStep.evidenceCells.map(([r, c]) => `${r},${c}`)));
       setReplayStepIndex((prev) => prev + 1);
-    }, 450);
+    }, interval);
 
     return () => clearTimeout(timer);
-  }, [isReplaying, replayStepIndex, replayDeductionList]);
+  }, [isReplaying, replayStepIndex, replayDeductionList, replaySpeed, cellStates, edges, rows, cols]);
 
   const handleCopySeedShareCode = () => {
     const seed = (actualPuzzle as any)?.puzzle?.seed || (actualPuzzle?.metrics as any)?.seed || 0;
@@ -720,39 +822,43 @@ export const YajilinBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
       </div>
 
       {copyToast && (
-        <div className="w-[min(88vw,42vh)] mb-1 p-1 bg-emerald-950 border border-emerald-500 text-emerald-300 text-[7.5px] rounded animate-fade-in text-center font-bold">
+        <div className="w-[min(88vw,42vh)] mb-1 p-1 bg-emerald-950 border border-emerald-500 text-emerald-300 text-[7.5px] rounded text-center font-bold">
           {t.seedToast}
         </div>
       )}
 
       {isReplaying && (
-        <div className="w-[min(88vw,42vh)] mb-1.5 p-1.5 bg-indigo-950/90 border border-cyan-500 rounded-lg text-cyan-200 text-[8px] animate-pulse text-left font-mono">
-          <div className="flex justify-between items-center text-[7px] text-cyan-400 mb-0.5">
-            <span>[AI REPLAY STEP {replayStepIndex}/{replayDeductionList.length}]</span>
-            <span className="uppercase font-bold">
-              {replayDeductionList[replayStepIndex - 1]?.technique.replace(/_/g, ' ') || 'STARTING'}
+        <div className="w-[min(88vw,42vh)] mb-1.5 p-1 bg-indigo-950/90 border border-cyan-500 rounded-lg text-cyan-200 text-[8px] font-mono">
+          <div className="flex justify-between items-center mb-1">
+            <span className="text-cyan-400 font-bold">
+              [REPLAY {replayStepIndex}/{replayDeductionList.length}]
             </span>
+            <div className="flex gap-1">
+              {[1, 2, 4, 99].map((spd) => (
+                <button
+                  key={spd}
+                  onClick={() => setReplaySpeed(spd)}
+                  className={`px-1 rounded text-[6.5px] font-bold ${
+                    replaySpeed === spd ? 'bg-cyan-500 text-slate-950' : 'bg-slate-800 text-slate-400'
+                  }`}
+                >
+                  {spd === 99 ? 'MAX' : `${spd}x`}
+                </button>
+              ))}
+            </div>
           </div>
-          <div>{replayDeductionList[replayStepIndex - 1]?.rationale || 'Demonstrating deductive reasoning chain...'}</div>
-        </div>
-      )}
-
-      {noGuessWarning && (
-        <div className="w-[min(88vw,42vh)] mb-1.5 p-1 bg-rose-950 border border-rose-500 text-rose-300 text-[8px] rounded-lg animate-pulse text-center shadow-lg font-bold">
-          {noGuessWarning}
+          <div className="truncate">{replayDeductionList[replayStepIndex - 1]?.rationale || 'Demonstrating chain...'}</div>
         </div>
       )}
 
       {activeHint && !isReplaying && (
-        <div className="w-[min(88vw,42vh)] mb-1.5 p-1.5 bg-amber-950/80 border border-amber-500/70 rounded-lg text-amber-200 text-[8px] animate-fade-in text-left shadow-lg">
+        <div className="w-[min(88vw,42vh)] mb-1.5 p-1.5 bg-amber-950/80 border border-amber-500/70 rounded-lg text-amber-200 text-[8px] shadow-lg">
           <div className="font-bold flex items-center justify-between text-[7px] text-amber-400 border-b border-amber-900/60 pb-0.5 mb-1">
             <span>[{t.level} {hintLadderLevel}/3]</span>
-            <span className="uppercase">{activeHint.technique.replace(/_/g, ' ')} ({activeHint.constructType})</span>
+            <span className="uppercase">{activeHint.technique.replace(/_/g, ' ')}</span>
           </div>
           {hintLadderLevel === 1 && (
-            <div>
-              {t.focusCell(activeHint.r + 1, activeHint.c + 1, activeHint.constructType)}
-            </div>
+            <div>{t.focusCell(activeHint.r + 1, activeHint.c + 1, activeHint.constructType)}</div>
           )}
           {hintLadderLevel === 2 && (
             <div>{isEn ? activeHint.humanReadable.en : activeHint.humanReadable.zh}</div>
@@ -768,6 +874,7 @@ export const YajilinBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
         </div>
       )}
 
+      {/* 主棋盤畫布 */}
       <div
         className="relative overflow-hidden p-2 rounded-xl bg-slate-950 border-2 border-slate-800 shadow-2xl"
         style={{ width: 'min(88vw, 42vh)', height: 'min(88vw, 42vh)', touchAction: 'none' }}
@@ -776,6 +883,7 @@ export const YajilinBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
           ☯ 180° SYM
         </div>
 
+        {/* SVG 連線層 */}
         <svg className="absolute inset-2 w-[calc(100%-16px)] h-[calc(100%-16px)] pointer-events-none z-15">
           {Array.from({ length: rows }).map((_, r) =>
             Array.from({ length: cols }).map((__, c) => {
@@ -791,9 +899,10 @@ export const YajilinBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
                       y1={`${cy}%`}
                       x2={`${cx}%`}
                       y2={`${(r / rows) * 100}%`}
-                      stroke="#38bdf8"
-                      strokeWidth="3.2"
+                      stroke={celebrationStage > 0 ? '#22d3ee' : '#38bdf8'}
+                      strokeWidth={celebrationStage > 0 ? '4.5' : '3.2'}
                       strokeLinecap="round"
+                      className={celebrationStage > 0 ? 'transition-all duration-500 drop-shadow-[0_0_8px_#22d3ee]' : ''}
                     />
                   )}
                   {edge[1] && (
@@ -802,9 +911,10 @@ export const YajilinBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
                       y1={`${cy}%`}
                       x2={`${((c + 1) / cols) * 100}%`}
                       y2={`${cy}%`}
-                      stroke="#38bdf8"
-                      strokeWidth="3.2"
+                      stroke={celebrationStage > 0 ? '#22d3ee' : '#38bdf8'}
+                      strokeWidth={celebrationStage > 0 ? '4.5' : '3.2'}
                       strokeLinecap="round"
+                      className={celebrationStage > 0 ? 'transition-all duration-500 drop-shadow-[0_0_8px_#22d3ee]' : ''}
                     />
                   )}
                   {edge[2] && (
@@ -813,9 +923,10 @@ export const YajilinBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
                       y1={`${cy}%`}
                       x2={`${cx}%`}
                       y2={`${((r + 1) / rows) * 100}%`}
-                      stroke="#38bdf8"
-                      strokeWidth="3.2"
+                      stroke={celebrationStage > 0 ? '#22d3ee' : '#38bdf8'}
+                      strokeWidth={celebrationStage > 0 ? '4.5' : '3.2'}
                       strokeLinecap="round"
+                      className={celebrationStage > 0 ? 'transition-all duration-500 drop-shadow-[0_0_8px_#22d3ee]' : ''}
                     />
                   )}
                   {edge[3] && (
@@ -824,9 +935,10 @@ export const YajilinBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
                       y1={`${cy}%`}
                       x2={`${(c / cols) * 100}%`}
                       y2={`${cy}%`}
-                      stroke="#38bdf8"
-                      strokeWidth="3.2"
+                      stroke={celebrationStage > 0 ? '#22d3ee' : '#38bdf8'}
+                      strokeWidth={celebrationStage > 0 ? '4.5' : '3.2'}
                       strokeLinecap="round"
+                      className={celebrationStage > 0 ? 'transition-all duration-500 drop-shadow-[0_0_8px_#22d3ee]' : ''}
                     />
                   )}
                 </g>
@@ -835,6 +947,7 @@ export const YajilinBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
           )}
         </svg>
 
+        {/* 網格互動層 */}
         <div
           className="relative w-full h-full"
           style={{
@@ -855,10 +968,35 @@ export const YajilinBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
               const isSelected = selectedCell !== null && selectedCell[0] === r && selectedCell[1] === c;
               const isEvidenceAnimated = animatedEvidenceSet.has(cellKey);
 
+              // 局部 3x3 衝突偵測，防止全域誤殺端點脈衝
+              let hasLocalConflict = false;
+              for (let dr = -1; dr <= 1; dr++) {
+                for (let dc = -1; dc <= 1; dc++) {
+                  const nr = r + dr;
+                  const nc = c + dc;
+                  if (!WebYajilinGenerator.inBounds(nr, nc, rows, cols)) continue;
+                  const neighborKey = `${nr},${nc}`;
+                  if (
+                    analysis.adjacentBlacks.has(neighborKey) ||
+                    analysis.arrowOverflows.has(neighborKey) ||
+                    analysis.degreeViolations.has(neighborKey)
+                  ) {
+                    hasLocalConflict = true;
+                    break;
+                  }
+                }
+                if (hasLocalConflict) break;
+              }
+
+              const deg = edges[r][c].filter(Boolean).length;
+              const showEndpointPulse = deg === 1 && state === 2 && !clueMap.has(cellKey) && !hasLocalConflict && !isReplaying;
+
               return (
                 <div
                   key={cellKey}
-                  onClick={() => handleCellClick(r, c)}
+                  onPointerDown={() => handlePointerDown(r, c)}
+                  onPointerEnter={() => handlePointerEnter(r, c)}
+                  onPointerUp={() => handlePointerUp(r, c)}
                   className={`relative flex flex-col items-center justify-center border border-slate-800/40 select-none cursor-pointer transition-all duration-150 ${
                     clue
                       ? isArrowOverflow
@@ -873,8 +1011,25 @@ export const YajilinBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
                       : 'bg-slate-900/60 hover:bg-slate-800/60'
                   } ${isSelected ? 'ring-2 ring-cyan-400 z-20' : ''} ${
                     isEvidenceAnimated ? 'ring-2 ring-amber-400 bg-amber-500/20 z-16 scale-95' : ''
-                  } ${isDegConflict ? 'ring-2 ring-rose-500' : ''}`}
+                  } ${isDegConflict ? 'ring-2 ring-rose-500' : ''} ${
+                    shakeCellKey === cellKey ? 'ring-2 ring-rose-500 bg-rose-950/50 scale-95 transition-transform duration-75' : ''
+                  }`}
                 >
+                  {/* 對角重置微符號 */}
+                  {diagonalResetCell === cellKey && (
+                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-30 animate-ping">
+                      <span className="text-rose-500 font-black text-xs leading-none">×</span>
+                    </div>
+                  )}
+
+                  {/* 端點游離脈衝 */}
+                  {showEndpointPulse && (
+                    <div
+                      className="absolute w-2 h-2 rounded-full border-2 border-cyan-400 animate-ping opacity-75 pointer-events-none z-10"
+                      style={{ animationDuration: '1.4s' }}
+                    />
+                  )}
+
                   {clue ? (
                     <div className="flex flex-col items-center justify-center leading-none pointer-events-none">
                       <span className="text-[7.5px] sm:text-[9px] text-amber-300 font-mono">
@@ -896,6 +1051,7 @@ export const YajilinBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
         </div>
       </div>
 
+      {/* 控制操作列 */}
       <div className="w-full max-w-[340px] flex items-center justify-between px-1 mt-1.5 text-[7.5px] text-slate-400">
         <div className="flex gap-1">
           <button
@@ -916,7 +1072,6 @@ export const YajilinBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
             <button
               onClick={handleCopySeedShareCode}
               className="px-2 py-0.5 bg-slate-900 border border-slate-800 rounded hover:bg-slate-800 text-amber-300 cursor-pointer"
-              title="Copy Duel Seed Code"
             >
               📋 {t.seed}
             </button>
@@ -927,7 +1082,8 @@ export const YajilinBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
         </div>
       </div>
 
-      {isCompleted && (
+      {/* 漸進式結算報告面版 */}
+      {isCompleted && celebrationStage >= 2 && (
         <div className="mt-2 p-2.5 bg-slate-950/95 border border-indigo-500/60 rounded-xl text-center w-[min(88vw,42vh)] shadow-2xl animate-fade-in font-mono">
           <div className="flex items-center justify-between border-b border-slate-800 pb-1 mb-1.5">
             <div className="text-left">
@@ -936,29 +1092,6 @@ export const YajilinBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
             </div>
             <div className="px-2 py-0.5 border border-cyan-500 bg-cyan-950/80 rounded text-[9px] font-bold text-cyan-300">
               Gf: IQ {cci.standardIQ} ({isEn ? 'Top' : '前'} {Number((100 - cci.percentileRank).toFixed(1))}%)
-            </div>
-          </div>
-
-          <div className="bg-slate-900/90 border border-indigo-950 p-1.5 rounded mb-1.5 text-left">
-            <div className="flex justify-between items-center text-[7px] mb-1">
-              <span className="text-slate-400 uppercase font-bold">{t.constructTitle}</span>
-              <span className="text-amber-400 font-mono font-black">{dominant}</span>
-            </div>
-            <div className="w-full bg-slate-950 h-1.5 rounded-full overflow-hidden flex">
-              <div
-                className="bg-indigo-500 h-full transition-all"
-                style={{ width: `${gfPurity * 100}%` }}
-                title={`Fluid Reasoning (Gf): ${(gfPurity * 100).toFixed(0)}%`}
-              />
-              <div
-                className="bg-cyan-500 h-full transition-all"
-                style={{ width: `${(1 - gfPurity) * 100}%` }}
-                title={`Visual Processing (Gv): ${((1 - gfPurity) * 100).toFixed(0)}%`}
-              />
-            </div>
-            <div className="flex justify-between text-[6px] text-slate-500 mt-0.5 font-mono">
-              <span>Gf (Inductive): {(gfPurity * 100).toFixed(0)}%</span>
-              <span>Gv (Spatial): {((1 - gfPurity) * 100).toFixed(0)}%</span>
             </div>
           </div>
 
@@ -979,62 +1112,78 @@ export const YajilinBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
             </div>
           </div>
 
-          <div className="mb-1.5">
-            <MetricErrorBar
-              actualVal={Math.round(elapsedMs / 1000)}
-              benchmarkVal={benchmarkData.benchmarkTime}
-              ci95={benchmarkData.ci95}
-              sem={benchmarkData.sem}
-              unit="s"
-              isEn={isEn}
-            />
-          </div>
-
-          <div className="bg-slate-900/40 p-1 rounded-lg border border-slate-800 flex flex-col items-center mb-1.5">
-            <CognitiveRadarChart
-              dimensions={profile.cognitiveDimensions}
-              previousDimensions={profile.previousCognitiveDimensions}
-              size={135}
-            />
-          </div>
-
-          <div className="flex gap-1 mb-1.5">
-            <button
-              onClick={handleStartReplay}
-              disabled={isReplaying}
-              className="flex-1 py-1 bg-indigo-950 hover:bg-indigo-900 border border-indigo-500/60 text-indigo-300 text-[7.5px] font-bold rounded transition shadow flex items-center justify-center gap-0.5 active:scale-95 cursor-pointer"
-            >
-              <span>🔁</span>
-              <span>{t.aiReplay}</span>
-            </button>
-
-            <button
-              onClick={handleCopySeedShareCode}
-              className="flex-1 py-1 bg-slate-900 hover:bg-slate-800 border border-amber-500/60 text-amber-300 text-[7.5px] font-bold rounded transition shadow flex items-center justify-center gap-0.5 active:scale-95 cursor-pointer"
-            >
-              <span>📋</span>
-              <span>{t.copySeed}</span>
-            </button>
-
-            <button
-              onClick={() => setShowSubmitModal(true)}
-              className="flex-1 py-1 bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 text-slate-950 text-[7.5px] font-black rounded shadow transition active:scale-95 flex items-center justify-center gap-0.5 cursor-pointer"
-            >
-              <span>📤</span>
-              <span>{t.submit}</span>
-            </button>
-          </div>
-
-          {proofSignature && (
-            <div className="p-1 bg-slate-900 border border-slate-800 rounded text-left">
-              <div className="text-[6.5px] text-slate-500 font-bold uppercase flex justify-between">
-                <span>PSYCHOMETRIC INTEGRITY RECEIPT</span>
-                <span className="text-emerald-400 font-mono text-[5.5px]">CSPRNG-SECURE</span>
+          {celebrationStage >= 3 && (
+            <>
+              <div className="bg-slate-900/90 border border-indigo-950 p-1.5 rounded mb-1.5 text-left">
+                <div className="flex justify-between items-center text-[7px] mb-1">
+                  <span className="text-slate-400 uppercase font-bold">{t.constructTitle}</span>
+                  <span className="text-amber-400 font-mono font-black">{dominant}</span>
+                </div>
+                <div className="w-full bg-slate-950 h-1.5 rounded-full overflow-hidden flex">
+                  <div
+                    className="bg-indigo-500 h-full transition-all"
+                    style={{ width: `${gfPurity * 100}%` }}
+                  />
+                  <div
+                    className="bg-cyan-500 h-full transition-all"
+                    style={{ width: `${(1 - gfPurity) * 100}%` }}
+                  />
+                </div>
               </div>
-              <div className="text-[6px] font-mono text-cyan-400/80 break-all select-all mt-0.5">
-                {proofSignature}
+
+              <div className="mb-1.5">
+                <MetricErrorBar
+                  actualVal={Math.round(elapsedMs / 1000)}
+                  benchmarkVal={benchmarkData.benchmarkTime}
+                  ci95={benchmarkData.ci95}
+                  sem={benchmarkData.sem}
+                  unit="s"
+                  isEn={isEn}
+                />
               </div>
-            </div>
+
+              <div className="bg-slate-900/40 p-1 rounded-lg border border-slate-800 flex flex-col items-center mb-1.5">
+                <CognitiveRadarChart
+                  dimensions={profile.cognitiveDimensions}
+                  previousDimensions={profile.previousCognitiveDimensions}
+                  size={135}
+                />
+              </div>
+
+              <div className="flex gap-1 mb-1.5">
+                <button
+                  onClick={handleStartReplay}
+                  disabled={isReplaying}
+                  className="flex-1 py-1 bg-indigo-950 hover:bg-indigo-900 border border-indigo-500/60 text-indigo-300 text-[7.5px] font-bold rounded transition flex items-center justify-center gap-0.5 cursor-pointer"
+                >
+                  🔁 {t.aiReplay}
+                </button>
+                <button
+                  onClick={handleCopySeedShareCode}
+                  className="flex-1 py-1 bg-slate-900 hover:bg-slate-800 border border-amber-500/60 text-amber-300 text-[7.5px] font-bold rounded transition flex items-center justify-center gap-0.5 cursor-pointer"
+                >
+                  📋 {t.copySeed}
+                </button>
+                <button
+                  onClick={() => setShowSubmitModal(true)}
+                  className="flex-1 py-1 bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 text-slate-950 text-[7.5px] font-black rounded transition flex items-center justify-center gap-0.5 cursor-pointer"
+                >
+                  📤 {t.submit}
+                </button>
+              </div>
+
+              {proofSignature && (
+                <div className="p-1 bg-slate-900 border border-slate-800 rounded text-left">
+                  <div className="text-[6.5px] text-slate-500 font-bold uppercase flex justify-between">
+                    <span>PSYCHOMETRIC INTEGRITY RECEIPT</span>
+                    <span className="text-emerald-400 font-mono text-[5.5px]">CSPRNG-SECURE</span>
+                  </div>
+                  <div className="text-[6px] font-mono text-cyan-400/80 break-all select-all mt-0.5">
+                    {proofSignature}
+                  </div>
+                </div>
+              )}
+            </>
           )}
         </div>
       )}
