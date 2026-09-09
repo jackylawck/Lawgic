@@ -1,726 +1,444 @@
-// web-frontend/src/components/TentsBoard.tsx
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { PuzzleEntity, TierKey } from '../generated';
 import { useLearnerProfile } from '../hooks/useLearnerProfile';
 import { useLanguage } from '../contexts/LanguageContext';
-import { TentsSpec, WebTentsGenerator, TentStep } from '../engines/tentsGenerator';
 import {
-  TentsInterchangeCodec,
-  StandardTentsStrategy,
-  DiagonalTentsStrategy,
-  ITentsRuleStrategy,
-} from '../engines/tentsVariants';
-import { CognitiveRadarChart } from './CognitiveRadarChart';
-import { PBCelebrationModal } from './PBCelebrationModal';
+  TentsSpec,
+  WebTentsGenerator,
+  TentCoord,
+  EntropyGainProjection,
+  RippleStep,
+} from '../engines/tentsGenerator';
 
 interface Props {
   puzzle?: PuzzleEntity;
   puzzleData?: PuzzleEntity;
-  tournamentMode?: boolean;
 }
 
-type CellState = 0 | 1 | 2 | 3;
-type InputTool = 'tent' | 'grass' | 'clear';
+type CellState = 0 | 1 | 2 | 3; // 0: 空, 1: 帳篷, 2: 樹木, 3: 草地
 
-// 完整的雙語字典，確保 EN 模式完全無死角
-const I18N = {
-  en: {
-    speed: 'Speed',
-    dimension: 'Dimension',
-    variant: 'Variant',
-    std: 'STANDARD',
-    diag: 'DIAGONAL',
-    print: 'PRINT',
-    kawaii: 'KAWAII',
-    import: 'Import',
-    zoomIn: 'Zoom In',
-    zoomOut: 'Zoom Out',
-    focusTarget: 'FOCUS RETARGETING',
-    inspectCluster: 'Inspect coordinate cluster',
-    contradiction: 'Contradiction identified! Decide cell yourself.',
-    forcedMoveWarn: 'Not a forced move yet! Observe capacities or contradiction probe.',
-    bipartiteWarn: 'Observe bipartite pairing around trees!',
-    noGuess: 'NO-GUESS',
-    free: 'FREE',
-    hint: 'Hint',
-    controlsHelp: 'L-Click: Tent | R-Click: Grass | Keys: 1/2/0',
-    importTitle: 'Import Interchange Code',
-    importPlaceholder: 'Paste code like TENTS:8x8:standard:...',
-    importSubmit: 'Load & Solve',
-    cancel: 'Cancel',
-    invalidFormat: 'Invalid Tents Code format!',
-    campEstablished: 'CAMP ESTABLISHED',
-    zeroGuessCert: 'Pure Matching Mastery (Zero Guessing)',
-    timeSpent: 'Time',
-    wpfKey: 'WPF Answer Key',
-    copy: 'Copy',
-    copied: '✓ Copied',
-    exportPuzzle: 'Export Puzzle',
-    puzzleCopied: '✓ Code Copied',
-    scrubbing: 'Decision Branch Scrubbing',
-    stepUnit: 'steps',
-    play: 'PLAY:',
-    pause: 'Pause',
-    exportData: 'Export Data',
-    toolTent: 'Tent',
-    toolGrass: 'Grass',
-    toolClear: 'Erase',
-  },
-  zh: {
-    speed: '競速',
-    dimension: '規模',
-    variant: '規則',
-    std: '正交標準',
-    diag: '對角變體',
-    print: '印刷黑白',
-    kawaii: '經典全彩',
-    import: '匯入',
-    zoomIn: '放大',
-    zoomOut: '縮小',
-    focusTarget: '視線因果校正',
-    inspectCluster: '審視座標群',
-    contradiction: '矛盾源已框定！請親手敲下結論。',
-    forcedMoveWarn: '這步還不是必然定式喔！先觀察容量或反證排除。',
-    bipartiteWarn: '請觀察樹木周圍的二分圖配對！',
-    noGuess: '嚴格邏輯',
-    free: '自由模式',
-    hint: '提示',
-    controlsHelp: '左鍵: 帳篷 | 右鍵: 草地 | 快捷鍵: 1/2/0',
-    importTitle: '匯入題目代碼 (Interchange Code)',
-    importPlaceholder: '貼上 TENTS:8x8:standard:... 格式',
-    importSubmit: '載入題目',
-    cancel: '取消',
-    invalidFormat: '無效的帳篷題目格式！',
-    campEstablished: '營地搭建完成',
-    zeroGuessCert: '傳奇純空間配對（零猜測認證）',
-    timeSpent: '耗時',
-    wpfKey: 'WPF 答題認證碼',
-    copy: '複製題解碼',
-    copied: '✓ 已複製',
-    exportPuzzle: '匯出題目代碼',
-    puzzleCopied: '✓ 題目代碼已複製',
-    scrubbing: '決策分歧點步進拖曳',
-    stepUnit: '步',
-    play: '播放速度:',
-    pause: '暫停',
-    exportData: '匯出數據',
-    toolTent: '帳篷',
-    toolGrass: '草地',
-    toolClear: '橡皮擦',
-  },
-};
+interface StrokePoint {
+  x: number;
+  y: number;
+}
+
+interface AnnotationStroke {
+  id: string;
+  points: StrokePoint[];
+}
 
 export const TentsBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
   const actualPuzzle = puzzleData || puzzle;
   const { lang } = useLanguage();
   const isEn = lang === 'en';
-  const t = isEn ? I18N.en : I18N.zh;
 
-  const { recordAttempt, profile, getCompositeCognitiveIndex, exportLongitudinalDataset } = useLearnerProfile();
-
+  const { recordAttempt, profile } = useLearnerProfile();
   const spec = (actualPuzzle?.puzzle || actualPuzzle) as unknown as TentsSpec;
-  const rows = spec?.rows || 5;
-  const cols = spec?.cols || 5;
+
+  const rows = spec?.rows || 6;
+  const cols = spec?.cols || 6;
   const initialTrees = spec?.trees || [];
-  const initialRowCounts = spec?.rowCounts || spec?.rowClues || [];
-  const initialColCounts = spec?.colCounts || spec?.colClues || [];
-  const solvingSteps = spec?.solvingSteps || [];
+  const initialRowCounts = spec?.rowCounts || [];
+  const initialColCounts = spec?.colCounts || [];
 
   const [board, setBoard] = useState<CellState[][]>(() => {
     const b: CellState[][] = Array.from({ length: rows }, () => Array(cols).fill(0));
-    for (const tree of initialTrees) {
-      const tr = Array.isArray(tree) ? tree[0] : tree.r;
-      const tc = Array.isArray(tree) ? tree[1] : tree.c;
-      b[tr][tc] = 2;
-    }
+    for (const tree of initialTrees) b[tree.r][tree.c] = 2;
     return b;
   });
 
-  const [activeVariant, setActiveVariant] = useState<'standard' | 'diagonal'>('standard');
-  const [selectedCell, setSelectedCell] = useState<[number, number] | null>([0, 0]);
-  const [activeTool, setActiveTool] = useState<InputTool>('tent');
   const [isCompleted, setIsCompleted] = useState<boolean>(false);
   const [elapsedMs, setElapsedMs] = useState<number>(0);
-  const [showPBModal, setShowPBModal] = useState<boolean>(false);
-  const [proofSignature, setProofSignature] = useState<string | null>(null);
+  const [isCtrlActive, setIsCtrlActive] = useState<boolean>(false);
+  const [isAltActive, setIsAltActive] = useState<boolean>(false);
+  const [isShiftActive, setIsShiftActive] = useState<boolean>(false);
 
-  // 模式控制
-  const [isNoGuessMode, setIsNoGuessMode] = useState<boolean>(true);
-  const [isMonochrome, setIsMonochrome] = useState<boolean>(false);
-  const [isShowMatchingEdges] = useState<boolean>(true);
-  const [guessWarning, setGuessWarning] = useState<string | null>(null);
-  const [hintLevel, setHintLevel] = useState<number>(0);
-  const [activeHintStep, setActiveHintStep] = useState<TentStep | null>(null);
-  const [boardScale, setBoardScale] = useState<number>(1.0);
-  const [hasCopiedKey, setHasCopiedKey] = useState<boolean>(false);
-  const [hasCopiedTextPuzzle, setHasCopiedTextPuzzle] = useState<boolean>(false);
-  const [showImportBox, setShowImportBox] = useState<boolean>(false);
-  const [importInput, setImportInput] = useState<string>('');
+  // 熵增益光場
+  const [entropyGainMap, setEntropyGainMap] = useState<Record<string, EntropyGainProjection>>({});
+  
+  // 前瞻因果漣漪
+  const [hoveredRipple, setHoveredRipple] = useState<{
+    path: Array<{ from: [number, number]; to: [number, number] }>;
+    fatalCoord?: [number, number];
+  } | null>(null);
 
-  // 覆盤步驟控制
-  const [isReplaying, setIsReplaying] = useState<boolean>(false);
-  const [replaySpeed, setReplaySpeed] = useState<number>(1);
-  const [currentStepIndex, setCurrentStepIndex] = useState<number>(0);
-  const replayTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // 自由墨跡層
+  const [strokes, setStrokes] = useState<AnnotationStroke[]>([]);
+  const isDrawingRef = useRef<boolean>(false);
+  const currentPointsRef = useRef<StrokePoint[]>([]);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  // 平行宇宙幽靈快照
+  const [ghostSnapshots, setGhostSnapshots] = useState<CellState[][][]>([]);
+  const [ghostIndex, setGhostIndex] = useState<number>(-1);
+
+  // 思維心搏檢測
+  const [mindPulseCoord, setMindPulseCoord] = useState<TentCoord | null>(null);
 
   const startTimeRef = useRef<number>(Date.now());
-  const hasRecordedRef = useRef<boolean>(false);
+  const cellSize = Math.min(320 / Math.max(rows, cols), 46);
 
-  const ruleStrategy: ITentsRuleStrategy = useMemo(() => {
-    return activeVariant === 'diagonal' ? new DiagonalTentsStrategy() : new StandardTentsStrategy();
-  }, [activeVariant]);
-
-  // 重設題目狀態
+  // 鍵盤狀態監聽
   useEffect(() => {
-    const b: CellState[][] = Array.from({ length: rows }, () => Array(cols).fill(0));
-    for (const tree of initialTrees) {
-      const tr = Array.isArray(tree) ? tree[0] : tree.r;
-      const tc = Array.isArray(tree) ? tree[1] : tree.c;
-      b[tr][tc] = 2;
-    }
-    setBoard(b);
-    setSelectedCell([0, 0]);
-    setIsCompleted(false);
-    setElapsedMs(0);
-    setProofSignature(null);
-    setGuessWarning(null);
-    setHintLevel(0);
-    setActiveHintStep(null);
-    setIsReplaying(false);
-    setCurrentStepIndex(0);
-    if (replayTimerRef.current) clearInterval(replayTimerRef.current);
-    startTimeRef.current = Date.now();
-    hasRecordedRef.current = false;
-  }, [actualPuzzle?.id, rows, cols]);
-
-  // 卸載時清理計時器防洩漏
-  useEffect(() => {
+    const handleDown = (e: KeyboardEvent) => {
+      if (e.key === 'Control') setIsCtrlActive(true);
+      if (e.key === 'Alt') setIsAltActive(true);
+      if (e.key === 'Shift') setIsShiftActive(true);
+    };
+    const handleUp = (e: KeyboardEvent) => {
+      if (e.key === 'Control') setIsCtrlActive(false);
+      if (e.key === 'Alt') setIsAltActive(false);
+      if (e.key === 'Shift') {
+        setIsShiftActive(false);
+        setGhostIndex(-1);
+      }
+    };
+    window.addEventListener('keydown', handleDown);
+    window.addEventListener('keyup', handleUp);
     return () => {
-      if (replayTimerRef.current) clearInterval(replayTimerRef.current);
+      window.removeEventListener('keydown', handleDown);
+      window.removeEventListener('keyup', handleUp);
     };
   }, []);
 
+  // 計時器
   useEffect(() => {
-    if (isCompleted || isReplaying) return;
-    const interval = setInterval(() => {
-      setElapsedMs(Date.now() - startTimeRef.current);
-    }, 100);
-    return () => clearInterval(interval);
-  }, [isCompleted, isReplaying]);
+    if (isCompleted) return;
+    const t = setInterval(() => setElapsedMs(Date.now() - startTimeRef.current), 100);
+    return () => clearInterval(t);
+  }, [isCompleted]);
 
-  const cellSize = Math.min(300 / Math.max(rows, cols), 46);
-
-  // 動態連線計算 (修正邊界內縮精確度)
-  const matchingLines = useMemo(() => {
-    if (!isShowMatchingEdges) return [];
-    const lines: { x1: number; y1: number; x2: number; y2: number }[] = [];
-    const matchedTents = new Set<string>();
-
-    for (const tree of initialTrees) {
-      const tr = Array.isArray(tree) ? tree[0] : tree.r;
-      const tc = Array.isArray(tree) ? tree[1] : tree.c;
-      const neighbors = ruleStrategy.getAvailableCampNeighbors({ r: tr, c: tc }, rows, cols);
-      const availableTent = neighbors.find((n) => board[n.r][n.c] === 1 && !matchedTents.has(`${n.r},${n.c}`));
-
-      if (availableTent) {
-        matchedTents.add(`${availableTent.r},${availableTent.c}`);
-        lines.push({
-          x1: tc * (cellSize + 4) + cellSize / 2 + 6,
-          y1: tr * (cellSize + 4) + cellSize / 2 + 6,
-          x2: availableTent.c * (cellSize + 4) + cellSize / 2 + 6,
-          y2: availableTent.r * (cellSize + 4) + cellSize / 2 + 6,
-        });
-      }
+  // 全域奇偶偏差
+  const deltaPhi = useMemo(() => {
+    let rDef = 0;
+    for (let r = 0; r < rows; r++) {
+      let placed = 0;
+      for (let c = 0; c < cols; c++) if (board[r][c] === 1) placed++;
+      rDef += initialRowCounts[r] - placed;
     }
-    return lines;
-  }, [board, initialTrees, rows, cols, cellSize, isShowMatchingEdges, ruleStrategy]);
+    let cDef = 0;
+    for (let c = 0; c < cols; c++) {
+      let placed = 0;
+      for (let r = 0; r < rows; r++) if (board[r][c] === 1) placed++;
+      cDef += initialColCounts[c] - placed;
+    }
+    return rDef - cDef;
+  }, [board, rows, cols, initialRowCounts, initialColCounts]);
 
-  // 判定勝利
-  const checkVictory = useCallback(
-    (curBoard: CellState[][]): boolean => {
-      let totalTents = 0;
-
-      for (let r = 0; r < rows; r++) {
-        let rCount = 0;
-        for (let c = 0; c < cols; c++) if (curBoard[r][c] === 1) rCount++;
-        if (rCount !== initialRowCounts[r]) return false;
-        totalTents += rCount;
-      }
-
+  // 計算熵光場
+  useEffect(() => {
+    if (!isCtrlActive) return;
+    const map: Record<string, EntropyGainProjection> = {};
+    for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
-        let cCount = 0;
-        for (let r = 0; r < rows; r++) if (curBoard[r][c] === 1) cCount++;
-        if (cCount !== initialColCounts[c]) return false;
-      }
-
-      if (totalTents !== initialTrees.length) return false;
-
-      // 檢查帳篷間互斥
-      for (let r = 0; r < rows; r++) {
-        for (let c = 0; c < cols; c++) {
-          if (curBoard[r][c] === 1 && ruleStrategy.hasCollision(r, c, curBoard as number[][], rows, cols)) {
-            return false;
-          }
+        if (board[r][c] === 0) {
+          map[`${r},${c}`] = WebTentsGenerator.computeEntropyGain(r, c, board as number[][], spec);
         }
-      }
-
-      // 檢查樹木配對
-      for (const tree of initialTrees) {
-        const tr = Array.isArray(tree) ? tree[0] : tree.r;
-        const tc = Array.isArray(tree) ? tree[1] : tree.c;
-        const neighbors = ruleStrategy.getAvailableCampNeighbors({ r: tr, c: tc }, rows, cols);
-        if (!neighbors.some((n) => curBoard[n.r][n.c] === 1)) return false;
-      }
-
-      return true;
-    },
-    [rows, cols, initialRowCounts, initialColCounts, initialTrees, ruleStrategy]
-  );
-
-  const triggerVictory = useCallback(() => {
-    setIsCompleted(true);
-    const timeSpent = Math.max(1, Math.round((Date.now() - startTimeRef.current) / 1000));
-
-    if (!hasRecordedRef.current && actualPuzzle) {
-      hasRecordedRef.current = true;
-      recordAttempt({
-        puzzleId: actualPuzzle.id,
-        engineType: 'tents',
-        tier: (actualPuzzle.tier as TierKey) || 'kids',
-        cognitiveLoad: actualPuzzle.cognitiveLoad || {
-          spatial: 0.92,
-          numeric: 0.48,
-          workingMemory: 0.75,
-          inhibition: 0.88,
-        },
-        isSuccess: true,
-        timeSpentSec: timeSpent,
-        conflictsCount: 0,
-        technique: 'BipartiteMatching',
-        isPureClear: true,
-      });
-
-      try {
-        const canonical = `${actualPuzzle.id}|${timeSpent}|${activeVariant.toUpperCase()}|WPF_CERTIFIED`;
-        const enc = new TextEncoder();
-        window.crypto.subtle.digest('SHA-256', enc.encode(canonical)).then((buf) => {
-          const hex = Array.from(new Uint8Array(buf))
-            .map((b) => b.toString(16).padStart(2, '0'))
-            .join('');
-          setProofSignature(`VERIFIED_${hex.slice(0, 24).toUpperCase()}`);
-        });
-      } catch {
-        setProofSignature(`LOCAL_${Date.now()}`);
-      }
-
-      if (timeSpent <= profile.personalBest.fastestTime) {
-        setShowPBModal(true);
       }
     }
-  }, [actualPuzzle, activeVariant, recordAttempt, profile.personalBest.fastestTime]);
+    setEntropyGainMap(map);
+  }, [isCtrlActive, board, rows, cols, spec]);
 
-  const applyCellState = useCallback(
-    (r: number, c: number, targetState: CellState) => {
-      if (isCompleted || isReplaying || board[r][c] === 2) return;
-
-      const isHintExempt = activeHintStep && activeHintStep.r === r && activeHintStep.c === c;
-
-      if (isNoGuessMode && board[r][c] === 0 && targetState !== 0 && !isHintExempt) {
-        if (typeof (WebTentsGenerator as any).getProgressiveDeductions === 'function') {
-          const deductions = (WebTentsGenerator as any).getProgressiveDeductions(
-            rows,
-            cols,
-            initialTrees,
-            initialRowCounts,
-            initialColCounts,
-            board
-          );
-          const deduction = deductions.get(`${r},${c}`);
-
-          if (!deduction || (deduction.state === 1 && targetState !== 1) || (deduction.state === 2 && targetState !== 3)) {
-            setGuessWarning(t.forcedMoveWarn);
-            setTimeout(() => setGuessWarning(null), 3000);
-            return;
-          }
-        }
-      }
-
-      setGuessWarning(null);
-      setHintLevel(0);
-      setActiveHintStep(null);
-
-      setBoard((prev) => {
-        const next = prev.map((row) => [...row]);
-        next[r][c] = next[r][c] === targetState ? 0 : targetState;
-        if (checkVictory(next)) triggerVictory();
-        return next;
-      });
-
-      if (navigator.vibrate) navigator.vibrate(8);
-    },
-    [isCompleted, isReplaying, board, activeHintStep, isNoGuessMode, rows, cols, initialTrees, initialRowCounts, initialColCounts, t.forcedMoveWarn, checkVictory, triggerVictory]
-  );
-
-  const handleCellClick = (r: number, c: number) => {
-    setSelectedCell([r, c]);
-    // 支援行動端點選模式與滑鼠統一邏輯
-    if (activeTool === 'tent') applyCellState(r, c, 1);
-    else if (activeTool === 'grass') applyCellState(r, c, 3);
-    else applyCellState(r, c, 0);
-  };
-
-  const handleRightClick = (e: React.MouseEvent, r: number, c: number) => {
-    e.preventDefault();
-    setSelectedCell([r, c]);
-    applyCellState(r, c, 3);
-  };
-
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (isCompleted || isReplaying || !selectedCell) return;
-      const [r, c] = selectedCell;
-
-      if (['ArrowUp', 'KeyW'].includes(e.code)) setSelectedCell([Math.max(0, r - 1), c]);
-      if (['ArrowDown', 'KeyS'].includes(e.code)) setSelectedCell([Math.min(rows - 1, r + 1), c]);
-      if (['ArrowLeft', 'KeyA'].includes(e.code)) setSelectedCell([r, Math.max(0, c - 1)]);
-      if (['ArrowRight', 'KeyD'].includes(e.code)) setSelectedCell([r, Math.min(cols - 1, c + 1)]);
-
-      if (['Digit1', 'KeyT'].includes(e.code)) applyCellState(r, c, 1);
-      if (['Digit2', 'KeyG'].includes(e.code)) applyCellState(r, c, 3);
-      if (['Digit0', 'KeyC', 'Backspace', 'Delete'].includes(e.code)) applyCellState(r, c, 0);
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isCompleted, isReplaying, selectedCell, rows, cols, applyCellState]);
-
-  const handleRequestHint = useCallback(() => {
-    if (isCompleted || isReplaying) return;
-
-    if (typeof (WebTentsGenerator as any).getProgressiveDeductions === 'function') {
-      const deductions = (WebTentsGenerator as any).getProgressiveDeductions(
-        rows,
-        cols,
-        initialTrees,
-        initialRowCounts,
-        initialColCounts,
-        board
-      );
-      if (deductions.size === 0) {
-        setGuessWarning(t.bipartiteWarn);
+  // 懸停探針計算
+  const handleCellHover = useCallback(
+    (r: number, c: number) => {
+      if (board[r][c] !== 0) {
+        setHoveredRipple(null);
         return;
       }
-
-      const item = deductions.values().next().value;
-      const { r, c, state, type, rationale, humanReadable } = item;
-
-      setSelectedCell([r, c]);
-
-      if (!activeHintStep || activeHintStep.r !== r || activeHintStep.c !== c) {
-        setActiveHintStep({
-          step: 1,
-          type,
-          r,
-          c,
-          state,
-          rationale,
-          humanReadable,
-        });
-        setHintLevel(1);
+      const sim = WebTentsGenerator.simulateHypothesisProbe(board as number[][], spec, { r, c }, 1);
+      if (sim.conflictFound && sim.rippleSteps.length > 0) {
+        const path = sim.rippleSteps.map((s) => ({
+          from: [s.forcedBy.r, s.forcedBy.c] as [number, number],
+          to: [s.coord.r, s.coord.c] as [number, number],
+        }));
+        const fatal = sim.rippleSteps[sim.rippleSteps.length - 1].coord;
+        setHoveredRipple({ path, fatalCoord: [fatal.r, fatal.c] });
       } else {
-        setHintLevel((prev) => Math.min(3, prev + 1));
+        setHoveredRipple(null);
       }
-    }
-  }, [isCompleted, isReplaying, rows, cols, initialTrees, initialRowCounts, initialColCounts, board, t.bipartiteWarn, activeHintStep]);
-
-  const renderStepAt = useCallback(
-    (targetStep: number) => {
-      const baseBoard: CellState[][] = Array.from({ length: rows }, () => Array(cols).fill(0));
-      for (const tree of initialTrees) {
-        const tr = Array.isArray(tree) ? tree[0] : tree.r;
-        const tc = Array.isArray(tree) ? tree[1] : tree.c;
-        baseBoard[tr][tc] = 2;
-      }
-
-      for (let i = 0; i < targetStep && i < solvingSteps.length; i++) {
-        const st = solvingSteps[i];
-        baseBoard[st.r][st.c] = st.state === 1 ? 1 : 3;
-      }
-
-      setBoard(baseBoard);
-      setCurrentStepIndex(targetStep);
     },
-    [rows, cols, initialTrees, solvingSteps]
+    [board, spec]
   );
 
-  const handleStartReplay = (speedMultiplier: number = 1) => {
-    if (solvingSteps.length === 0) return;
-    if (replayTimerRef.current) clearInterval(replayTimerRef.current);
+  // 落子與平行宇宙快照留存
+  const applyCell = (r: number, c: number, val: CellState) => {
+    if (board[r][c] === 2 || isCompleted) return;
 
-    setIsReplaying(true);
-    setReplaySpeed(speedMultiplier);
+    // 儲存決策前快照供 Shift 幽靈對比
+    setGhostSnapshots((prev) => [board.map((row) => [...row]), ...prev.slice(0, 4)]);
 
-    let step = 0;
-    renderStepAt(0);
+    setBoard((prev) => {
+      const next = prev.map((row) => [...row]);
+      next[r][c] = next[r][c] === val ? 0 : val;
 
-    const intervalMs = Math.max(60, Math.round(500 / speedMultiplier));
-    replayTimerRef.current = setInterval(() => {
-      step++;
-      if (step > solvingSteps.length) {
-        if (replayTimerRef.current) clearInterval(replayTimerRef.current);
-        setIsReplaying(false);
-        return;
+      // 勝利檢查
+      let allTents = 0;
+      for (let i = 0; i < rows; i++) {
+        for (let j = 0; j < cols; j++) {
+          if (next[i][j] === 1) allTents++;
+        }
       }
-      renderStepAt(step);
-    }, intervalMs);
+      if (allTents === initialTrees.length && deltaPhi === 0) {
+        const tentCoords: TentCoord[] = [];
+        for (let i = 0; i < rows; i++) {
+          for (let j = 0; j < cols; j++) if (next[i][j] === 1) tentCoords.push({ r: i, c: j });
+        }
+        if (WebTentsGenerator.hasUniqueBijectiveMatching(initialTrees, tentCoords, rows, cols)) {
+          setIsCompleted(true);
+          recordAttempt({
+            puzzleId: actualPuzzle.id,
+            engineType: 'tents',
+            tier: (actualPuzzle.tier as TierKey) || 'kids',
+            cognitiveLoad: actualPuzzle.cognitiveLoad || { spatial: 1, numeric: 1, workingMemory: 1, inhibition: 1 },
+            isSuccess: true,
+            timeSpentSec: Math.round((Date.now() - startTimeRef.current) / 1000),
+            conflictsCount: 0,
+            technique: 'HomologicalMatching',
+            isPureClear: true,
+          });
+        }
+      }
+
+      return next;
+    });
   };
 
-  const handleStopReplay = () => {
-    if (replayTimerRef.current) clearInterval(replayTimerRef.current);
-    setIsReplaying(false);
+  // 畫布塗鴉處理
+  const handlePointerDown = (e: React.PointerEvent) => {
+    if (!isAltActive) return;
+    isDrawingRef.current = true;
+    const rect = canvasRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    currentPointsRef.current = [{ x: e.clientX - rect.left, y: e.clientY - rect.top }];
   };
 
-  const handleExportTextPuzzle = () => {
-    if (actualPuzzle) {
-      const text = TentsInterchangeCodec.exportToText(actualPuzzle);
-      navigator.clipboard.writeText(text);
-      setHasCopiedTextPuzzle(true);
-      setTimeout(() => setHasCopiedTextPuzzle(false), 2000);
+  const handlePointerMove = (e: React.PointerEvent) => {
+    if (!isDrawingRef.current || !isAltActive) return;
+    const rect = canvasRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    currentPointsRef.current.push({ x: e.clientX - rect.left, y: e.clientY - rect.top });
+
+    const ctx = canvasRef.current?.getContext('2d');
+    if (ctx && currentPointsRef.current.length > 1) {
+      const len = currentPointsRef.current.length;
+      ctx.strokeStyle = 'rgba(251, 191, 36, 0.75)';
+      ctx.lineWidth = 2.5;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(currentPointsRef.current[len - 2].x, currentPointsRef.current[len - 2].y);
+      ctx.lineTo(currentPointsRef.current[len - 1].x, currentPointsRef.current[len - 1].y);
+      ctx.stroke();
     }
   };
 
-  const handleImportTextPuzzle = () => {
-    const parsed = TentsInterchangeCodec.importFromText(importInput);
-    if (!parsed) {
-      alert(t.invalidFormat);
-      return;
+  const handlePointerUp = () => {
+    if (!isDrawingRef.current) return;
+    isDrawingRef.current = false;
+    if (currentPointsRef.current.length > 1) {
+      const newStroke: AnnotationStroke = {
+        id: `st_${Date.now()}`,
+        points: [...currentPointsRef.current],
+      };
+      setStrokes((prev) => [...prev, newStroke]);
+
+      // 檢測思維心搏（環繞猶豫）
+      const pts = currentPointsRef.current;
+      const avgX = pts.reduce((a, b) => a + b.x, 0) / pts.length;
+      const avgY = pts.reduce((a, b) => a + b.y, 0) / pts.length;
+      const targetC = Math.floor(avgX / (cellSize + 4));
+      const targetR = Math.floor(avgY / (cellSize + 4));
+
+      let angleSweep = 0;
+      for (let i = 1; i < pts.length; i++) {
+        const v1x = pts[i - 1].x - avgX, v1y = pts[i - 1].y - avgY;
+        const v2x = pts[i].x - avgX, v2y = pts[i].y - avgY;
+        angleSweep += Math.atan2(v1x * v2y - v1y * v2x, v1x * v2x + v1y * v2y);
+      }
+      if (Math.abs(angleSweep) >= Math.PI * 5) {
+        setMindPulseCoord({ r: targetR, c: targetC });
+      }
     }
-    setActiveVariant(parsed.variant);
-    const newBoard: CellState[][] = Array.from({ length: parsed.rows }, () => Array(parsed.cols).fill(0));
-    for (const tree of parsed.trees) newBoard[tree.r][tree.c] = 2;
-    setBoard(newBoard);
-    setShowImportBox(false);
-    setImportInput('');
-    setIsCompleted(false);
-    startTimeRef.current = Date.now();
+    currentPointsRef.current = [];
   };
 
-  const handleCopyAnswerKey = () => {
-    if (spec?.wpfAnswerKey) {
-      navigator.clipboard.writeText(spec.wpfAnswerKey);
-      setHasCopiedKey(true);
-      setTimeout(() => setHasCopiedKey(false), 2000);
+  // 滾輪切換平行幽靈快照
+  const handleWheel = (e: React.WheelEvent) => {
+    if (!isShiftActive || ghostSnapshots.length === 0) return;
+    if (e.deltaY > 0) {
+      setGhostIndex((idx) => Math.min(ghostSnapshots.length - 1, idx + 1));
+    } else {
+      setGhostIndex((idx) => Math.max(-1, idx - 1));
     }
   };
 
-  const cci = useMemo(() => getCompositeCognitiveIndex(), [getCompositeCognitiveIndex, isCompleted]);
+  const activeGhost = ghostIndex >= 0 ? ghostSnapshots[ghostIndex] : null;
 
   return (
-    <div className={`flex flex-col items-center justify-center p-2 select-none font-mono ${isMonochrome ? 'bg-black text-white' : ''}`}>
-      {/* 頂部數據看板 */}
-      <div className="w-full grid grid-cols-3 gap-1 mb-1.5 text-[9px]">
-        <div className={`border p-1.5 rounded text-center ${isMonochrome ? 'bg-neutral-950 border-neutral-800' : 'bg-slate-950 border-slate-800'}`}>
-          <div className="text-slate-500 text-[7px]">{t.speed}</div>
-          <div className="text-slate-200 font-bold">{(elapsedMs / 1000).toFixed(1)}s</div>
+    <div
+      onWheel={handleWheel}
+      className="flex flex-col items-center justify-center p-3 select-none font-mono bg-black text-white min-h-screen"
+    >
+      {/* 頂部極致微型看板 */}
+      <div className="w-full max-w-sm flex items-center justify-between px-2 mb-2 text-[8px] text-neutral-400">
+        <div className="flex gap-2">
+          <span>TIME: {(elapsedMs / 1000).toFixed(1)}s</span>
+          <span>DIM: {rows}&times;{cols}</span>
         </div>
-        <div className={`border p-1.5 rounded text-center ${isMonochrome ? 'bg-neutral-950 border-neutral-800' : 'bg-slate-950 border-slate-800'}`}>
-          <div className="text-slate-500 text-[7px]">{t.dimension}</div>
-          <div className={`${isMonochrome ? 'text-white' : 'text-cyan-300'} font-bold`}>{rows} &times; {cols}</div>
-        </div>
-        <div className={`border p-1.5 rounded text-center ${isMonochrome ? 'bg-neutral-950 border-neutral-800' : 'bg-slate-950 border-slate-800'}`}>
-          <div className="text-slate-500 text-[7px]">{t.variant}</div>
-          <div className={`${isMonochrome ? 'text-white' : 'text-emerald-400'} font-bold text-[7.5px]`}>
-            {activeVariant === 'diagonal' ? t.diag : t.std}
+
+        {/* 阻尼相位鎖儀表 */}
+        <div className="flex items-center gap-1.5 bg-neutral-900 border border-neutral-800 px-2 py-0.5 rounded-full">
+          <span className="text-[7px]">PHASE:</span>
+          <div className="w-8 h-1.5 bg-neutral-950 rounded-full relative overflow-hidden">
+            <div
+              className={`absolute top-0 bottom-0 w-2 rounded-full transition-all duration-300 ${
+                deltaPhi === 0
+                  ? 'left-[40%] bg-emerald-400 shadow-[0_0_8px_#10b981]'
+                  : 'left-[80%] bg-amber-400 shadow-[0_0_8px_#f59e0b]'
+              }`}
+            />
           </div>
-        </div>
-      </div>
-
-      {/* 控制器與縮放 */}
-      <div className="w-full flex items-center justify-between px-1 mb-1.5">
-        <div className="flex items-center gap-1.5">
-          <button
-            onClick={() => setActiveVariant((v) => (v === 'standard' ? 'diagonal' : 'standard'))}
-            className={`px-1.5 py-0.5 rounded text-[7px] font-bold border transition ${
-              activeVariant === 'diagonal'
-                ? 'bg-amber-500 text-black border-amber-400 shadow-[0_0_8px_rgba(245,158,11,0.5)]'
-                : 'bg-slate-900 text-slate-300 border-slate-700'
-            }`}
-          >
-            {activeVariant === 'diagonal' ? t.diag : t.std}
-          </button>
-          <button
-            onClick={() => setIsMonochrome((prev) => !prev)}
-            className={`px-1.5 py-0.5 rounded text-[7px] font-bold border transition ${
-              isMonochrome
-                ? 'bg-white text-black border-white shadow-[0_0_6px_rgba(255,255,255,0.8)]'
-                : 'bg-slate-900 text-slate-400 border-slate-800'
-            }`}
-          >
-            {isMonochrome ? t.print : t.kawaii}
-          </button>
-          <button
-            onClick={() => setShowImportBox(true)}
-            className="px-1.5 py-0.5 rounded text-[7px] font-bold bg-slate-900 text-cyan-300 border border-slate-800 hover:bg-slate-800"
-          >
-            {t.import}
-          </button>
-        </div>
-        <div className="flex items-center gap-1">
-          <button
-            onClick={() => setBoardScale((s) => Math.max(0.85, Number((s - 0.05).toFixed(2))))}
-            className="w-5 h-5 rounded bg-slate-900 border border-slate-800 text-slate-400 hover:text-slate-200 text-xs flex items-center justify-center active:scale-95"
-            title={t.zoomOut}
-          >
-            -
-          </button>
-          <span className="text-[7.5px] text-slate-500 font-mono w-7 text-center">
-            {Math.round(boardScale * 100)}%
+          <span className={`text-[7px] font-bold ${deltaPhi === 0 ? 'text-emerald-400' : 'text-amber-400'}`}>
+            {deltaPhi === 0 ? 'LOCKED' : `Δ${deltaPhi}`}
           </span>
-          <button
-            onClick={() => setBoardScale((s) => Math.min(1.25, Number((s + 0.05).toFixed(2))))}
-            className="w-5 h-5 rounded bg-slate-900 border border-slate-800 text-slate-400 hover:text-slate-200 text-xs flex items-center justify-center active:scale-95"
-            title={t.zoomIn}
-          >
-            +
-          </button>
+        </div>
+
+        <div className="text-[7px] text-neutral-500">
+          {isAltActive ? 'DRAWING' : isCtrlActive ? 'ENTROPY' : isShiftActive ? 'GHOST' : 'STANDBY'}
         </div>
       </div>
 
-      {/* 主棋盤 */}
-      <div
-        className={`relative p-3 border-2 transition-transform duration-150 flex flex-col items-center ${
-          isMonochrome
-            ? 'bg-black border-neutral-700 shadow-none rounded-none'
-            : 'bg-slate-950 border-slate-800 rounded-xl shadow-2xl'
-        }`}
-        style={{ transform: `scale(${boardScale})`, transformOrigin: 'top center' }}
-      >
-        {/* 欄位線索 (Top Counts) */}
+      {/* 主拓撲網格 */}
+      <div className="relative p-2 border border-neutral-800 bg-neutral-950 rounded-xl shadow-2xl flex flex-col items-center">
+        {/* 上方直行計數 */}
         <div className="flex pl-8 mb-1">
-          {initialColCounts.map((count, c) => {
-            let currentInCol = 0;
-            for (let r = 0; r < rows; r++) if (board[r][c] === 1) currentInCol++;
-            const isFull = currentInCol === count;
-
-            return (
-              <div
-                key={`col-${c}`}
-                className={`flex items-center justify-center font-bold text-xs ${
-                  isFull ? 'text-neutral-500' : isMonochrome ? 'text-white font-extrabold' : 'text-amber-400'
-                }`}
-                style={{ width: cellSize + 4 }}
-              >
-                {count}
-              </div>
-            );
-          })}
+          {initialColCounts.map((count, c) => (
+            <div
+              key={`c-${c}`}
+              className="flex items-center justify-center font-bold text-xs text-amber-400"
+              style={{ width: cellSize + 4 }}
+            >
+              {count}
+            </div>
+          ))}
         </div>
 
         <div className="flex relative">
-          {/* 列線索 (Left Counts) */}
+          {/* 左側橫列計數 */}
           <div className="flex flex-col justify-around pr-2">
-            {initialRowCounts.map((count, r) => {
-              let currentInRow = 0;
-              for (let c = 0; c < cols; c++) if (board[r][c] === 1) currentInRow++;
-              const isFull = currentInRow === count;
-
-              return (
-                <div
-                  key={`row-${r}`}
-                  className={`flex items-center justify-end font-bold text-xs ${
-                    isFull ? 'text-neutral-500' : isMonochrome ? 'text-white font-extrabold' : 'text-amber-400'
-                  }`}
-                  style={{ height: cellSize + 4 }}
-                >
-                  {count}
-                </div>
-              );
-            })}
+            {initialRowCounts.map((count, r) => (
+              <div
+                key={`r-${r}`}
+                className="flex items-center justify-end font-bold text-xs text-amber-400"
+                style={{ height: cellSize + 4 }}
+              >
+                {count}
+              </div>
+            ))}
           </div>
 
           <div className="relative">
-            {/* 動態匹配連線 SVG */}
-            <svg
-              className="absolute inset-0 pointer-events-none z-20"
-              style={{
-                width: cols * (cellSize + 4) + 8,
-                height: rows * (cellSize + 4) + 8,
-              }}
-            >
-              {matchingLines.map((line, idx) => (
-                <line
-                  key={`match-${idx}`}
-                  x1={line.x1}
-                  y1={line.y1}
-                  x2={line.x2}
-                  y2={line.y2}
-                  stroke={isMonochrome ? '#ffffff' : '#10b981'}
-                  strokeWidth={isMonochrome ? '1.5' : '2.5'}
-                  strokeDasharray="2 2"
-                  className={isMonochrome ? '' : 'animate-pulse'}
-                />
-              ))}
-            </svg>
-
-            {/* 格子陣列 */}
-            <div
-              className={`grid gap-1 p-1.5 border ${
-                isMonochrome
-                  ? 'bg-neutral-900 border-neutral-600 rounded-none'
-                  : 'bg-slate-900/90 border-slate-800 rounded-lg'
+            {/* 自由墨跡畫布 */}
+            <canvas
+              ref={canvasRef}
+              width={cols * (cellSize + 4)}
+              height={rows * (cellSize + 4)}
+              onPointerDown={handlePointerDown}
+              onPointerMove={handlePointerMove}
+              onPointerUp={handlePointerUp}
+              className={`absolute inset-0 z-30 ${
+                isAltActive ? 'pointer-events-auto cursor-crosshair' : 'pointer-events-none'
               }`}
+            />
+
+            {/* 前瞻因果向量 SVG 軌跡 */}
+            {hoveredRipple && (
+              <svg className="absolute inset-0 pointer-events-none z-25 w-full h-full">
+                <defs>
+                  <marker id="arrow" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                    <path d="M 0 0 L 10 5 L 0 10 z" fill="#f43f5e" />
+                  </marker>
+                </defs>
+                {hoveredRipple.path.map((v, idx) => (
+                  <line
+                    key={`ripple-${idx}`}
+                    x1={v.from[1] * (cellSize + 4) + cellSize / 2}
+                    y1={v.from[0] * (cellSize + 4) + cellSize / 2}
+                    x2={v.to[1] * (cellSize + 4) + cellSize / 2}
+                    y2={v.to[0] * (cellSize + 4) + cellSize / 2}
+                    stroke="#f43f5e"
+                    strokeWidth="1.5"
+                    strokeDasharray="2 2"
+                    markerEnd="url(#arrow)"
+                    className="animate-pulse"
+                  />
+                ))}
+              </svg>
+            )}
+
+            {/* 思維心搏微光光暈 */}
+            {mindPulseCoord && (
+              <div
+                className="absolute pointer-events-none z-20 rounded-full bg-amber-400/10 ring-1 ring-amber-400/30 animate-ping"
+                style={{
+                  left: mindPulseCoord.c * (cellSize + 4) + 2,
+                  top: mindPulseCoord.r * (cellSize + 4) + 2,
+                  width: cellSize,
+                  height: cellSize,
+                }}
+              />
+            )}
+
+            {/* 棋盤實體格子陣列 */}
+            <div
+              className="grid gap-1 border border-neutral-800 p-1 bg-black rounded"
               style={{
                 gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
-                width: cols * cellSize + (cols - 1) * 4 + 12,
-                height: rows * cellSize + (rows - 1) * 4 + 12,
+                width: cols * cellSize + (cols - 1) * 4 + 8,
+                height: rows * cellSize + (rows - 1) * 4 + 8,
               }}
             >
               {board.map((row, r) =>
                 row.map((cell, c) => {
-                  const isSelected = selectedCell?.[0] === r && selectedCell?.[1] === c;
-                  const isHintTarget = activeHintStep?.r === r && activeHintStep?.c === c;
+                  const gain = entropyGainMap[`${r},${c}`];
+                  const isLeap = isCtrlActive && gain?.quantumLeap;
+                  const ghostCell = activeGhost ? activeGhost[r][c] : null;
 
                   return (
                     <div
                       key={`${r}-${c}`}
-                      onClick={() => handleCellClick(r, c)}
-                      onContextMenu={(e) => handleRightClick(e, r, c)}
-                      className={`relative flex items-center justify-center text-sm sm:text-base cursor-pointer transition select-none ${
-                        isMonochrome
-                          ? `rounded-none border ${
-                              isHintTarget && hintLevel >= 2
-                                ? 'border-white bg-neutral-800 ring-2 ring-white z-30'
-                                : isSelected
-                                ? 'border-white bg-neutral-800 z-20'
-                                : cell === 2
-                                ? 'bg-black border-neutral-700 cursor-default'
-                                : cell === 1
-                                ? 'bg-black border-neutral-500 font-bold text-white'
-                                : cell === 3
-                                ? 'bg-neutral-950 border-neutral-800 text-neutral-500'
-                                : 'bg-black hover:bg-neutral-900 border-neutral-800'
-                            }`
-                          : `rounded-md ${
-                              isHintTarget && hintLevel >= 2
-                                ? 'ring-2 ring-rose-500 bg-rose-950/40 animate-pulse z-30'
-                                : isSelected
-                                ? 'ring-2 ring-indigo-400 bg-indigo-950/50 z-20'
-                                : cell === 2
-                                ? 'bg-emerald-950/60 border border-emerald-800/40 cursor-default'
-                                : cell === 1
-                                ? 'bg-amber-950/80 border border-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.5)]'
-                                : cell === 3
-                                ? 'bg-emerald-950/30 border border-emerald-900/30'
-                                : 'bg-slate-950/80 hover:bg-slate-900 border border-slate-800/60'
-                            }`
+                      onMouseEnter={() => handleCellHover(r, c)}
+                      onClick={() => applyCell(r, c, 1)}
+                      onContextMenu={(e) => {
+                        e.preventDefault();
+                        applyCell(r, c, 3);
+                      }}
+                      className={`relative flex items-center justify-center cursor-pointer transition-all duration-100 ${
+                        cell === 2
+                          ? 'bg-neutral-900 border border-neutral-800'
+                          : cell === 1
+                          ? 'bg-neutral-950 border border-amber-500 font-bold text-white shadow-[0_0_10px_rgba(245,158,11,0.3)]'
+                          : cell === 3
+                          ? 'bg-neutral-950 border border-neutral-800 text-neutral-600'
+                          : 'bg-black hover:bg-neutral-900 border border-neutral-900'
                       }`}
                       style={{ width: cellSize, height: cellSize }}
                     >
-                      {isMonochrome ? (
-                        cell === 2 ? 'T' : cell === 1 ? '^' : cell === 3 ? '.' : ''
-                      ) : (
-                        cell === 2 ? '🌲' : cell === 1 ? '⛺' : cell === 3 ? (
-                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500/50" />
-                        ) : ''
+                      {/* 瞬態對比拉伸光脈衝 */}
+                      {isLeap && (
+                        <div className="absolute inset-0 rounded bg-white shadow-[0_0_16px_#ffffff] animate-ping opacity-60 z-10" />
+                      )}
+
+                      {/* 實體圖元 */}
+                      <span className="text-xs">
+                        {cell === 2 ? '🌲' : cell === 1 ? '⛺' : cell === 3 ? '•' : ''}
+                      </span>
+
+                      {/* 平行宇宙殘影覆蓋 */}
+                      {ghostCell !== null && ghostCell !== cell && ghostCell !== 0 && (
+                        <span className="absolute text-[9px] text-indigo-400 opacity-60 pointer-events-none">
+                          {ghostCell === 1 ? '⛺' : '•'}
+                        </span>
                       )}
                     </div>
                   );
@@ -731,242 +449,50 @@ export const TentsBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
         </div>
       </div>
 
-      {/* 提示面板 */}
-      {hintLevel > 0 && activeHintStep && (
-        <div className="mt-2.5 p-2 bg-slate-900/90 border border-amber-500/60 rounded-xl text-center max-w-xs animate-fade-in shadow-lg">
-          <div className="flex items-center justify-between px-2 mb-1">
-            <span className="text-[7.5px] font-bold text-amber-300 tracking-wider">
-              {t.focusTarget}
-            </span>
-            <div className="flex gap-1">
-              <span className={`w-1.5 h-1.5 rounded-full ${hintLevel >= 1 ? 'bg-amber-400' : 'bg-slate-700'}`} />
-              <span className={`w-1.5 h-1.5 rounded-full ${hintLevel >= 2 ? 'bg-amber-400' : 'bg-slate-700'}`} />
-              <span className={`w-1.5 h-1.5 rounded-full ${hintLevel >= 3 ? 'bg-rose-500 animate-ping' : 'bg-slate-700'}`} />
-            </div>
-          </div>
-
-          <div className="py-1 flex flex-col items-center justify-center gap-1 text-[8.5px] font-mono text-slate-200">
-            {hintLevel === 1 && (
-              <span className="text-amber-300">
-                {t.inspectCluster} [{activeHintStep.r + 1}, {activeHintStep.c + 1}]
-              </span>
-            )}
-            {hintLevel === 2 && (
-              <span className="text-cyan-300 font-bold">
-                {activeHintStep.rationale}
-              </span>
-            )}
-            {hintLevel === 3 && (
-              <span className="text-rose-400 font-extrabold">
-                {t.contradiction}
-              </span>
-            )}
-          </div>
+      {/* 底部微縮拓撲雷達與控制 */}
+      <div className="mt-3 flex items-center justify-between w-full max-w-sm px-1">
+        <div className="flex gap-2 text-[7.5px] text-neutral-500">
+          <span>ALT: DRAW</span>
+          <span>CTRL: ENTROPY</span>
+          <span>SHIFT+WHEEL: GHOST</span>
         </div>
-      )}
 
-      {guessWarning && (
-        <div className="mt-2 px-3 py-1 bg-amber-950/90 border border-amber-500/70 text-amber-300 text-[8px] rounded-lg animate-bounce text-center max-w-xs">
-          {guessWarning}
+        {/* 微縮雷達像元 */}
+        <div
+          className="grid gap-[1px] bg-neutral-900 border border-neutral-800 p-0.5 rounded"
+          style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}
+        >
+          {Array.from({ length: rows * cols }).map((_, idx) => {
+            const r = Math.floor(idx / cols);
+            const c = idx % cols;
+            const isTree = initialTrees.some((t) => t.r === r && t.c === c);
+            const isTent = board[r][c] === 1;
+            return (
+              <div
+                key={`mini-${r}-${c}`}
+                className={`w-1.5 h-1.5 ${
+                  isTent ? 'bg-amber-400' : isTree ? 'bg-emerald-700' : 'bg-neutral-950'
+                }`}
+              />
+            );
+          })}
         </div>
-      )}
-
-      {/* 觸控/行動端工具列 (Tool Selector) */}
-      <div className="flex items-center gap-2 mt-2">
-        <button
-          onClick={() => setActiveTool('tent')}
-          className={`px-2.5 py-1 text-[8px] font-bold rounded border transition ${
-            activeTool === 'tent'
-              ? 'bg-amber-500 text-black border-amber-400 shadow-md'
-              : 'bg-slate-900 border-slate-800 text-slate-400'
-          }`}
-        >
-          ⛺ {t.toolTent}
-        </button>
-        <button
-          onClick={() => setActiveTool('grass')}
-          className={`px-2.5 py-1 text-[8px] font-bold rounded border transition ${
-            activeTool === 'grass'
-              ? 'bg-emerald-600 text-white border-emerald-400 shadow-md'
-              : 'bg-slate-900 border-slate-800 text-slate-400'
-          }`}
-        >
-          • {t.toolGrass}
-        </button>
-        <button
-          onClick={() => setActiveTool('clear')}
-          className={`px-2.5 py-1 text-[8px] font-bold rounded border transition ${
-            activeTool === 'clear'
-              ? 'bg-rose-600 text-white border-rose-400 shadow-md'
-              : 'bg-slate-900 border-slate-800 text-slate-400'
-          }`}
-        >
-          ✕ {t.toolClear}
-        </button>
       </div>
 
-      <div className="flex items-center justify-between w-full max-w-xs mt-2 px-1 text-[7.5px] text-slate-400">
-        <div className="flex gap-1.5">
-          <button
-            onClick={() => setIsNoGuessMode((prev) => !prev)}
-            className={`px-2 py-1 text-[7.5px] font-bold rounded-md border transition ${
-              isNoGuessMode
-                ? 'bg-emerald-500/20 border-emerald-400 text-emerald-300 shadow-[0_0_8px_rgba(16,185,129,0.3)]'
-                : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            {isNoGuessMode ? t.noGuess : t.free}
-          </button>
-          <button
-            onClick={handleRequestHint}
-            className="px-2 py-1 text-[7.5px] font-bold rounded-md border bg-slate-900 border-amber-500/50 text-amber-300 hover:bg-amber-950/40 transition flex items-center gap-0.5"
-          >
-            {t.hint}
-          </button>
-        </div>
-        <span>{t.controlsHelp}</span>
-      </div>
-
-      {/* 題目匯入彈窗 */}
-      {showImportBox && (
-        <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50 animate-fade-in font-mono">
-          <div className="bg-slate-900 border border-slate-700 p-3 rounded-xl w-full max-w-sm">
-            <div className="text-xs font-bold text-cyan-300 mb-2">{t.importTitle}</div>
-            <textarea
-              value={importInput}
-              onChange={(e) => setImportInput(e.target.value)}
-              placeholder={t.importPlaceholder}
-              className="w-full h-20 bg-slate-950 border border-slate-800 rounded p-1.5 text-[8px] text-slate-200 font-mono resize-none focus:outline-none focus:border-cyan-500 mb-2"
-            />
-            <div className="flex gap-1.5">
-              <button
-                onClick={handleImportTextPuzzle}
-                className="flex-1 py-1 bg-cyan-600 hover:bg-cyan-500 text-black font-bold text-xs rounded transition"
-              >
-                {t.importSubmit}
-              </button>
-              <button
-                onClick={() => setShowImportBox(false)}
-                className="px-3 py-1 bg-slate-800 text-slate-300 text-xs rounded hover:bg-slate-700 transition"
-              >
-                {t.cancel}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* 結算面板 */}
+      {/* 結算純淨認證 */}
       {isCompleted && (
-        <div className="mt-3 p-3 bg-slate-950/95 border border-emerald-500/60 rounded-xl text-center w-full max-w-xs shadow-2xl animate-fade-in font-mono">
-          <div className="text-emerald-400 font-bold text-xs mb-0.5">{t.campEstablished}</div>
-          {isNoGuessMode && (
-            <div className="text-[8px] text-amber-300 font-bold mb-1">
-              {t.zeroGuessCert}
-            </div>
-          )}
-          <div className="text-[9px] text-slate-400 mb-2">
-            {t.timeSpent}: {(elapsedMs / 1000).toFixed(2)}s | Gf: IQ {cci.standardIQ}
+        <div className="mt-3 p-3 bg-neutral-950 border border-emerald-500/80 rounded-xl text-center max-w-xs shadow-2xl animate-fade-in">
+          <div className="text-emerald-400 font-bold text-xs tracking-widest mb-1">TOPOLOGY COLLAPSED</div>
+          <div className="text-[7.5px] text-neutral-400 mb-2">
+            ZERO-ASSUMPTION PROOF: VERIFIED | WPF KEY: {spec.wpfAnswerKey}
           </div>
-
-          <div className="mb-2 p-1.5 bg-slate-900 border border-slate-800 rounded-lg flex items-center justify-between">
-            <div className="text-left">
-              <div className="text-[6.5px] text-slate-500 font-bold uppercase tracking-wider">
-                {t.wpfKey}
-              </div>
-              <div className="text-xs font-mono font-black text-amber-300 tracking-widest mt-0.5">
-                {spec?.wpfAnswerKey || 'N/A'}
-              </div>
-            </div>
-            <button
-              onClick={handleCopyAnswerKey}
-              className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-[7px] text-cyan-300 rounded border border-slate-700 transition active:scale-95"
-            >
-              {hasCopiedKey ? t.copied : t.copy}
-            </button>
-          </div>
-
-          <div className="mb-2 flex gap-1">
-            <button
-              onClick={handleExportTextPuzzle}
-              className="w-full py-1 bg-slate-900 hover:bg-slate-800 border border-emerald-500/40 text-emerald-300 text-[7.5px] font-bold rounded transition flex items-center justify-center gap-1"
-            >
-              {hasCopiedTextPuzzle ? t.puzzleCopied : t.exportPuzzle}
-            </button>
-          </div>
-
-          {/* 回放控制器 */}
-          <div className="mb-2 p-2 bg-slate-900/80 border border-indigo-500/40 rounded-lg text-left">
-            <div className="text-[7.5px] text-indigo-300 font-bold mb-1 flex justify-between items-center">
-              <span>{t.scrubbing}</span>
-              <span className="text-amber-300 font-mono">
-                {currentStepIndex} / {solvingSteps.length} {t.stepUnit}
-              </span>
-            </div>
-
-            <input
-              type="range"
-              min={0}
-              max={solvingSteps.length}
-              value={currentStepIndex}
-              onChange={(e) => {
-                handleStopReplay();
-                renderStepAt(Number(e.target.value));
-              }}
-              className="w-full accent-indigo-400 cursor-pointer mb-1.5"
-            />
-
-            <div className="flex gap-1 items-center">
-              <span className="text-[6.5px] text-slate-500 mr-1">{t.play}</span>
-              {[0.5, 1, 2, 5].map((spd) => (
-                <button
-                  key={spd}
-                  onClick={() => handleStartReplay(spd)}
-                  className={`flex-1 py-0.5 text-[7px] font-bold rounded border transition active:scale-95 ${
-                    isReplaying && replaySpeed === spd
-                      ? 'bg-amber-400 text-black border-amber-300'
-                      : 'bg-slate-800 text-slate-300 border-slate-700'
-                  }`}
-                >
-                  {spd}x
-                </button>
-              ))}
-              {isReplaying && (
-                <button
-                  onClick={handleStopReplay}
-                  className="px-1.5 py-0.5 text-[7px] font-bold rounded bg-rose-950 text-rose-300 border border-rose-800"
-                >
-                  {t.pause}
-                </button>
-              )}
-            </div>
-          </div>
-
-          <div className="bg-slate-900/40 p-2 rounded-lg border border-slate-800 flex flex-col items-center mb-2">
-            <CognitiveRadarChart dimensions={profile.cognitiveDimensions} size={130} />
-          </div>
-
-          <div className="flex gap-1.5">
-            <button
-              onClick={exportLongitudinalDataset}
-              className="flex-1 py-1.5 bg-slate-900 hover:bg-slate-800 border border-cyan-600/50 text-cyan-300 text-[8px] font-bold rounded-lg transition"
-            >
-              {t.exportData}
-            </button>
-          </div>
-
-          {proofSignature && (
-            <div className="mt-2 p-1.5 bg-slate-900 border border-slate-800 rounded text-left">
-              <div className="text-[6.5px] font-mono text-cyan-400/80 break-all select-all">
-                {proofSignature}
-              </div>
-            </div>
-          )}
+          <button
+            onClick={() => navigator.clipboard.writeText(spec.wpfAnswerKey)}
+            className="w-full py-1 bg-emerald-600/20 hover:bg-emerald-600/40 text-emerald-300 border border-emerald-500/50 rounded text-[8px] font-bold transition"
+          >
+            COPY WPF CERTIFIED KEY
+          </button>
         </div>
-      )}
-
-      {showPBModal && (
-        <PBCelebrationModal pb={profile.personalBest} onClose={() => setShowPBModal(false)} isEn={isEn} />
       )}
     </div>
   );
