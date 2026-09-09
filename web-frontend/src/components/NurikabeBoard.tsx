@@ -2,14 +2,10 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { PuzzleEntity, TierKey } from '../generated';
 import { useLearnerProfile } from '../hooks/useLearnerProfile';
 import { useLanguage } from '../contexts/LanguageContext';
-import { MetricErrorBar } from './MetricErrorBar';
-import { CognitiveRadarChart } from './CognitiveRadarChart';
-import { PBCelebrationModal } from './PBCelebrationModal';
 import { TournamentSubmissionModal } from './TournamentSubmissionModal';
 import { getEnvironmentFingerprint, calculateInfractionScore } from '../utils/tournamentSecurity';
 import {
-  WebNurikabeGenerator,
-  NurikabeSpec,
+  NurikabeAxiomaticEngine,
   NurikabeCellState,
   NurikabeHintStep,
 } from '../engines/nurikabeGenerator';
@@ -20,114 +16,96 @@ interface Props {
   tournamentMode?: boolean;
 }
 
-interface CellDelta {
-  r: number;
-  c: number;
-  from: NurikabeCellState;
-  to: NurikabeCellState;
+interface TimelineFrame {
+  board: NurikabeCellState[][];
+  hasViolation: boolean;
+  isHypothesis: boolean;
+  timestamp: number;
 }
 
-const MAX_HISTORY_STEPS = 250;
+const MAX_HISTORY = 400;
 
 export const NurikabeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMode = false }) => {
   const actualPuzzle = puzzleData || puzzle;
-  const {
-    recordAttempt,
-    getBenchmarkMetrics,
-    profile,
-    getCompositeCognitiveIndex,
-    exportLongitudinalDataset,
-  } = useLearnerProfile();
-
+  const { recordAttempt, profile, getCompositeCognitiveIndex } = useLearnerProfile();
   const { lang } = useLanguage();
   const isEn = lang === 'en';
 
-  // 提前返回守衛：保證 actualPuzzle 非空，消除全域 TS18048
   if (!actualPuzzle) {
     return (
-      <div className="flex items-center justify-center p-8 text-xs font-mono text-slate-500">
-        {isEn ? 'Loading Nurikabe Board...' : '載入數牆盤面中...'}
+      <div className="flex items-center justify-center p-8 font-mono text-xs text-neutral-500">
+        {isEn ? 'INITIALIZING NEURAL HUD...' : '載入神經儀表板...'}
       </div>
     );
   }
 
-  const spec: NurikabeSpec = (actualPuzzle as any)?.puzzle;
+  const spec = (actualPuzzle as any)?.puzzle;
   const rows = spec?.rows || 6;
   const cols = spec?.cols || 6;
-  const grid = useMemo(() => spec?.grid || [], [spec]);
-
+  const grid = useMemo(() => (spec?.grid || []) as (number | null)[][], [spec]);
   const currentTier = (actualPuzzle.tier as TierKey) || 'kids';
 
-  // 1. 盤面狀態：0: 未決, 1: 黑海, 2: 島嶼點標
   const [board, setBoard] = useState<NurikabeCellState[][]>(() =>
     Array.from({ length: rows }, () => Array(cols).fill(0))
   );
 
-  const [history, setHistory] = useState<CellDelta[]>([]);
-  const [redoStack, setRedoStack] = useState<CellDelta[]>([]);
+  const [timeline, setTimeline] = useState<TimelineFrame[]>(() => [
+    {
+      board: Array.from({ length: rows }, () => Array(cols).fill(0)),
+      hasViolation: false,
+      isHypothesis: false,
+      timestamp: Date.now(),
+    },
+  ]);
+  const [timelineIndex, setTimelineIndex] = useState<number>(0);
 
-  // 2. 輔助功能狀態
   const [noGuessMode, setNoGuessMode] = useState<boolean>(false);
-  const [highContrast, setHighContrast] = useState<boolean>(false);
-  const [noGuessWarning, setNoGuessWarning] = useState<string | null>(null);
-  const [activeHint, setActiveHint] = useState<NurikabeHintStep | null>(null);
-  const [hintLadderLevel, setHintLadderLevel] = useState<1 | 2 | 3>(1);
-  const [animatedEvidenceSet, setAnimatedEvidenceSet] = useState<Set<string>>(new Set());
+  const [isHypothesisMode, setIsHypothesisMode] = useState<boolean>(false);
+  const [highContrast, setHighContrast] = useState<boolean>(true);
+  const [hudWarning, setHudWarning] = useState<string | null>(null);
 
-  // 3. 覆盤播放器狀態
   const [isReplaying, setIsReplaying] = useState<boolean>(false);
-  const [replaySpeed, setReplaySpeed] = useState<1 | 2 | 4>(1);
+  const [replaySpeed, setReplaySpeed] = useState<1 | 2 | 4>(2);
   const [replayStepIndex, setReplayStepIndex] = useState<number>(0);
   const [replayStepsList, setReplayStepsList] = useState<NurikabeHintStep[]>([]);
   const [userStateBackup, setUserStateBackup] = useState<NurikabeCellState[][] | null>(null);
-  const [copyToast, setCopyToast] = useState<string | null>(null);
 
   const [isCompleted, setIsCompleted] = useState<boolean>(false);
-  const [showPBModal, setShowPBModal] = useState<boolean>(false);
   const [showSubmitModal, setShowSubmitModal] = useState<boolean>(false);
-  const [proofSignature, setProofSignature] = useState<string | null>(null);
 
+  // 雙軌計時器
   const startTimeRef = useRef<number>(Date.now());
   const [elapsedMs, setElapsedMs] = useState<number>(0);
-  const conflictCountRef = useRef<number>(0);
-  const [conflictDisplay, setConflictDisplay] = useState<number>(0);
+  const [activeContemplationMs, setActiveContemplationMs] = useState<number>(0);
   const movesCountRef = useRef<number>(0);
+  const lifetimeViolationsRef = useRef<number>(0);
   const hasRecordedRef = useRef<boolean>(false);
 
   useEffect(() => {
-    setBoard(Array.from({ length: rows }, () => Array(cols).fill(0)));
-    setHistory([]);
-    setRedoStack([]);
+    const blank = Array.from({ length: rows }, () => Array(cols).fill(0));
+    setBoard(blank);
+    setTimeline([
+      { board: blank, hasViolation: false, isHypothesis: false, timestamp: Date.now() },
+    ]);
+    setTimelineIndex(0);
     setIsCompleted(false);
-    setActiveHint(null);
-    setHintLadderLevel(1);
-    setAnimatedEvidenceSet(new Set());
     setIsReplaying(false);
     setUserStateBackup(null);
-    setProofSignature(null);
-    setNoGuessWarning(null);
+    setHudWarning(null);
+    setIsHypothesisMode(false);
     startTimeRef.current = Date.now();
     setElapsedMs(0);
-    conflictCountRef.current = 0;
-    setConflictDisplay(0);
+    setActiveContemplationMs(0);
     movesCountRef.current = 0;
+    lifetimeViolationsRef.current = 0;
     hasRecordedRef.current = false;
   }, [actualPuzzle.id, rows, cols]);
 
-  useEffect(() => {
-    if (isCompleted || isReplaying) return;
-    let frameId: number;
-    const updateTimer = () => {
-      setElapsedMs(Date.now() - startTimeRef.current);
-      frameId = requestAnimationFrame(updateTimer);
-    };
-    frameId = requestAnimationFrame(updateTimer);
-    return () => cancelAnimationFrame(frameId);
-  }, [isCompleted, isReplaying]);
-
-  // 2x2 黑海池與島嶼大小狀態即時分析
-  const analysis = useMemo(() => {
-    const twoByTwoPools = new Set<string>();
+  // HUD 異常偵測
+  const hudTopologyAnalysis = useMemo(() => {
+    const pools = new Set<string>();
+    const overflowingCells = new Set<string>();
+    const strandedSeaCells = new Set<string>();
 
     for (let r = 0; r < rows - 1; r++) {
       for (let c = 0; c < cols - 1; c++) {
@@ -137,26 +115,116 @@ export const NurikabeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
           board[r][c + 1] === 1 &&
           board[r + 1][c + 1] === 1
         ) {
-          twoByTwoPools.add(`${r},${c}`);
-          twoByTwoPools.add(`${r + 1},${c}`);
-          twoByTwoPools.add(`${r},${c + 1}`);
-          twoByTwoPools.add(`${r + 1},${c + 1}`);
+          pools.add(`${r},${c}`);
+          pools.add(`${r + 1},${c}`);
+          pools.add(`${r},${c + 1}`);
+          pools.add(`${r + 1},${c + 1}`);
         }
       }
     }
 
-    const totalConflicts = twoByTwoPools.size;
-    return { twoByTwoPools, totalConflicts };
-  }, [board, rows, cols]);
+    const visitedWhite = new Uint8Array(rows * cols);
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const idx = r * cols + c;
+        if (board[r][c] === 2 && !visitedWhite[idx]) {
+          const comp: [number, number][] = [];
+          const queue: [number, number][] = [[r, c]];
+          visitedWhite[idx] = 1;
+          let clue: number | null = null;
+          let clueCount = 0;
 
-  const prevConflictsRef = useRef<number>(0);
-  useEffect(() => {
-    if (analysis.totalConflicts > prevConflictsRef.current) {
-      conflictCountRef.current += analysis.totalConflicts - prevConflictsRef.current;
-      setConflictDisplay(conflictCountRef.current);
+          while (queue.length > 0) {
+            const [cr, cc] = queue.shift()!;
+            comp.push([cr, cc]);
+            if (grid[cr][cc] !== null) {
+              clue = grid[cr][cc];
+              clueCount++;
+            }
+            for (const [nr, nc] of NurikabeAxiomaticEngine.getOrthogonalNeighbors(cr, cc, rows, cols)) {
+              const nIdx = nr * cols + nc;
+              if (board[nr][nc] === 2 && !visitedWhite[nIdx]) {
+                visitedWhite[nIdx] = 1;
+                queue.push([nr, nc]);
+              }
+            }
+          }
+
+          if ((clue !== null && comp.length > clue) || clueCount > 1) {
+            comp.forEach(([er, ec]) => overflowingCells.add(`${er},${ec}`));
+          }
+        }
+      }
     }
-    prevConflictsRef.current = analysis.totalConflicts;
-  }, [analysis.totalConflicts]);
+
+    const seaCells: [number, number][] = [];
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        if (board[r][c] === 1) seaCells.push([r, c]);
+      }
+    }
+    if (seaCells.length > 1) {
+      const visited = new Set<string>();
+      const queue: [number, number][] = [seaCells[0]];
+      visited.add(`${seaCells[0][0]},${seaCells[0][1]}`);
+
+      while (queue.length > 0) {
+        const [cr, cc] = queue.shift()!;
+        for (const [nr, nc] of NurikabeAxiomaticEngine.getOrthogonalNeighbors(cr, cc, rows, cols)) {
+          if (board[nr][nc] !== 2) {
+            const key = `${nr},${nc}`;
+            if (!visited.has(key)) {
+              visited.add(key);
+              queue.push([nr, nc]);
+            }
+          }
+        }
+      }
+      for (const [sr, sc] of seaCells) {
+        if (!visited.has(`${sr},${sc}`)) strandedSeaCells.add(`${sr},${sc}`);
+      }
+    }
+
+    return {
+      pools,
+      overflowingCells,
+      strandedSeaCells,
+      activePoolsCount: pools.size / 4,
+      hasViolations: pools.size > 0 || overflowingCells.size > 0 || strandedSeaCells.size > 0,
+    };
+  }, [board, rows, cols, grid]);
+
+  // 雙軌時鐘
+  useEffect(() => {
+    if (isCompleted || isReplaying) return;
+    let lastTime = performance.now();
+    let frameId: number;
+
+    const tick = (now: number) => {
+      const delta = now - lastTime;
+      lastTime = now;
+
+      setElapsedMs(Date.now() - startTimeRef.current);
+      if (!hudTopologyAnalysis.hasViolations) {
+        setActiveContemplationMs((prev) => prev + delta);
+      }
+      frameId = requestAnimationFrame(tick);
+    };
+
+    frameId = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frameId);
+  }, [isCompleted, isReplaying, hudTopologyAnalysis.hasViolations]);
+
+  const prevViolationsRef = useRef<number>(0);
+  useEffect(() => {
+    const cur = hudTopologyAnalysis.activePoolsCount +
+      (hudTopologyAnalysis.overflowingCells.size > 0 ? 1 : 0) +
+      (hudTopologyAnalysis.strandedSeaCells.size > 0 ? 1 : 0);
+    if (cur > prevViolationsRef.current) {
+      lifetimeViolationsRef.current += cur - prevViolationsRef.current;
+    }
+    prevViolationsRef.current = cur;
+  }, [hudTopologyAnalysis]);
 
   const mutateCell = useCallback(
     (r: number, c: number, targetState: NurikabeCellState) => {
@@ -164,175 +232,166 @@ export const NurikabeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
       const currentVal = board[r][c];
       if (currentVal === targetState) return;
 
+      let hypothesisTriggered = false;
+
       if (noGuessMode && targetState !== 0) {
-        const step = WebNurikabeGenerator.getNextForcedDeduction(rows, cols, grid, board);
-        if (step) {
-          const isTarget = step.r === r && step.c === c;
-          const isStateMatch = step.forcedState === targetState;
-          if (!isTarget || !isStateMatch) {
-            if (navigator.vibrate) navigator.vibrate([25, 35, 25]);
-            const reason = isEn ? step.humanReadable.en : step.humanReadable.zh;
-            setNoGuessWarning(isEn ? `[No-Guess Blocked] Deduce: ${reason}` : `【無猜測攔截】依據定式應優先推演：${reason}`);
-            setTimeout(() => setNoGuessWarning(null), 3000);
+        const forcedSteps = NurikabeAxiomaticEngine.getAllForcedDeductions(rows, cols, grid, board);
+
+        if (forcedSteps.length > 0) {
+          const isForced = forcedSteps.some(
+            (s) => s.r === r && s.c === c && s.forcedState === targetState
+          );
+          if (!isForced) {
+            if (navigator.vibrate) navigator.vibrate([20, 40, 20]);
+            setHudWarning(
+              isEn
+                ? `[NO-GUESS] Move not logically forced. ${forcedSteps.length} deduction(s) open.`
+                : `【嚴格演繹攔截】非必然步。全盤尚有 ${forcedSteps.length} 處可邏輯鎖定。`
+            );
+            setTimeout(() => setHudWarning(null), 1800);
             return;
           }
+          setIsHypothesisMode(false);
+        } else {
+          hypothesisTriggered = true;
+          setIsHypothesisMode(true);
         }
       }
 
-      if (navigator.vibrate) navigator.vibrate(8);
       movesCountRef.current++;
+      const nextBoard = board.map((row) => [...row]);
+      nextBoard[r][c] = targetState;
 
-      const delta: CellDelta = { r, c, from: currentVal, to: targetState };
-      setHistory((prev) => [...prev.slice(-MAX_HISTORY_STEPS + 1), delta]);
-      setRedoStack([]);
+      const trimmed = timeline.slice(0, timelineIndex + 1);
+      const newFrame: TimelineFrame = {
+        board: nextBoard,
+        hasViolation: hudTopologyAnalysis.hasViolations,
+        isHypothesis: hypothesisTriggered,
+        timestamp: Date.now(),
+      };
+      const updatedTimeline = [...trimmed.slice(-MAX_HISTORY), newFrame];
 
-      setBoard((prev) => {
-        const next = prev.map((row) => [...row]);
-        next[r][c] = targetState;
-        return next;
-      });
+      setBoard(nextBoard);
+      setTimeline(updatedTimeline);
+      setTimelineIndex(updatedTimeline.length - 1);
+    },
+    [isCompleted, isReplaying, grid, board, noGuessMode, timeline, timelineIndex, hudTopologyAnalysis.hasViolations, rows, cols, isEn]
+  );
 
-      if (activeHint && activeHint.r === r && activeHint.c === c) {
-        setActiveHint(null);
+  const jumpToTimelineStep = (idx: number) => {
+    if (isReplaying || idx < 0 || idx >= timeline.length) return;
+    setTimelineIndex(idx);
+    setBoard(timeline[idx].board.map((row) => [...row]));
+  };
+
+  const jumpToViolation = (direction: 'prev' | 'next') => {
+    if (isReplaying) return;
+    if (direction === 'prev') {
+      for (let i = timelineIndex - 1; i >= 0; i--) {
+        if (timeline[i].hasViolation) {
+          jumpToTimelineStep(i);
+          return;
+        }
       }
-    },
-    [isCompleted, isReplaying, grid, board, noGuessMode, rows, cols, activeHint, isEn]
-  );
+    } else {
+      for (let i = timelineIndex + 1; i < timeline.length; i++) {
+        if (timeline[i].hasViolation) {
+          jumpToTimelineStep(i);
+          return;
+        }
+      }
+    }
+  };
 
-  const cycleCell = useCallback(
-    (r: number, c: number) => {
-      if (grid[r]?.[c] !== null) return;
-      const curr = board[r][c];
-      const next: NurikabeCellState = curr === 0 ? 1 : curr === 1 ? 2 : 0;
-      mutateCell(r, c, next);
-    },
-    [grid, board, mutateCell]
-  );
-
-  const handleUndo = useCallback(() => {
-    if (history.length === 0 || isCompleted || isReplaying) return;
-    if (navigator.vibrate) navigator.vibrate(10);
-
-    const last = history[history.length - 1];
-    setBoard((prev) => {
-      const next = prev.map((row) => [...row]);
-      next[last.r][last.c] = last.from;
-      return next;
-    });
-    setRedoStack((prev) => [...prev, last]);
-    setHistory((prev) => prev.slice(0, -1));
-  }, [history, isCompleted, isReplaying]);
-
-  const handleRedo = useCallback(() => {
-    if (redoStack.length === 0 || isCompleted || isReplaying) return;
-    if (navigator.vibrate) navigator.vibrate(10);
-
-    const nextDelta = redoStack[redoStack.length - 1];
-    setBoard((prev) => {
-      const next = prev.map((row) => [...row]);
-      next[nextDelta.r][nextDelta.c] = nextDelta.to;
-      return next;
-    });
-    setHistory((prev) => [...prev, nextDelta]);
-    setRedoStack((prev) => prev.slice(0, -1));
-  }, [redoStack, isCompleted, isReplaying]);
+  const handleCellInteraction = (r: number, c: number, e: React.MouseEvent) => {
+    e.preventDefault();
+    if (grid[r]?.[c] !== null) return;
+    if (e.shiftKey) {
+      mutateCell(r, c, board[r][c] === 2 ? 0 : 2);
+    } else if (e.ctrlKey || e.metaKey) {
+      mutateCell(r, c, board[r][c] === 1 ? 0 : 1);
+    } else if (e.button === 2) {
+      mutateCell(r, c, board[r][c] === 2 ? 0 : 2);
+    } else {
+      mutateCell(r, c, board[r][c] === 1 ? 0 : 1);
+    }
+  };
 
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
+    const onKey = (e: KeyboardEvent) => {
       if (isCompleted || isReplaying) return;
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') {
         e.preventDefault();
-        if (e.shiftKey) handleRedo();
-        else handleUndo();
+        if (e.shiftKey) jumpToTimelineStep(timelineIndex + 1);
+        else jumpToTimelineStep(timelineIndex - 1);
       } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'y') {
         e.preventDefault();
-        handleRedo();
+        jumpToTimelineStep(timelineIndex + 1);
       }
     };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isCompleted, isReplaying, handleUndo, handleRedo]);
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [isCompleted, isReplaying, timelineIndex, timeline]);
 
+  // 終局判定
   useEffect(() => {
-    if (isCompleted || isReplaying || analysis.totalConflicts > 0) return;
-    if (movesCountRef.current === 0 || history.length === 0) return;
+    if (isCompleted || isReplaying || hudTopologyAnalysis.hasViolations) return;
+    if (movesCountRef.current === 0) return;
 
-    const effectiveBoard = board.map((row, r) =>
-      row.map((val, c) => (grid[r]?.[c] !== null ? 2 : val))
+    let totalClues = 0;
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        if (grid[r][c] !== null) totalClues++;
+      }
+    }
+
+    const effective = board.map((row, r) =>
+      row.map((val, c) => (grid[r]?.[c] !== null ? (2 as NurikabeCellState) : val))
     );
 
-    const isSolved = WebNurikabeGenerator.verifySolution(rows, cols, grid, effectiveBoard);
-    if (isSolved) {
+    const isSeaValid = !NurikabeAxiomaticEngine.has2x2Sea(rows, cols, effective) &&
+      NurikabeAxiomaticEngine.isSeaConnected(rows, cols, effective);
+    const isIslandsValid = NurikabeAxiomaticEngine.verifyAllIslands(rows, cols, grid, effective, totalClues);
+
+    if (isSeaValid && isIslandsValid) {
       setIsCompleted(true);
       const timeSpent = Math.max(1, Math.round((Date.now() - startTimeRef.current) / 1000));
 
       if (!hasRecordedRef.current && actualPuzzle) {
         hasRecordedRef.current = true;
-        const baseIrt = (actualPuzzle.metrics as any)?.irt_logit_difficulty || 1.8;
-
         recordAttempt({
           puzzleId: actualPuzzle.id,
           engineType: 'nurikabe',
           tier: currentTier,
           cognitiveLoad: actualPuzzle.cognitiveLoad || {
-            spatial: 0.9,
-            numeric: 0.35,
-            workingMemory: 0.8,
-            inhibition: 0.88,
+            spatial: 0.95,
+            numeric: 0.3,
+            workingMemory: 0.85,
+            inhibition: 0.9,
           },
           isSuccess: true,
           timeSpentSec: timeSpent,
-          conflictsCount: conflictCountRef.current,
-          technique: 'NurikabeSeaIslandTopology',
-          irtDifficulty: baseIrt,
-          isPureClear: conflictCountRef.current === 0 && !activeHint,
+          conflictsCount: lifetimeViolationsRef.current,
+          technique: 'AxiomaticDualSingularity',
+          irtDifficulty: (actualPuzzle.metrics as any)?.irt_logit_difficulty || 2.4,
+          isPureClear: lifetimeViolationsRef.current === 0,
         });
-
-        try {
-          const canonical = `${actualPuzzle.id}|${timeSpent}|${movesCountRef.current}|${conflictCountRef.current}|SECURE_${tournamentMode}|NURIKABE_LEGEND`;
-          const enc = new TextEncoder();
-          window.crypto.subtle.digest('SHA-256', enc.encode(canonical)).then((buf) => {
-            const hex = Array.from(new Uint8Array(buf))
-              .map((b) => b.toString(16).padStart(2, '0'))
-              .join('');
-            setProofSignature(`VERIFIED_${hex.slice(0, 24).toUpperCase()}`);
-          });
-        } catch {
-          setProofSignature(`LOCAL_${Date.now()}`);
-        }
-
-        if (timeSpent <= profile.personalBest.fastestTime) {
-          setShowPBModal(true);
-        }
       }
     }
-  }, [board, grid, analysis.totalConflicts, isCompleted, isReplaying, actualPuzzle, rows, cols, currentTier, recordAttempt, profile.personalBest.fastestTime, activeHint, tournamentMode, history.length]);
-
-  const handleRequestHint = () => {
-    if (isCompleted || tournamentMode || isReplaying) return;
-    if (navigator.vibrate) navigator.vibrate(12);
-
-    if (!activeHint) {
-      const step = WebNurikabeGenerator.getNextForcedDeduction(rows, cols, grid, board);
-      if (step) {
-        setActiveHint(step);
-        setHintLadderLevel(1);
-      }
-    } else {
-      setHintLadderLevel((prev) => (prev === 1 ? 2 : 3));
-    }
-  };
+  }, [board, grid, hudTopologyAnalysis.hasViolations, isCompleted, isReplaying, actualPuzzle, rows, cols, currentTier, recordAttempt]);
 
   const handleStartReplay = () => {
-    setUserStateBackup(board.map((row) => [...row]));
+    const snapshot = board.map((row) => [...row]);
+    setUserStateBackup(snapshot);
 
-    const simBoard: NurikabeCellState[][] = Array.from({ length: rows }, () => Array(cols).fill(0));
+    const simBoard = snapshot.map((row) => [...row]);
     const steps: NurikabeHintStep[] = [];
 
     let safety = 0;
     while (safety++ < rows * cols * 4) {
-      const step = WebNurikabeGenerator.getNextForcedDeduction(rows, cols, grid, simBoard);
-      if (!step) break;
+      const available = NurikabeAxiomaticEngine.getAllForcedDeductions(rows, cols, grid, simBoard);
+      if (available.length === 0) break;
+      const step = available[0];
       steps.push(step);
       simBoard[step.r][step.c] = step.forcedState;
     }
@@ -340,22 +399,30 @@ export const NurikabeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
     setReplayStepsList(steps);
     setReplayStepIndex(0);
     setIsReplaying(true);
-    setBoard(Array.from({ length: rows }, () => Array(cols).fill(0)));
+    setBoard(snapshot);
+  };
+
+  const handleTakeOverReplay = () => {
+    setIsReplaying(false);
+    const currentFrame = board.map((row) => [...row]);
+    setTimeline([
+      { board: currentFrame, hasViolation: false, isHypothesis: false, timestamp: Date.now() },
+    ]);
+    setTimelineIndex(0);
+    setUserStateBackup(null);
   };
 
   const handleRestoreUserBoard = () => {
     if (!userStateBackup) return;
     setIsReplaying(false);
     setBoard(userStateBackup.map((row) => [...row]));
-    setAnimatedEvidenceSet(new Set());
-    if (navigator.vibrate) navigator.vibrate(15);
   };
 
   useEffect(() => {
     if (!isReplaying || replayStepsList.length === 0) return;
     if (replayStepIndex >= replayStepsList.length) return;
 
-    const delay = Math.round(450 / replaySpeed);
+    const delay = Math.round(350 / replaySpeed);
     const timer = setTimeout(() => {
       const step = replayStepsList[replayStepIndex];
       setBoard((prev) => {
@@ -363,266 +430,107 @@ export const NurikabeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
         next[step.r][step.c] = step.forcedState;
         return next;
       });
-
-      if (step.evidenceCells) {
-        setAnimatedEvidenceSet(new Set(step.evidenceCells.map(([er, ec]) => `${er},${ec}`)));
-      }
       setReplayStepIndex((prev) => prev + 1);
     }, delay);
 
     return () => clearTimeout(timer);
   }, [isReplaying, replayStepIndex, replayStepsList, replaySpeed]);
 
-  const handleCopySeedShareCode = () => {
-    const seed = (actualPuzzle as any)?.puzzle?.seed || (actualPuzzle.metrics as any)?.seed || 0;
-    const origin = typeof window !== 'undefined' ? window.location.origin : 'https://lawgic.app';
-    const duelUrl = `${origin}/?engine=nurikabe&tier=${currentTier}&seed=${seed}`;
-    navigator.clipboard.writeText(duelUrl);
-    setCopyToast(isEn ? '🔗 Direct duel link copied!' : '🔗 一鍵對決連結已複製！發送至群組即可直接對決！');
-    if (navigator.vibrate) navigator.vibrate(20);
-    setTimeout(() => setCopyToast(null), 2400);
-  };
-
-  const handleGenerateCard = () => {
-    const canvas = document.createElement('canvas');
-    canvas.width = 600;
-    canvas.height = 320;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    const bgGrad = ctx.createLinearGradient(0, 0, 600, 320);
-    bgGrad.addColorStop(0, '#020617');
-    bgGrad.addColorStop(1, '#0f172a');
-    ctx.fillStyle = bgGrad;
-    ctx.fillRect(0, 0, 600, 320);
-
-    ctx.strokeStyle = '#38bdf8';
-    ctx.lineWidth = 3;
-    ctx.strokeRect(12, 12, 576, 296);
-
-    ctx.fillStyle = '#f8fafc';
-    ctx.font = 'bold 22px monospace';
-    ctx.fillText('NURIKABE GRANDMASTER RECORD', 30, 48);
-
-    ctx.fillStyle = '#94a3b8';
-    ctx.font = '12px monospace';
-    ctx.fillText(`TIER: ${currentTier.toUpperCase()}  |  180° SYMMETRIC BOARD`, 30, 72);
-
-    const startX = 30;
-    const startY = 95;
-    const cellSize = Math.min(24, 180 / Math.max(rows, cols));
-
-    for (let r = 0; r < rows; r++) {
-      for (let c = 0; c < cols; c++) {
-        const clue = grid[r]?.[c];
-        const state = board[r][c];
-
-        ctx.fillStyle = state === 1 ? '#020617' : '#1e293b';
-        ctx.fillRect(startX + c * cellSize, startY + r * cellSize, cellSize - 1, cellSize - 1);
-
-        if (typeof clue === 'number') {
-          ctx.fillStyle = '#fbbf24';
-          ctx.font = `bold ${Math.max(10, cellSize * 0.6)}px monospace`;
-          ctx.textAlign = 'center';
-          ctx.textBaseline = 'middle';
-          ctx.fillText(`${clue}`, startX + (c + 0.5) * cellSize, startY + (r + 0.5) * cellSize);
-        } else if (state === 2) {
-          ctx.fillStyle = '#34d399';
-          ctx.beginPath();
-          ctx.arc(startX + (c + 0.5) * cellSize, startY + (r + 0.5) * cellSize, 2.5, 0, Math.PI * 2);
-          ctx.fill();
-        }
-      }
-    }
-
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'alphabetic';
-
-    ctx.fillStyle = '#38bdf8';
-    ctx.font = 'bold 16px monospace';
-    ctx.fillText(`TIME: ${(elapsedMs / 1000).toFixed(1)}s`, 260, 125);
-
-    ctx.fillStyle = '#cbd5e1';
-    ctx.font = '13px monospace';
-    ctx.fillText(`MOVES: ${movesCountRef.current}`, 260, 155);
-    ctx.fillText(`CONFLICTS: ${conflictCountRef.current}`, 260, 180);
-    ctx.fillText(`FLUID IQ: ${cci.standardIQ} (Top ${(100 - cci.percentileRank).toFixed(1)}%)`, 260, 205);
-
-    ctx.fillStyle = '#64748b';
-    ctx.font = '9px monospace';
-    ctx.fillText(`RECEIPT: ${proofSignature || 'VERIFIED_LAWGIC_HASH'}`, 260, 245);
-    ctx.fillText('POWERED BY LAWGIC COMPETITIVE ENGINE', 260, 265);
-
-    const link = document.createElement('a');
-    link.download = `Nurikabe_Card_${Date.now().toString(36)}.png`;
-    link.href = canvas.toDataURL('image/png');
-    link.click();
-
-    setCopyToast(isEn ? '📸 Card downloaded!' : '📸 高光戰績卡已下載！');
-    setTimeout(() => setCopyToast(null), 2500);
-  };
-
-  const theoryTime = (actualPuzzle.metrics as any)?.estimated_time_sec || rows * cols * 3;
-  const benchmarkData = useMemo(() => {
-    return getBenchmarkMetrics('TopologicalLookahead', theoryTime, 'nurikabe');
-  }, [getBenchmarkMetrics, theoryTime]);
-
   const cci = useMemo(() => getCompositeCognitiveIndex(), [getCompositeCognitiveIndex, isCompleted]);
-
   const currentReplayStep = replayStepsList[replayStepIndex - 1];
 
+  const thoughtDensity = elapsedMs > 0
+    ? Math.min(1.0, activeContemplationMs / elapsedMs)
+    : 1.0;
+
   return (
-    <div className="flex flex-col items-center justify-center p-1 select-none font-mono">
-      {/* 頂部數據列 */}
-      <div className="w-full grid grid-cols-6 gap-1 px-0.5 mb-1.5 text-[8px] sm:text-[9px]">
-        <div className="bg-slate-950 border border-slate-800 p-1 rounded text-center">
-          <div className="text-slate-500 text-[6.5px]">{isEn ? '⏱️ Speed' : '⏱️ 競速'}</div>
-          <div className="text-slate-200 font-bold">{(elapsedMs / 1000).toFixed(1)}s</div>
+    <div className="flex flex-col items-center justify-center p-2 select-none font-mono text-neutral-300">
+      <div className="w-full max-w-[360px] flex items-center justify-between border-b border-neutral-800 pb-1.5 mb-2 text-[10px]">
+        <div className="flex items-center gap-3">
+          <span className="text-neutral-400 font-bold tracking-tighter">
+            ⏱ {(elapsedMs / 1000).toFixed(1)}s
+          </span>
+          <span className="text-cyan-400 font-bold" title="Active Contemplation Time (No Violations)">
+            🧠 {(activeContemplationMs / 1000).toFixed(1)}s
+          </span>
+          <span className="text-neutral-500">
+            MOV: <strong className="text-neutral-300">{movesCountRef.current}</strong>
+          </span>
+          <span className={hudTopologyAnalysis.hasViolations ? 'text-rose-500 font-bold' : 'text-neutral-600'}>
+            {hudTopologyAnalysis.activePoolsCount > 0
+              ? `POOL:${hudTopologyAnalysis.activePoolsCount}`
+              : hudTopologyAnalysis.overflowingCells.size > 0
+              ? 'OVERFLOW'
+              : hudTopologyAnalysis.strandedSeaCells.size > 0
+              ? 'STRANDED'
+              : 'AXIOM:OK'}
+          </span>
         </div>
 
-        <div className="bg-slate-950 border border-slate-800 p-1 rounded text-center">
-          <div className="text-slate-500 text-[6.5px]">{isEn ? '♟️ Moves' : '♟️ 步數'}</div>
-          <div className="text-cyan-300 font-bold">{movesCountRef.current}</div>
+        <div className="flex items-center gap-1.5 text-[9px]">
+          <button
+            onClick={() => setNoGuessMode((prev) => !prev)}
+            disabled={tournamentMode}
+            className={`px-1.5 py-0.5 rounded border transition cursor-pointer ${
+              noGuessMode
+                ? isHypothesisMode
+                  ? 'border-amber-500 bg-amber-950/80 text-amber-300 font-bold'
+                  : 'border-neutral-400 bg-neutral-200 text-black font-bold'
+                : 'border-neutral-800 text-neutral-500 hover:text-neutral-300'
+            }`}
+          >
+            {noGuessMode ? (isHypothesisMode ? 'HYPOTHESIS' : 'STRICT') : 'FREE'}
+          </button>
+          <button
+            onClick={() => setHighContrast((prev) => !prev)}
+            className="px-1.5 py-0.5 rounded border border-neutral-800 text-neutral-500 hover:text-neutral-300 cursor-pointer"
+          >
+            {highContrast ? 'INK' : 'DARK'}
+          </button>
         </div>
-
-        <div className="bg-slate-950 border border-slate-800 p-1 rounded text-center">
-          <div className="text-slate-500 text-[6.5px]">{isEn ? '⚠️ 2x2 Pools' : '⚠️ 2x2 水池'}</div>
-          <div className={`font-bold ${conflictDisplay > 0 ? 'text-rose-400' : 'text-slate-300'}`}>
-            {conflictDisplay}
-          </div>
-        </div>
-
-        <button
-          onClick={() => setHighContrast((prev) => !prev)}
-          className={`p-1 rounded border text-center transition cursor-pointer ${
-            highContrast
-              ? 'bg-amber-950 border-amber-400 text-amber-300 font-bold shadow-xs'
-              : 'bg-slate-950 border-slate-800 text-slate-500 hover:text-slate-300'
-          }`}
-          title={isEn ? 'Toggle High-Contrast Paper Mode' : '切換高對比紙感模式'}
-        >
-          <div className="text-[6.5px]">🌓 {isEn ? 'Theme' : '主題'}</div>
-          <div className="text-[7.5px]">{highContrast ? (isEn ? 'Paper' : '紙感') : (isEn ? 'Dark' : '暗夜')}</div>
-        </button>
-
-        <button
-          onClick={() => setNoGuessMode((prev) => !prev)}
-          disabled={tournamentMode}
-          className={`p-1 rounded border text-center transition cursor-pointer ${
-            tournamentMode
-              ? 'bg-purple-950/80 border-purple-500 text-purple-300 font-bold cursor-not-allowed'
-              : noGuessMode
-              ? 'bg-purple-950 border-purple-500 text-purple-300 font-bold shadow-xs'
-              : 'bg-slate-950 border-slate-800 text-slate-500 hover:text-slate-300'
-          }`}
-        >
-          <div className="text-[6.5px]">🛡️ {isEn ? 'No-Guess' : '無猜測'}</div>
-          <div className="text-[7.5px]">{tournamentMode ? (isEn ? 'Locked' : '鎖定') : noGuessMode ? (isEn ? 'Strict' : '嚴謹') : (isEn ? 'OFF' : '關閉')}</div>
-        </button>
-
-        <button
-          onClick={handleRequestHint}
-          disabled={isCompleted || tournamentMode || isReplaying}
-          className={`p-1 rounded border text-center transition cursor-pointer ${
-            tournamentMode
-              ? 'bg-slate-900 border-slate-800 text-slate-600 cursor-not-allowed'
-              : activeHint
-              ? 'bg-amber-950/90 border-amber-500 text-amber-300 font-bold shadow-xs'
-              : 'bg-indigo-950/80 border-indigo-500/60 text-indigo-300 hover:bg-indigo-900'
-          }`}
-        >
-          <div className="text-[6.5px]">💡 {isEn ? 'Hint' : '提示'}</div>
-          <div className="text-[7.5px] truncate">
-            {tournamentMode ? (isEn ? 'Exam' : '測驗') : activeHint ? `Lv.${hintLadderLevel}` : (isEn ? 'Get' : '因果')}
-          </div>
-        </button>
       </div>
 
-      {copyToast && (
-        <div className="w-[min(88vw,42vh)] mb-1 p-1 bg-emerald-950 border border-emerald-500 text-emerald-300 text-[7.5px] rounded animate-fade-in text-center font-bold">
-          {copyToast}
+      {hudWarning && (
+        <div className="fixed top-12 z-50 px-3 py-1 bg-neutral-900 border border-amber-500 text-amber-300 text-[10px] rounded shadow-2xl animate-pulse">
+          {hudWarning}
         </div>
       )}
 
-      {/* 覆盤播放器控制條 */}
       {isReplaying && (
-        <div className="w-[min(88vw,42vh)] mb-1.5 p-1.5 bg-indigo-950/90 border border-cyan-500 rounded-lg text-cyan-200 text-[8px] animate-pulse font-mono">
-          <div className="flex justify-between items-center text-[7px] text-cyan-400 mb-1 border-b border-cyan-900/60 pb-0.5">
-            <span className="flex items-center gap-1 font-bold">
-              <span>{currentReplayStep?.techniqueIcon || '🎯'}</span>
-              <span>{isEn ? currentReplayStep?.techniqueName.en : currentReplayStep?.techniqueName.zh}</span>
-              <span className="text-slate-400">[{replayStepIndex}/{replayStepsList.length}]</span>
+        <div className="w-full max-w-[360px] mb-2 p-1.5 border border-cyan-800/80 bg-neutral-950 rounded text-[9px] text-cyan-400">
+          <div className="flex justify-between items-center mb-1">
+            <span className="truncate max-w-[180px]">
+              [{replayStepIndex}/{replayStepsList.length}] {currentReplayStep?.techniqueName.en || 'Deduction'}
             </span>
             <div className="flex items-center gap-1">
-              <span className="text-[6.5px] text-slate-400">{isEn ? 'SPEED:' : '速度:'}</span>
-              {[1, 2, 4].map((spd) => (
-                <button
-                  key={spd}
-                  onClick={() => setReplaySpeed(spd as 1 | 2 | 4)}
-                  className={`px-1 py-0.2 rounded text-[6.5px] font-bold cursor-pointer ${
-                    replaySpeed === spd ? 'bg-cyan-500 text-slate-950' : 'bg-slate-800 text-slate-400'
-                  }`}
-                >
-                  {spd}x
-                </button>
-              ))}
+              <button
+                onClick={handleTakeOverReplay}
+                className="px-1.5 py-0.2 bg-emerald-950 border border-emerald-500 text-emerald-300 font-bold rounded hover:bg-emerald-900 cursor-pointer"
+              >
+                TAKE OVER
+              </button>
               <button
                 onClick={handleRestoreUserBoard}
-                className="ml-1 px-1.5 py-0.2 bg-rose-950 hover:bg-rose-900 border border-rose-500/60 text-rose-300 rounded text-[6.5px] font-bold cursor-pointer"
+                className="text-neutral-500 hover:text-neutral-300 cursor-pointer"
               >
-                {isEn ? 'Restore Mine' : '還原我的盤面'}
+                EXIT
               </button>
             </div>
           </div>
-          <div className="truncate text-cyan-300">
-            {currentReplayStep?.rationale || (isEn ? 'Demonstrating AI deductive steps...' : '演示因果演繹步進...')}
-          </div>
         </div>
       )}
 
-      {noGuessWarning && (
-        <div className="w-[min(88vw,42vh)] mb-1.5 p-1 bg-rose-950 border border-rose-500 text-rose-300 text-[8px] rounded-lg animate-pulse text-center shadow-lg font-bold">
-          {noGuessWarning}
-        </div>
-      )}
-
-      {activeHint && !isReplaying && (
-        <div className="w-[min(88vw,42vh)] mb-1.5 p-1.5 bg-amber-950/80 border border-amber-500/70 rounded-lg text-amber-200 text-[8px] animate-fade-in text-left shadow-lg">
-          <div className="font-bold flex items-center justify-between text-[7px] text-amber-400 border-b border-amber-900/60 pb-0.5 mb-1">
-            <span className="flex items-center gap-1">
-              <span>{activeHint.techniqueIcon}</span>
-              <span>{isEn ? activeHint.techniqueName.en : activeHint.techniqueName.zh}</span>
-            </span>
-            <span>LEVEL {hintLadderLevel}/3</span>
-          </div>
-          {hintLadderLevel === 1 && (
-            <div>{isEn ? `Forced deduction at [${activeHint.r + 1},${activeHint.c + 1}].` : `請關注單元格 [${activeHint.r + 1},${activeHint.c + 1}]。`}</div>
-          )}
-          {hintLadderLevel === 2 && (
-            <div>{isEn ? activeHint.humanReadable.en : activeHint.humanReadable.zh}</div>
-          )}
-          {hintLadderLevel === 3 && (
-            <div className="font-bold text-amber-300">
-              {activeHint.rationale}
-              <span className="ml-1 text-cyan-300 underline">
-                {activeHint.forcedState === 1 ? (isEn ? 'Must be WALL (Black)' : '必然填黑') : (isEn ? 'Must be DOT (White)' : '必然留白點')}
-              </span>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* 主棋盤 */}
       <div
-        className={`relative overflow-hidden p-2 rounded-xl border-2 shadow-2xl transition-colors ${
-          highContrast ? 'bg-black border-slate-400' : 'bg-slate-950 border-slate-800'
+        className={`relative overflow-hidden p-1.5 rounded-lg border transition-colors ${
+          isHypothesisMode
+            ? 'border-amber-600/80 shadow-[0_0_15px_rgba(217,119,6,0.2)]'
+            : highContrast
+            ? 'bg-black border-neutral-700 shadow-2xl'
+            : 'bg-neutral-950 border-neutral-900'
         }`}
-        style={{ width: 'min(88vw, 42vh)', height: 'min(88vw, 42vh)', touchAction: 'none' }}
+        style={{ width: 'min(86vw, 40vh)', height: 'min(86vw, 40vh)', touchAction: 'none' }}
+        onContextMenu={(e) => e.preventDefault()}
       >
-        <div className="absolute top-1 right-1 px-1 py-0.2 bg-indigo-950/70 border border-indigo-500/50 rounded text-[6px] text-indigo-300 font-mono pointer-events-none z-20">
-          ☯ 180° SYM
-        </div>
-
         <div
           className="relative w-full h-full"
           style={{
@@ -636,57 +544,50 @@ export const NurikabeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
               const clue = grid[r]?.[c];
               const state = board[r][c];
               const cellKey = `${r},${c}`;
-              const isPoolViolation = analysis.twoByTwoPools.has(cellKey);
-              const isEvidenceCell = animatedEvidenceSet.has(cellKey);
+              const isPool = hudTopologyAnalysis.pools.has(cellKey);
+              const isOverflow = hudTopologyAnalysis.overflowingCells.has(cellKey);
+              const isStranded = hudTopologyAnalysis.strandedSeaCells.has(cellKey);
+
+              let hudBorderClass = 'border-neutral-900';
+              let hudEffectClass = '';
+
+              if (isPool) {
+                hudBorderClass = 'border-rose-500';
+                hudEffectClass = 'shadow-[inset_0_0_8px_rgba(244,63,94,0.7)]';
+              } else if (isOverflow) {
+                hudBorderClass = 'border-rose-500 border-2';
+                hudEffectClass = 'shadow-[inset_0_0_8px_rgba(244,63,94,0.5)]';
+              } else if (isStranded) {
+                hudBorderClass = 'border-orange-500 border-dashed';
+                hudEffectClass = 'shadow-[inset_0_0_6px_rgba(249,115,22,0.4)]';
+              } else if (highContrast) {
+                hudBorderClass = 'border-neutral-800';
+              }
 
               return (
                 <div
                   key={cellKey}
-                  onClick={() => cycleCell(r, c)}
-                  className={`relative flex items-center justify-center border select-none cursor-pointer transition-all duration-150 ${
-                    highContrast ? 'border-slate-800' : 'border-slate-800/40'
-                  } ${
+                  onMouseDown={(e) => handleCellInteraction(r, c, e)}
+                  className={`relative flex items-center justify-center border select-none cursor-pointer transition-colors duration-75 ${hudBorderClass} ${hudEffectClass} ${
                     clue !== null
-                      ? highContrast
-                        ? 'bg-neutral-900 text-yellow-400 font-black'
-                        : 'bg-slate-900 border-slate-700 text-amber-400 font-black'
+                      ? 'bg-neutral-900 text-neutral-100 font-black'
                       : state === 1
-                      ? isPoolViolation
-                        ? 'bg-rose-700 text-white animate-pulse'
-                        : highContrast
-                        ? 'bg-black border-slate-800'
-                        : 'bg-slate-950 border-slate-800 shadow-inner'
+                      ? 'bg-black'
                       : state === 2
-                      ? highContrast
-                        ? 'bg-neutral-900'
-                        : 'bg-slate-900/60'
-                      : highContrast
-                      ? 'bg-neutral-950 hover:bg-neutral-900'
-                      : 'bg-slate-900/30 hover:bg-slate-800/40'
-                  } ${isEvidenceCell ? 'ring-2 ring-amber-400 bg-amber-500/20 shadow-[0_0_10px_rgba(251,191,36,0.6)] animate-pulse' : ''}`}
+                      ? 'bg-neutral-950'
+                      : 'bg-neutral-950/60 hover:bg-neutral-900/60'
+                  }`}
                 >
                   {typeof clue === 'number' ? (
-                    <span
-                      className={`text-sm sm:text-base font-black font-mono ${
-                        highContrast ? 'text-yellow-400' : 'text-amber-400'
-                      }`}
-                    >
+                    <span className="text-sm sm:text-base font-black font-mono tracking-tighter text-amber-400">
                       {clue}
                     </span>
                   ) : state === 1 ? (
-                    <div
-                      className={`w-[82%] h-[82%] rounded-xs shadow-md flex items-center justify-center ${
-                        highContrast ? 'bg-black border border-slate-600' : 'bg-slate-950 border border-slate-700'
-                      }`}
-                    >
-                      <div className="w-1.5 h-1.5 bg-slate-500/40 rounded-full" />
+                    <div className="w-[84%] h-[84%] rounded-xs bg-black border border-neutral-700 shadow-inner flex items-center justify-center">
+                      <div className="w-1 h-1 bg-neutral-600 rounded-full" />
                     </div>
                   ) : state === 2 ? (
-                    <div
-                      className={`w-2.5 h-2.5 rounded-full shadow-[0_0_6px_rgba(52,211,153,0.8)] ${
-                        highContrast ? 'bg-white' : 'bg-emerald-400/80'
-                      }`}
-                    />
+                    <div className="w-2.5 h-2.5 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.6)]" />
                   ) : null}
                 </div>
               );
@@ -695,152 +596,108 @@ export const NurikabeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
         </div>
       </div>
 
-      {/* 底部快捷欄 */}
-      <div className="w-full max-w-[340px] flex items-center justify-between px-1 mt-1.5 text-[7.5px] text-slate-400">
-        <div className="flex gap-1">
-          <button
-            onClick={handleUndo}
-            disabled={history.length === 0 || isCompleted || isReplaying}
-            className="px-2 py-0.5 bg-slate-900 border border-slate-800 rounded hover:bg-slate-800 disabled:opacity-40 cursor-pointer"
-          >
-            ↩ {isEn ? 'Undo' : '撤銷'}
-          </button>
-          <button
-            onClick={handleRedo}
-            disabled={redoStack.length === 0 || isCompleted || isReplaying}
-            className="px-2 py-0.5 bg-slate-900 border border-slate-800 rounded hover:bg-slate-800 disabled:opacity-40 cursor-pointer"
-          >
-            ↪ {isEn ? 'Redo' : '重做'}
-          </button>
-          {!tournamentMode && (
+      <div className="w-full max-w-[360px] flex flex-col gap-1 mt-2.5 px-0.5">
+        <div className="flex items-center justify-between text-[8px] text-neutral-500">
+          <div className="flex items-center gap-1">
+            <span>STEP: {timelineIndex} / {timeline.length - 1}</span>
             <button
-              onClick={handleCopySeedShareCode}
-              className="px-2 py-0.5 bg-slate-900 border border-slate-800 rounded hover:bg-slate-800 text-amber-300 cursor-pointer"
-              title={isEn ? 'Copy Duel Link' : '複製對決連結'}
+              onClick={() => jumpToViolation('prev')}
+              className="px-1 py-0.2 bg-neutral-900 hover:bg-neutral-800 text-neutral-400 rounded text-[7px]"
+              title="Jump to Previous Violation"
             >
-              🔗 {isEn ? 'Duel Link' : '對決連結'}
+              ⏪ VIOLATION
             </button>
-          )}
+            <button
+              onClick={() => jumpToViolation('next')}
+              className="px-1 py-0.2 bg-neutral-900 hover:bg-neutral-800 text-neutral-400 rounded text-[7px]"
+              title="Jump to Next Violation"
+            >
+              ⏩ VIOLATION
+            </button>
+          </div>
+          <span>L: Sea | R/Shift: Dot</span>
         </div>
-        <div className="text-slate-500 text-[8px]">
-          {isEn ? 'Click cycle: Blank ➔ Sea (Black) ➔ Dot (Island)' : '點擊循環：空白 ➔ 黑海 ➔ 綠點 (島嶼)'}
+
+        <div className="relative w-full h-3 flex items-center">
+          <div className="absolute inset-x-0 h-1 bg-neutral-800 rounded-lg pointer-events-none" />
+
+          {timeline.length > 1 &&
+            timeline.map((f, i) => {
+              if (!f.hasViolation && !f.isHypothesis) return null;
+              const leftPercent = (i / (timeline.length - 1)) * 100;
+              return (
+                <div
+                  key={i}
+                  className={`absolute top-0.5 bottom-0.5 w-[2px] pointer-events-none ${
+                    f.hasViolation ? 'bg-rose-500' : 'bg-amber-400'
+                  }`}
+                  style={{ left: `${leftPercent}%` }}
+                />
+              );
+            })}
+
+          <input
+            type="range"
+            min={0}
+            max={timeline.length - 1}
+            value={timelineIndex}
+            disabled={isReplaying}
+            onChange={(e) => jumpToTimelineStep(parseInt(e.target.value, 10))}
+            className="absolute inset-0 w-full h-full opacity-0 cursor-ew-resize"
+          />
         </div>
       </div>
 
-      {/* 結算成就與覆盤面板 */}
       {isCompleted && (
-        <div className="mt-2 p-2.5 bg-slate-950/95 border border-indigo-500/60 rounded-xl text-center w-[min(88vw,42vh)] shadow-2xl animate-fade-in font-mono">
-          <div className="flex items-center justify-between border-b border-slate-800 pb-1 mb-1.5">
-            <div className="text-left">
-              <div className="text-[7.5px] text-slate-500 tracking-wider">NURIKABE RESOLVED</div>
-              <div className="text-xs text-indigo-300 font-bold">
-                {isEn ? '🧱 Nurikabe Island Partition Solved!' : '🧱 暗夜數牆・拓撲島嶼完滿'}
-              </div>
+        <div className="mt-3 w-full max-w-[360px] p-3 bg-neutral-950 border border-neutral-800 rounded-lg text-left shadow-2xl font-mono animate-fade-in">
+          <div className="flex justify-between items-center border-b border-neutral-800 pb-2 mb-2">
+            <div>
+              <div className="text-[8px] text-neutral-500 uppercase tracking-wider">AXIOMATIC CALIPER RESOLUTION</div>
+              <div className="text-xs font-bold text-neutral-200">MANIFOLD PERFECTLY CLOSED</div>
             </div>
-            <div className="px-2 py-0.5 border border-cyan-500 bg-cyan-950/80 rounded text-[9px] font-bold text-cyan-300">
-              Gf: IQ {cci.standardIQ} (Top {Number((100 - cci.percentileRank).toFixed(1))}%)
-            </div>
-          </div>
-
-          <div className="grid grid-cols-3 gap-1 text-[7.5px] text-slate-400 mb-1.5">
-            <div className="bg-slate-900/80 p-1 rounded">
-              <div>{isEn ? 'Time' : '耗時'}</div>
-              <div className="text-slate-200 font-bold text-[10px]">{(elapsedMs / 1000).toFixed(1)}s</div>
-            </div>
-            <div className="bg-slate-900/80 p-1 rounded">
-              <div>{isEn ? 'Moves' : '操作步數'}</div>
-              <div className="text-cyan-300 font-bold text-[10px]">{movesCountRef.current}</div>
-            </div>
-            <div className="bg-slate-900/80 p-1 rounded">
-              <div>{isEn ? '2x2 Pools' : '水池違規'}</div>
-              <div className="text-amber-300 font-bold text-[10px]">
-                {conflictCountRef.current} {isEn ? '' : '次'}
-              </div>
+            <div className="text-right">
+              <div className="text-[8px] text-neutral-500">WALL TIME</div>
+              <div className="text-xs font-bold text-amber-400">{(elapsedMs / 1000).toFixed(1)}s</div>
             </div>
           </div>
 
-          <div className="mb-1.5">
-            <MetricErrorBar
-              actualVal={Math.round(elapsedMs / 1000)}
-              benchmarkVal={benchmarkData.benchmarkTime}
-              ci95={benchmarkData.ci95}
-              sem={benchmarkData.sem}
-              unit="s"
-              isEn={isEn}
-            />
+          <div className="grid grid-cols-2 gap-2 text-[9px] text-neutral-400 mb-3">
+            <div>
+              MOVES: <strong className="text-neutral-200">{movesCountRef.current}</strong>
+            </div>
+            <div>
+              ACTIVE THINKING: <strong className="text-cyan-400">{(activeContemplationMs / 1000).toFixed(1)}s</strong>
+            </div>
+            <div>
+              DENSITY OF THOUGHT: <strong className="text-emerald-400">{(thoughtDensity * 100).toFixed(1)}%</strong>
+            </div>
+            <div>
+              TOPOLOGY ERRORS: <strong className="text-neutral-200">{lifetimeViolationsRef.current}</strong>
+            </div>
+            <div>
+              FLUID IQ: <strong className="text-cyan-400">{cci.standardIQ}</strong>
+            </div>
+            <div>
+              PERCENTILE: <strong className="text-cyan-400">{(100 - cci.percentileRank).toFixed(1)}%</strong>
+            </div>
           </div>
 
-          <div className="bg-slate-900/40 p-1 rounded-lg border border-slate-800 flex flex-col items-center mb-1.5">
-            <CognitiveRadarChart
-              dimensions={profile.cognitiveDimensions}
-              previousDimensions={profile.previousCognitiveDimensions}
-              size={135}
-            />
-          </div>
-
-          <div className="grid grid-cols-2 gap-1 mb-1">
+          <div className="flex gap-2 text-[9px]">
             <button
               onClick={handleStartReplay}
               disabled={isReplaying}
-              className="py-1 bg-indigo-950 hover:bg-indigo-900 border border-indigo-500/60 text-indigo-300 text-[7.5px] font-bold rounded transition shadow flex items-center justify-center gap-0.5 active:scale-95 cursor-pointer"
+              className="flex-1 py-1 bg-neutral-900 hover:bg-neutral-800 border border-neutral-700 text-neutral-200 font-bold rounded cursor-pointer"
             >
-              <span>🔁</span>
-              <span>{isEn ? 'AI Replay' : '解法覆盤'}</span>
+              AI REPLAY
             </button>
-
-            <button
-              onClick={handleGenerateCard}
-              className="py-1 bg-purple-950 hover:bg-purple-900 border border-purple-500/60 text-purple-300 text-[7.5px] font-bold rounded transition shadow flex items-center justify-center gap-0.5 active:scale-95 cursor-pointer"
-            >
-              <span>📸</span>
-              <span>{isEn ? 'Share Card' : '高光戰績卡'}</span>
-            </button>
-          </div>
-
-          <div className="flex gap-1 mb-1.5">
-            {userStateBackup && (
-              <button
-                onClick={handleRestoreUserBoard}
-                className="flex-1 py-1 bg-slate-900 hover:bg-slate-800 border border-cyan-500/60 text-cyan-300 text-[7.5px] font-bold rounded transition shadow flex items-center justify-center gap-0.5 active:scale-95 cursor-pointer"
-              >
-                <span>↩️</span>
-                <span>{isEn ? 'My Board' : '我的盤面'}</span>
-              </button>
-            )}
-
-            <button
-              onClick={handleCopySeedShareCode}
-              className="flex-1 py-1 bg-slate-900 hover:bg-slate-800 border border-amber-500/60 text-amber-300 text-[7.5px] font-bold rounded transition shadow flex items-center justify-center gap-0.5 active:scale-95 cursor-pointer"
-            >
-              <span>🔗</span>
-              <span>{isEn ? 'Duel Link' : '對決連結'}</span>
-            </button>
-
             <button
               onClick={() => setShowSubmitModal(true)}
-              className="flex-1 py-1 bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 text-slate-950 text-[7.5px] font-black rounded shadow transition active:scale-95 flex items-center justify-center gap-0.5 cursor-pointer"
+              className="px-3 py-1 bg-neutral-200 hover:bg-white text-black font-bold rounded cursor-pointer"
             >
-              <span>📤</span>
-              <span>{isEn ? 'Submit' : '賽事提交'}</span>
+              SUBMIT
             </button>
           </div>
-
-          {proofSignature && (
-            <div className="p-1 bg-slate-900 border border-slate-800 rounded text-left">
-              <div className="text-[6.5px] text-slate-500 font-bold uppercase flex justify-between">
-                <span>PSYCHOMETRIC INTEGRITY RECEIPT</span>
-                <span className="text-emerald-400 font-mono text-[5.5px]">CSPRNG-SECURE</span>
-              </div>
-              <div className="text-[6px] font-mono text-cyan-400/80 break-all select-all mt-0.5">
-                {proofSignature}
-              </div>
-            </div>
-          )}
         </div>
-      )}
-
-      {showPBModal && (
-        <PBCelebrationModal pb={profile.personalBest} onClose={() => setShowPBModal(false)} isEn={isEn} />
       )}
 
       {showSubmitModal && (
@@ -854,7 +711,7 @@ export const NurikabeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
             engineType: 'nurikabe',
             tier: currentTier,
             timeSpentSec: Math.round(elapsedMs / 1000),
-            conflictsCount: conflictCountRef.current,
+            conflictsCount: lifetimeViolationsRef.current,
             infractionScore: calculateInfractionScore({
               tabSwitches: 0,
               blurEvents: 0,
