@@ -518,6 +518,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode 
         </div>
       </div>
 
+      {/* 航點資訊視窗 */}
       {selectedWaypoint && (
         <div className="w-full max-w-[360px] mt-2 p-2 bg-slate-900 border border-purple-500/80 rounded-lg text-[8px] text-slate-200 animate-fade-in font-mono flex items-center justify-between">
           <div>
@@ -528,7 +529,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode 
               {isEn ? 'Trap Type' : '陷阱類型'}: {selectedWaypoint.trapType}
             </div>
             <div className="text-rose-400 font-bold text-[8px]">
-              {isEn ? 'True Regret Penalty' : '真實後悔代價'}: +{selectedWaypoint.regretCost} {isEn ? 'steps' : '步'}
+              {isEn ? 'Estimated Regret' : '估計後悔代價'}: ≈ +{selectedWaypoint.regretCost} {isEn ? 'steps' : '步'}
             </div>
           </div>
           <button onClick={() => setSelectedWaypoint(null)} className="px-2 py-1 bg-slate-800 text-slate-400 rounded hover:text-white">
@@ -633,6 +634,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode 
         <div />
       </div>
 
+      {/* 結算評鑑 */}
       {isCompleted && (
         <div className="mt-3 p-3 bg-slate-950/95 border-2 border-emerald-500/90 rounded-2xl text-center w-full max-w-[360px] shadow-2xl animate-fade-in font-mono">
           <div className="text-emerald-400 font-black text-sm uppercase tracking-widest animate-pulse">
@@ -657,9 +659,9 @@ export const MazeBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode 
               </span>
             </div>
             <div className="flex justify-between">
-              <span className="text-slate-400">{isEn ? 'Peak Divergence Cost' : '最大分歧代價'}:</span>
+              <span className="text-slate-400">{isEn ? 'Peak Divergence Regret' : '最大分歧後悔'}:</span>
               <span className="text-rose-400 font-bold">
-                {spec.maxVisualRegretValue > 0 ? `+${spec.maxVisualRegretValue} ${isEn ? 'steps' : '步'}` : (isEn ? 'Optimal Path Followed' : '完美循跡無走歧')}
+                {spec.maxVisualRegretValue > 0 ? `≈ +${spec.maxVisualRegretValue} ${isEn ? 'steps' : '步'}` : (isEn ? 'Optimal Path Followed' : '完美循跡無走歧')}
               </span>
             </div>
             <div className="flex justify-between">
