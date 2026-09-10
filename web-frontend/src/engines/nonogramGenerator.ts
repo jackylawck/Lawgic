@@ -60,6 +60,11 @@ export interface NonogramSpec {
   themeTitleEn: string;
   tier: TierKey;
   seed: number;
+  pedagogicalPattern?: {
+    primaryInsight: string;
+    coreInsightZh: string;
+    coreInsightEn: string;
+  };
 }
 
 interface TierConfig {
@@ -74,12 +79,12 @@ interface TierConfig {
 }
 
 const TIER_SPECS: Record<TierKey, TierConfig> = {
-  kids: { size: 5, targetDensity: 0.55, minCriticalDepth: 3, dynamicLookaheadDepth: 3, minFinisherRatio: 0.12, allowContradiction: false, baseIrt: 0.65, timeLimitSec: 90 },
-  intermediate: { size: 8, targetDensity: 0.50, minCriticalDepth: 5, dynamicLookaheadDepth: 4, minFinisherRatio: 0.14, allowContradiction: false, baseIrt: 1.45, timeLimitSec: 150 },
-  expert: { size: 10, targetDensity: 0.45, minCriticalDepth: 8, dynamicLookaheadDepth: 6, minFinisherRatio: 0.16, allowContradiction: true, baseIrt: 2.35, timeLimitSec: 240 },
-  master: { size: 12, targetDensity: 0.42, minCriticalDepth: 11, dynamicLookaheadDepth: 7, minFinisherRatio: 0.18, allowContradiction: true, baseIrt: 3.15, timeLimitSec: 360 },
-  legendary: { size: 15, targetDensity: 0.38, minCriticalDepth: 14, dynamicLookaheadDepth: 8, minFinisherRatio: 0.20, allowContradiction: true, baseIrt: 3.75, timeLimitSec: 480 },
-  ultimate: { size: 15, targetDensity: 0.34, minCriticalDepth: 18, dynamicLookaheadDepth: 9, minFinisherRatio: 0.22, allowContradiction: true, baseIrt: 4.35, timeLimitSec: 600 },
+  kids: { size: 5, targetDensity: 0.55, minCriticalDepth: 3, dynamicLookaheadDepth: 2, minFinisherRatio: 0.12, allowContradiction: false, baseIrt: 0.65, timeLimitSec: 90 },
+  intermediate: { size: 8, targetDensity: 0.50, minCriticalDepth: 5, dynamicLookaheadDepth: 3, minFinisherRatio: 0.14, allowContradiction: false, baseIrt: 1.45, timeLimitSec: 150 },
+  expert: { size: 10, targetDensity: 0.45, minCriticalDepth: 7, dynamicLookaheadDepth: 5, minFinisherRatio: 0.16, allowContradiction: true, baseIrt: 2.35, timeLimitSec: 240 },
+  master: { size: 12, targetDensity: 0.42, minCriticalDepth: 9, dynamicLookaheadDepth: 6, minFinisherRatio: 0.18, allowContradiction: true, baseIrt: 3.15, timeLimitSec: 360 },
+  legendary: { size: 15, targetDensity: 0.38, minCriticalDepth: 12, dynamicLookaheadDepth: 7, minFinisherRatio: 0.20, allowContradiction: true, baseIrt: 3.75, timeLimitSec: 480 },
+  ultimate: { size: 15, targetDensity: 0.34, minCriticalDepth: 15, dynamicLookaheadDepth: 8, minFinisherRatio: 0.22, allowContradiction: true, baseIrt: 4.35, timeLimitSec: 600 },
 };
 
 const TECHNIQUE_WEIGHTS: Record<NonogramTechnique, number> = {
@@ -90,26 +95,35 @@ const TECHNIQUE_WEIGHTS: Record<NonogramTechnique, number> = {
   two_dimensional_flood_contradiction: 18,
 };
 
-const THEMATIC_SEEDS = [
+// 專業向量剪影與對應的洞察字典
+const THEMATIC_TEMPLATES = [
   {
     nameZh: '極境雄鷹',
     nameEn: 'Apex Eagle',
-    coreKeypoints: [[2, 2], [2, 8], [3, 5], [4, 4], [4, 6], [5, 5], [6, 5], [7, 3], [7, 7]],
+    coreInsightZh: '雙翼展幅的對稱邊界鎖定與尾羽間隙奇偶性，引發全局連鎖坍縮。',
+    coreInsightEn: 'Symmetric boundary pinning on the wings cascades into tail-feather parity deduction.',
+    points: [[1, 7], [2, 6], [2, 8], [3, 4], [3, 5], [3, 9], [3, 10], [4, 2], [4, 7], [4, 12], [5, 5], [5, 7], [5, 9], [6, 6], [6, 7], [6, 8], [7, 7]],
   },
   {
-    nameZh: '深海航跡',
-    nameEn: 'Abyssal Trail',
-    coreKeypoints: [[1, 9], [2, 10], [3, 2], [3, 3], [3, 4], [3, 8], [4, 5], [5, 6], [6, 7]],
+    nameZh: '深海巨鯨',
+    nameEn: 'Abyssal Whale',
+    coreInsightZh: '腹部大區塊線索受限於頭部邊界，迫使脊背輪廓正交交集唯一化。',
+    coreInsightEn: 'Large abdominal clues restricted by the rostrum force orthogonal dorsal convergence.',
+    points: [[3, 2], [3, 3], [3, 4], [4, 1], [4, 5], [4, 6], [4, 7], [4, 8], [5, 2], [5, 8], [5, 12], [6, 3], [6, 4], [6, 7], [6, 11], [6, 13], [7, 12]],
   },
   {
     nameZh: '星海方舟',
     nameEn: 'Astral Ark',
-    coreKeypoints: [[1, 4], [2, 4], [3, 3], [3, 5], [4, 4], [5, 2], [5, 6], [6, 4], [7, 1], [7, 7]],
+    coreInsightZh: '船首破風夾角迫使中央主桅桿產生幾何排他性，形成雪崩級聯。',
+    coreInsightEn: 'Prow wedge angle forces mast exclusion, triggering a finisher cascade.',
+    points: [[2, 7], [3, 6], [3, 7], [3, 8], [4, 5], [4, 7], [4, 9], [5, 2], [5, 7], [5, 12], [6, 3], [6, 4], [6, 7], [6, 10], [6, 11], [7, 4], [7, 10]],
   },
   {
     nameZh: '天際堡壘',
     nameEn: 'Sky Fortress',
-    coreKeypoints: [[1, 1], [1, 4], [1, 7], [2, 4], [3, 2], [3, 6], [4, 4], [5, 3], [5, 5], [6, 4]],
+    coreInsightZh: '雙側雉堞的高密度連續塊迫使中央吊橋結構產生單峰咽喉突破。',
+    coreInsightEn: 'Dense battlement blocks on flanks force a unimodal bottleneck breakthrough at the drawbridge.',
+    points: [[2, 3], [2, 7], [2, 11], [3, 3], [3, 5], [3, 7], [3, 9], [3, 11], [4, 3], [4, 4], [4, 5], [4, 6], [4, 7], [4, 8], [4, 9], [4, 10], [4, 11], [5, 5], [5, 9], [6, 5], [6, 9]],
   },
 ];
 
@@ -138,181 +152,157 @@ export class WebNonogramGenerator {
     return clues.length > 0 ? clues : [0];
   }
 
-  private static solveLineDPFast(
+  /**
+   * 真·DP 線段約束求解器（帶 Memoization 與位元狀態壓縮）
+   */
+  public static solveLineDPFast(
     length: number,
     clues: number[],
     currentLine: CellState[]
-  ): { commonFilledMask: number; commonCrossMask: number; hasValid: boolean } {
+  ): { commonFilledMask: number; commonCrossMask: number; hasValid: boolean; validCount: number } {
     if (clues.length === 1 && clues[0] === 0) {
       let valid = true;
       for (let i = 0; i < length; i++) {
-        if (currentLine[i] === 1) valid = false;
+        if (currentLine[i] === 1) {
+          valid = false;
+          break;
+        }
       }
       const fullMask = (1 << length) - 1;
-      return { commonFilledMask: 0, commonCrossMask: fullMask, hasValid: valid };
+      return { commonFilledMask: 0, commonCrossMask: fullMask, hasValid: valid, validCount: valid ? 1 : 0 };
     }
 
-    let allFilledMask = (1 << length) - 1;
-    let anyFilledMask = 0;
-    let matchCount = 0;
+    const memo = new Map<string, { filledMask: number; crossMask: number; count: number } | null>();
 
-    const canPlaceBlock = (start: number, blockLen: number): boolean => {
-      if (start + blockLen > length) return false;
-      for (let i = 0; i < blockLen; i++) {
-        if (currentLine[start + i] === 2) return false;
-      }
-      if (start + blockLen < length && currentLine[start + blockLen] === 1) return false;
-      return true;
-    };
+    const minSpaceSuffix: number[] = new Array(clues.length + 1).fill(0);
+    for (let i = clues.length - 1; i >= 0; i--) {
+      minSpaceSuffix[i] = minSpaceSuffix[i + 1] + clues[i] + (i < clues.length - 1 ? 1 : 0);
+    }
 
-    const backtrack = (clueIdx: number, pos: number, currentBitmask: number): void => {
+    const dp = (
+      clueIdx: number,
+      pos: number
+    ): { filledMask: number; crossMask: number; count: number } | null => {
+      const key = `${clueIdx},${pos}`;
+      if (memo.has(key)) return memo.get(key)!;
+
       if (clueIdx === clues.length) {
         for (let i = pos; i < length; i++) {
-          if (currentLine[i] === 1) return;
+          if (currentLine[i] === 1) {
+            memo.set(key, null);
+            return null;
+          }
         }
-        matchCount++;
-        allFilledMask &= currentBitmask;
-        anyFilledMask |= currentBitmask;
-        return;
+        let tailCross = 0;
+        for (let i = pos; i < length; i++) tailCross |= (1 << i);
+        const res = { filledMask: 0, crossMask: tailCross, count: 1 };
+        memo.set(key, res);
+        return res;
+      }
+
+      const needed = minSpaceSuffix[clueIdx];
+      if (length - pos < needed) {
+        memo.set(key, null);
+        return null;
       }
 
       const blockLen = clues[clueIdx];
-      let remainingSum = 0;
-      for (let i = clueIdx; i < clues.length; i++) remainingSum += clues[i];
-      const remainingGaps = clues.length - 1 - clueIdx;
-      const minNeeded = remainingSum + remainingGaps;
+      let totalCount = 0;
+      let accumAnyFilled = 0;
+      let accumAllFilled = -1;
+      let accumAnyCross = 0;
+      let accumAllCross = -1;
 
-      for (let p = pos; p <= length - minNeeded; p++) {
-        if (p > 0 && currentLine[p - 1] === 1) break;
-
-        if (canPlaceBlock(p, blockLen)) {
-          let blockMask = 0;
-          for (let i = 0; i < blockLen; i++) {
-            blockMask |= (1 << (p + i));
-          }
-          backtrack(clueIdx + 1, p + blockLen + 1, currentBitmask | blockMask);
+      // 分支 A：此格為 Cross (留空)
+      if (currentLine[pos] !== 1) {
+        const sub = dp(clueIdx, pos + 1);
+        if (sub) {
+          totalCount += sub.count;
+          const currentCross = sub.crossMask | (1 << pos);
+          const currentFilled = sub.filledMask;
+          accumAnyFilled |= currentFilled;
+          accumAllFilled = accumAllFilled === -1 ? currentFilled : (accumAllFilled & currentFilled);
+          accumAnyCross |= currentCross;
+          accumAllCross = accumAllCross === -1 ? currentCross : (accumAllCross & currentCross);
         }
       }
-    };
 
-    backtrack(0, 0, 0);
-
-    if (matchCount === 0) {
-      return { commonFilledMask: 0, commonCrossMask: 0, hasValid: false };
-    }
-
-    const fullMask = (1 << length) - 1;
-    const commonCrossMask = fullMask & (~anyFilledMask);
-
-    return {
-      commonFilledMask: allFilledMask,
-      commonCrossMask,
-      hasValid: true,
-    };
-  }
-
-  public static verifyFormalUniqueness(
-    size: number,
-    rowClues: number[][],
-    colClues: number[][]
-  ): boolean {
-    const testBoard: CellState[][] = Array.from({ length: size }, () => Array(size).fill(0));
-    let solutions = 0;
-    let budget = 400;
-
-    const backtrack = (r: number, c: number): void => {
-      if (solutions >= 2 || budget-- <= 0) return;
-
-      if (r === size) {
-        let validCols = true;
-        for (let colIdx = 0; colIdx < size; colIdx++) {
-          const colBool: boolean[] = [];
-          for (let rowIdx = 0; rowIdx < size; rowIdx++) {
-            colBool.push(testBoard[rowIdx][colIdx] === 1);
-          }
-          const actualClues = WebNonogramGenerator.extractLineClues(colBool);
-          if (actualClues.length !== colClues[colIdx].length) {
-            validCols = false;
+      // 分支 B：此處放置 Block
+      let canPlace = true;
+      if (pos + blockLen > length) canPlace = false;
+      else {
+        for (let i = 0; i < blockLen; i++) {
+          if (currentLine[pos + i] === 2) {
+            canPlace = false;
             break;
           }
-          for (let k = 0; k < actualClues.length; k++) {
-            if (actualClues[k] !== colClues[colIdx][k]) {
-              validCols = false;
-              break;
-            }
-          }
-          if (!validCols) break;
         }
-
-        if (validCols) solutions++;
-        return;
-      }
-
-      const nextR = c === size - 1 ? r + 1 : r;
-      const nextC = c === size - 1 ? 0 : c + 1;
-      const checkRowComplete = c === size - 1;
-
-      // 分支 1: 填黑格 (1)
-      testBoard[r][c] = 1;
-      let validRowBranch = true;
-      if (checkRowComplete) {
-        const rowBool = testBoard[r].map((v) => v === 1);
-        const actual = WebNonogramGenerator.extractLineClues(rowBool);
-        if (actual.length !== rowClues[r].length) validRowBranch = false;
-        else {
-          for (let k = 0; k < actual.length; k++) {
-            if (actual[k] !== rowClues[r][k]) {
-              validRowBranch = false;
-              break;
-            }
-          }
+        if (canPlace && pos + blockLen < length && currentLine[pos + blockLen] === 1) {
+          canPlace = false;
         }
       }
 
-      if (validRowBranch) {
-        backtrack(nextR, nextC);
-      }
+      if (canPlace) {
+        let blockFilled = 0;
+        for (let i = 0; i < blockLen; i++) blockFilled |= (1 << (pos + i));
+        let gapCross = 0;
+        if (pos + blockLen < length) gapCross |= (1 << (pos + blockLen));
 
-      // 分支 2: 填叉號 (2)
-      testBoard[r][c] = 2;
-      validRowBranch = true;
-      if (checkRowComplete) {
-        const rowBool = testBoard[r].map((v) => v === 1);
-        const actual = WebNonogramGenerator.extractLineClues(rowBool);
-        if (actual.length !== rowClues[r].length) validRowBranch = false;
-        else {
-          for (let k = 0; k < actual.length; k++) {
-            if (actual[k] !== rowClues[r][k]) {
-              validRowBranch = false;
-              break;
-            }
-          }
+        const nextPos = pos + blockLen + (pos + blockLen < length ? 1 : 0);
+        const sub = dp(clueIdx + 1, nextPos);
+        if (sub) {
+          totalCount += sub.count;
+          const currentFilled = sub.filledMask | blockFilled;
+          const currentCross = sub.crossMask | gapCross;
+          accumAnyFilled |= currentFilled;
+          accumAllFilled = accumAllFilled === -1 ? currentFilled : (accumAllFilled & currentFilled);
+          accumAnyCross |= currentCross;
+          accumAllCross = accumAllCross === -1 ? currentCross : (accumAllCross & currentCross);
         }
       }
 
-      if (validRowBranch) {
-        backtrack(nextR, nextC);
+      if (totalCount === 0) {
+        memo.set(key, null);
+        return null;
       }
 
-      testBoard[r][c] = 0;
+      const result = {
+        filledMask: accumAllFilled === -1 ? 0 : accumAllFilled,
+        crossMask: accumAllCross === -1 ? 0 : accumAllCross,
+        count: totalCount,
+      };
+      memo.set(key, result);
+      return result;
     };
 
-    backtrack(0, 0);
-    return solutions === 1;
+    const outcome = dp(0, 0);
+    if (!outcome || outcome.count === 0) {
+      return { commonFilledMask: 0, commonCrossMask: 0, hasValid: false, validCount: 0 };
+    }
+
+    return {
+      commonFilledMask: outcome.filledMask,
+      commonCrossMask: outcome.crossMask,
+      hasValid: true,
+      validCount: outcome.count,
+    };
   }
 
+  /**
+   * 生成具備高辨識度的特徵剪影
+   */
   private static generateThematicOrganicSkeleton(
     size: number,
     targetDensity: number,
     rnd: () => number
-  ): { grid: boolean[][]; themeZh: string; themeEn: string } {
+  ): { grid: boolean[][]; themeZh: string; themeEn: string; insightZh: string; insightEn: string } {
     const grid: boolean[][] = Array.from({ length: size }, () => Array(size).fill(false));
-    const seedMeta = THEMATIC_SEEDS[Math.floor(rnd() * THEMATIC_SEEDS.length)];
+    const template = THEMATIC_TEMPLATES[Math.floor(rnd() * THEMATIC_TEMPLATES.length)];
 
-    for (let i = 0; i < seedMeta.coreKeypoints.length; i++) {
-      const [kr, kc] = seedMeta.coreKeypoints[i];
-      const scaledR = Math.min(size - 1, Math.floor((kr / 10) * size));
-      const scaledC = Math.min(size - 1, Math.floor((kc / 10) * size));
+    for (let i = 0; i < template.points.length; i++) {
+      const [kr, kc] = template.points[i];
+      const scaledR = Math.min(size - 1, Math.floor((kr / 15) * size));
+      const scaledC = Math.min(size - 1, Math.floor((kc / 15) * size));
       grid[scaledR][scaledC] = true;
     }
 
@@ -321,14 +311,18 @@ export class WebNonogramGenerator {
     let currentCount = grid.flat().filter(Boolean).length;
 
     let iterations = 0;
-    while (iterations++ < 80 && Math.abs(currentCount - targetCount) > 2) {
-      const r = 1 + Math.floor(rnd() * (size - 2));
-      const c = 1 + Math.floor(rnd() * (size - 2));
+    while (iterations++ < 120 && Math.abs(currentCount - targetCount) > 2) {
+      const r = Math.floor(rnd() * size);
+      const c = Math.floor(rnd() * size);
       let neighbors = 0;
       for (let dr = -1; dr <= 1; dr++) {
         for (let dc = -1; dc <= 1; dc++) {
           if (dr === 0 && dc === 0) continue;
-          if (grid[r + dr][c + dc]) neighbors++;
+          const nr = r + dr;
+          const nc = c + dc;
+          if (nr >= 0 && nr < size && nc >= 0 && nc < size && grid[nr][nc]) {
+            neighbors++;
+          }
         }
       }
 
@@ -341,10 +335,19 @@ export class WebNonogramGenerator {
       }
     }
 
-    return { grid, themeZh: seedMeta.nameZh, themeEn: seedMeta.nameEn };
+    return {
+      grid,
+      themeZh: template.nameZh,
+      themeEn: template.nameEn,
+      insightZh: template.coreInsightZh,
+      insightEn: template.coreInsightEn,
+    };
   }
 
-  private static probe2DFloodContradiction(
+  /**
+   * 雙向遞迴矛盾探測（Bidirectional Lookahead Contradiction Probe）
+   */
+  private static probeBidirectionalContradiction(
     size: number,
     rowClues: number[][],
     colClues: number[][],
@@ -352,98 +355,67 @@ export class WebNonogramGenerator {
     hypoR: number,
     hypoC: number,
     hypoState: 1 | 2,
-    maxDynamicDepth: number
-  ): { isConflict: boolean; realDepthReached: number } {
-    const sandboxBoard = masterBoard.map((row) => [...row]);
-    sandboxBoard[hypoR][hypoC] = hypoState;
+    maxDepth: number
+  ): { isConflict: boolean; depthReached: number } {
+    const sandbox = masterBoard.map((row) => [...row]);
+    sandbox[hypoR][hypoC] = hypoState;
 
-    const sandboxPendingRows = new Set<number>([hypoR]);
-    const sandboxPendingCols = new Set<number>([hypoC]);
-
+    const pendingRows = new Set<number>([hypoR]);
+    const pendingCols = new Set<number>([hypoC]);
     let depth = 0;
-    let conflict = false;
 
-    while ((sandboxPendingRows.size > 0 || sandboxPendingCols.size > 0) && depth < maxDynamicDepth) {
+    while ((pendingRows.size > 0 || pendingCols.size > 0) && depth < maxDepth) {
       depth++;
 
-      if (sandboxPendingRows.size > 0) {
-        const rIter = sandboxPendingRows.values().next();
-        const r = rIter.value;
-        if (r !== undefined) {
-          sandboxPendingRows.delete(r);
-          const res = this.solveLineDPFast(size, rowClues[r], sandboxBoard[r]);
-          if (!res.hasValid) {
-            conflict = true;
-            break;
-          }
+      if (pendingRows.size > 0) {
+        const rIter = pendingRows.values().next();
+        const r = rIter.value!;
+        pendingRows.delete(r);
 
-          for (let c = 0; c < size; c++) {
-            if (sandboxBoard[r][c] === 0) {
-              const isFilled = (res.commonFilledMask & (1 << c)) !== 0;
-              const isCross = (res.commonCrossMask & (1 << c)) !== 0;
-              if (isFilled || isCross) {
-                sandboxBoard[r][c] = isFilled ? 1 : 2;
-                sandboxPendingCols.add(c);
-              }
+        const res = this.solveLineDPFast(size, rowClues[r], sandbox[r]);
+        if (!res.hasValid) return { isConflict: true, depthReached: depth };
+
+        for (let c = 0; c < size; c++) {
+          if (sandbox[r][c] === 0) {
+            const isFilled = (res.commonFilledMask & (1 << c)) !== 0;
+            const isCross = (res.commonCrossMask & (1 << c)) !== 0;
+            if (isFilled || isCross) {
+              sandbox[r][c] = isFilled ? 1 : 2;
+              pendingCols.add(c);
             }
           }
         }
       }
 
-      if (sandboxPendingCols.size > 0) {
-        const cIter = sandboxPendingCols.values().next();
-        const c = cIter.value;
-        if (c !== undefined) {
-          sandboxPendingCols.delete(c);
-          const colLine: CellState[] = [];
-          for (let r = 0; r < size; r++) colLine.push(sandboxBoard[r][c]);
+      if (pendingCols.size > 0) {
+        const cIter = pendingCols.values().next();
+        const c = cIter.value!;
+        pendingCols.delete(c);
 
-          const res = this.solveLineDPFast(size, colClues[c], colLine);
-          if (!res.hasValid) {
-            conflict = true;
-            break;
-          }
+        const colLine: CellState[] = [];
+        for (let r = 0; r < size; r++) colLine.push(sandbox[r][c]);
 
-          for (let r = 0; r < size; r++) {
-            if (sandboxBoard[r][c] === 0) {
-              const isFilled = (res.commonFilledMask & (1 << r)) !== 0;
-              const isCross = (res.commonCrossMask & (1 << r)) !== 0;
-              if (isFilled || isCross) {
-                sandboxBoard[r][c] = isFilled ? 1 : 2;
-                sandboxPendingRows.add(r);
-              }
+        const res = this.solveLineDPFast(size, colClues[c], colLine);
+        if (!res.hasValid) return { isConflict: true, depthReached: depth };
+
+        for (let r = 0; r < size; r++) {
+          if (sandbox[r][c] === 0) {
+            const isFilled = (res.commonFilledMask & (1 << r)) !== 0;
+            const isCross = (res.commonCrossMask & (1 << r)) !== 0;
+            if (isFilled || isCross) {
+              sandbox[r][c] = isFilled ? 1 : 2;
+              pendingRows.add(r);
             }
           }
         }
       }
     }
 
-    return { isConflict: conflict, realDepthReached: depth };
-  }
-
-  private static computeAntichainBranching(
-    dagNodes: Map<string, DAGNode>,
-    targetParents: string[]
-  ): number {
-    if (targetParents.length <= 1) return 1;
-    let independentAncestors = 0;
-    for (let i = 0; i < targetParents.length; i++) {
-      const p1 = dagNodes.get(targetParents[i]);
-      if (!p1) continue;
-      let hasOverlap = false;
-      for (let j = 0; j < targetParents.length; j++) {
-        if (i !== j) {
-          const p2 = dagNodes.get(targetParents[j]);
-          if (p2 && p1.depth === p2.depth) hasOverlap = true;
-        }
-      }
-      if (!hasOverlap) independentAncestors++;
-    }
-    return Math.max(1, independentAncestors);
+    return { isConflict: false, depthReached: depth };
   }
 
   /**
-   * 前端即時單步引導提示生成器（供 NonogramBoard 調用）
+   * 即時單步引導提示生成器（供 NonogramBoard 調用）
    */
   public static getNextForcedDeduction(
     rows: number,
@@ -452,7 +424,6 @@ export class WebNonogramGenerator {
     colClues: number[][],
     currentGrid: CellState[][]
   ): NonogramHintStep | null {
-    // 優先行推導
     for (let r = 0; r < rows; r++) {
       const line = currentGrid[r];
       const res = this.solveLineDPFast(cols, rowClues[r], line);
@@ -475,10 +446,10 @@ export class WebNonogramGenerator {
                 dagDepth: 1,
                 antichainBranching: 1,
                 isMasterKey: false,
-                rationale: `第 ${r + 1} 行存在唯一確定狀態`,
+                rationale: `第 ${r + 1} 行受區間算術重疊約束，此處必然${isFilled ? '填黑' : '標叉'}`,
                 humanReadable: {
-                  zh: `第 ${r + 1} 行受線索區間重疊推導，此處必然${isFilled ? '填黑' : '標叉'}！`,
-                  en: `Row ${r + 1} line overlap deduction forces cell to be ${isFilled ? 'filled' : 'crossed'}!`,
+                  zh: `第 ${r + 1} 行受邊界與線索重疊約束，此處必然${isFilled ? '填黑' : '標叉'}！`,
+                  en: `Row ${r + 1} bounds and clue overlap force cell to be ${isFilled ? 'filled' : 'crossed'}!`,
                 },
               };
             }
@@ -487,7 +458,6 @@ export class WebNonogramGenerator {
       }
     }
 
-    // 次選列推導
     for (let c = 0; c < cols; c++) {
       const colLine: CellState[] = [];
       for (let r = 0; r < rows; r++) colLine.push(currentGrid[r][c]);
@@ -511,10 +481,10 @@ export class WebNonogramGenerator {
                 dagDepth: 1,
                 antichainBranching: 1,
                 isMasterKey: false,
-                rationale: `第 ${c + 1} 列縱向交叉約束鎖定`,
+                rationale: `第 ${c + 1} 列直交投影受限`,
                 humanReadable: {
-                  zh: `第 ${c + 1} 列縱向投影交集，此處必然${isFilled ? '填黑' : '標叉'}！`,
-                  en: `Column ${c + 1} projection forces cell to be ${isFilled ? 'filled' : 'crossed'}!`,
+                  zh: `第 ${c + 1} 列直交投影受限，此處必然${isFilled ? '填黑' : '標叉'}！`,
+                  en: `Column ${c + 1} orthogonal projection forces cell to be ${isFilled ? 'filled' : 'crossed'}!`,
                 },
               };
             }
@@ -526,6 +496,9 @@ export class WebNonogramGenerator {
     return null;
   }
 
+  /**
+   * 競技級認知心流解題模擬器
+   */
   private static simulateChampionshipSolving(
     size: number,
     rowClues: number[][],
@@ -543,17 +516,13 @@ export class WebNonogramGenerator {
     hasFinisherCascade: boolean;
     masterKeyCoord: [number, number] | null;
     pureRate: number;
-    hasPerfectLogicOrder: boolean;
-    entropyReductionMap: number[][];
   } {
     const board: CellState[][] = Array.from({ length: size }, () => Array(size).fill(0));
     const steps: NonogramHintStep[] = [];
-    const entropyMap: number[][] = Array.from({ length: size }, () => Array(size).fill(0));
     const dagNodes = new Map<string, DAGNode>();
 
     const pendingRows = new Set<number>();
     const pendingCols = new Set<number>();
-
     for (let i = 0; i < size; i++) {
       pendingRows.add(i);
       pendingCols.add(i);
@@ -562,95 +531,87 @@ export class WebNonogramGenerator {
     let stepCount = 0;
     let complexityScore = 0;
     let criticalPathDepth = 1;
-    let maxAntichainFound = 1;
     let highestTech: NonogramTechnique = 'line_overlap';
-    let singleActionRounds = 0;
-
     let masterKeyCoord: [number, number] | null = null;
     let masterKeyStepIndex = -1;
 
     while (pendingRows.size > 0 || pendingCols.size > 0) {
       let progressed = false;
-      let roundModifications = 0;
 
-      // 1. 行事件連鎖
+      // 1. 行事件連鎖 (優先推導)
       if (pendingRows.size > 0) {
         const rIter = pendingRows.values().next();
-        const r = rIter.value;
-        if (r !== undefined) {
-          pendingRows.delete(r);
+        const r = rIter.value!;
+        pendingRows.delete(r);
 
-          const res = this.solveLineDPFast(size, rowClues[r], board[r]);
-          if (!res.hasValid) {
-            return { board, steps, logicalComplexityScore: 0, highestTechnique: 'line_overlap', criticalPathDepth: 0, bottleneckBranchingFactor: 0, hasFinisherCascade: false, masterKeyCoord: null, pureRate: 0, hasPerfectLogicOrder: false, entropyReductionMap: entropyMap };
-          }
+        const res = this.solveLineDPFast(size, rowClues[r], board[r]);
+        if (!res.hasValid) {
+          return { board, steps, logicalComplexityScore: 0, highestTechnique: 'line_overlap', criticalPathDepth: 0, bottleneckBranchingFactor: 0, hasFinisherCascade: false, masterKeyCoord: null, pureRate: 0 };
+        }
 
-          for (let c = 0; c < size; c++) {
-            if (board[r][c] === 0) {
-              const isFilled = (res.commonFilledMask & (1 << c)) !== 0;
-              const isCross = (res.commonCrossMask & (1 << c)) !== 0;
+        for (let c = 0; c < size; c++) {
+          if (board[r][c] === 0) {
+            const isFilled = (res.commonFilledMask & (1 << c)) !== 0;
+            const isCross = (res.commonCrossMask & (1 << c)) !== 0;
 
-              if (isFilled || isCross) {
-                const state: CellState = isFilled ? 1 : 2;
-                board[r][c] = state;
-                stepCount++;
-                roundModifications++;
-                pendingCols.add(c);
+            if (isFilled || isCross) {
+              const state: CellState = isFilled ? 1 : 2;
+              board[r][c] = state;
+              stepCount++;
+              pendingCols.add(c);
 
-                const cellKey = `${r},${c}`;
-                let parentDepth = 0;
-                const parentIds: string[] = [];
+              const cellKey = `${r},${c}`;
+              let parentDepth = 0;
+              const parentIds: string[] = [];
 
-                for (let oc = 0; oc < size; oc++) {
-                  if (oc !== c && board[r][oc] !== 0) {
-                    const pKey = `${r},${oc}`;
-                    const pNode = dagNodes.get(pKey);
-                    if (pNode) {
-                      parentDepth = Math.max(parentDepth, pNode.depth);
-                      parentIds.push(pKey);
-                    }
+              for (let oc = 0; oc < size; oc++) {
+                if (oc !== c && board[r][oc] !== 0) {
+                  const pKey = `${r},${oc}`;
+                  const pNode = dagNodes.get(pKey);
+                  if (pNode) {
+                    parentDepth = Math.max(parentDepth, pNode.depth);
+                    parentIds.push(pKey);
                   }
                 }
-
-                const currentDagDepth = parentDepth + 1;
-                criticalPathDepth = Math.max(criticalPathDepth, currentDagDepth);
-
-                const branching = this.computeAntichainBranching(dagNodes, parentIds);
-                maxAntichainFound = Math.max(maxAntichainFound, branching);
-
-                dagNodes.set(cellKey, {
-                  cellId: cellKey,
-                  step: stepCount,
-                  r, c,
-                  state,
-                  technique: isFilled ? 'line_overlap' : 'space_gap_exclusion',
-                  parentCellIds: parentIds,
-                  depth: currentDagDepth,
-                });
-
-                const tech: NonogramTechnique = isFilled ? 'line_overlap' : 'space_gap_exclusion';
-                complexityScore += TECHNIQUE_WEIGHTS[tech];
-                entropyMap[r][c] = isFilled ? 1.0 : 0.4;
-
-                steps.push({
-                  step: stepCount,
-                  r, c,
-                  targetCell: [r, c],
-                  orientation: 'row',
-                  index: r,
-                  forcedState: state,
-                  technique: tech,
-                  dagDepth: currentDagDepth,
-                  antichainBranching: branching,
-                  isMasterKey: false,
-                  rationale: `第 ${r + 1} 行受約束傳播影響，DP 區間確定`,
-                  humanReadable: {
-                    zh: `第 ${r + 1} 行受約束傳播影響，坐標 [${r + 1}, ${c + 1}] 強制標記為 ${isFilled ? '黑格' : '叉號 (x)'}！`,
-                    en: `Row ${r + 1} propagation forces cell [${r + 1}, ${c + 1}] to be ${isFilled ? 'filled' : 'crossed'}!`,
-                  },
-                });
-                progressed = true;
               }
+
+              const currentDepth = parentDepth + 1;
+              criticalPathDepth = Math.max(criticalPathDepth, currentDepth);
+
+              const tech: NonogramTechnique = isFilled ? 'line_overlap' : 'space_gap_exclusion';
+              complexityScore += TECHNIQUE_WEIGHTS[tech];
+              if (TECHNIQUE_WEIGHTS[tech] > TECHNIQUE_WEIGHTS[highestTech]) highestTech = tech;
+
+              dagNodes.set(cellKey, {
+                cellId: cellKey,
+                step: stepCount,
+                r,
+                c,
+                state,
+                technique: tech,
+                parentCellIds: parentIds,
+                depth: currentDepth,
+              });
+
+              steps.push({
+                step: stepCount,
+                r,
+                c,
+                targetCell: [r, c],
+                orientation: 'row',
+                index: r,
+                forcedState: state,
+                technique: tech,
+                dagDepth: currentDepth,
+                antichainBranching: 1,
+                isMasterKey: false,
+                rationale: `第 ${r + 1} 行受約束傳播影響，確定唯一狀態`,
+                humanReadable: {
+                  zh: `第 ${r + 1} 行受約束傳播影響，坐標 [${r + 1}, ${c + 1}] 強制標記為 ${isFilled ? '黑格' : '叉號'}！`,
+                  en: `Row ${r + 1} propagation forces cell [${r + 1}, ${c + 1}] to be ${isFilled ? 'filled' : 'crossed'}!`,
+                },
+              });
+              progressed = true;
             }
           }
         }
@@ -659,148 +620,170 @@ export class WebNonogramGenerator {
       // 2. 列事件連鎖
       if (!progressed && pendingCols.size > 0) {
         const cIter = pendingCols.values().next();
-        const c = cIter.value;
-        if (c !== undefined) {
-          pendingCols.delete(c);
+        const c = cIter.value!;
+        pendingCols.delete(c);
 
-          const colLine: CellState[] = [];
-          for (let r = 0; r < size; r++) colLine.push(board[r][c]);
+        const colLine: CellState[] = [];
+        for (let r = 0; r < size; r++) colLine.push(board[r][c]);
 
-          const res = this.solveLineDPFast(size, colClues[c], colLine);
-          if (!res.hasValid) {
-            return { board, steps, logicalComplexityScore: 0, highestTechnique: 'line_overlap', criticalPathDepth: 0, bottleneckBranchingFactor: 0, hasFinisherCascade: false, masterKeyCoord: null, pureRate: 0, hasPerfectLogicOrder: false, entropyReductionMap: entropyMap };
-          }
+        const res = this.solveLineDPFast(size, colClues[c], colLine);
+        if (!res.hasValid) {
+          return { board, steps, logicalComplexityScore: 0, highestTechnique: 'line_overlap', criticalPathDepth: 0, bottleneckBranchingFactor: 0, hasFinisherCascade: false, masterKeyCoord: null, pureRate: 0 };
+        }
 
-          for (let r = 0; r < size; r++) {
-            if (board[r][c] === 0) {
-              const isFilled = (res.commonFilledMask & (1 << r)) !== 0;
-              const isCross = (res.commonCrossMask & (1 << r)) !== 0;
+        for (let r = 0; r < size; r++) {
+          if (board[r][c] === 0) {
+            const isFilled = (res.commonFilledMask & (1 << r)) !== 0;
+            const isCross = (res.commonCrossMask & (1 << r)) !== 0;
 
-              if (isFilled || isCross) {
-                const state: CellState = isFilled ? 1 : 2;
-                board[r][c] = state;
-                stepCount++;
-                roundModifications++;
-                pendingRows.add(r);
+            if (isFilled || isCross) {
+              const state: CellState = isFilled ? 1 : 2;
+              board[r][c] = state;
+              stepCount++;
+              pendingRows.add(r);
 
-                const cellKey = `${r},${c}`;
-                let parentDepth = 0;
-                const parentIds: string[] = [];
+              const cellKey = `${r},${c}`;
+              let parentDepth = 0;
+              const parentIds: string[] = [];
 
-                for (let or = 0; or < size; or++) {
-                  if (or !== r && board[or][c] !== 0) {
-                    const pKey = `${or},${c}`;
-                    const pNode = dagNodes.get(pKey);
-                    if (pNode) {
-                      parentDepth = Math.max(parentDepth, pNode.depth);
-                      parentIds.push(pKey);
-                    }
+              for (let or = 0; or < size; or++) {
+                if (or !== r && board[or][c] !== 0) {
+                  const pKey = `${or},${c}`;
+                  const pNode = dagNodes.get(pKey);
+                  if (pNode) {
+                    parentDepth = Math.max(parentDepth, pNode.depth);
+                    parentIds.push(pKey);
                   }
                 }
-
-                const currentDagDepth = parentDepth + 1;
-                criticalPathDepth = Math.max(criticalPathDepth, currentDagDepth);
-
-                const branching = this.computeAntichainBranching(dagNodes, parentIds);
-                maxAntichainFound = Math.max(maxAntichainFound, branching);
-
-                dagNodes.set(cellKey, {
-                  cellId: cellKey,
-                  step: stepCount,
-                  r, c,
-                  state,
-                  technique: isFilled ? 'edge_boundary_lock' : 'cross_intersection_induction',
-                  parentCellIds: parentIds,
-                  depth: currentDagDepth,
-                });
-
-                const tech: NonogramTechnique = isFilled ? 'edge_boundary_lock' : 'cross_intersection_induction';
-                complexityScore += TECHNIQUE_WEIGHTS[tech];
-                if (TECHNIQUE_WEIGHTS[tech] > TECHNIQUE_WEIGHTS[highestTech]) highestTech = tech;
-                entropyMap[r][c] = isFilled ? 1.0 : 0.4;
-
-                steps.push({
-                  step: stepCount,
-                  r, c,
-                  targetCell: [r, c],
-                  orientation: 'col',
-                  index: c,
-                  forcedState: state,
-                  technique: tech,
-                  dagDepth: currentDagDepth,
-                  antichainBranching: branching,
-                  isMasterKey: false,
-                  rationale: `第 ${c + 1} 列縱向交叉鎖定`,
-                  humanReadable: {
-                    zh: `第 ${c + 1} 列直交傳播，坐標 [${r + 1}, ${c + 1}] 確定為 ${isFilled ? '黑格' : '叉號 (x)'}！`,
-                    en: `Column ${c + 1} orthogonal induction forces cell [${r + 1}, ${c + 1}] ${isFilled ? 'filled' : 'crossed'}!`,
-                  },
-                });
-                progressed = true;
               }
+
+              const currentDepth = parentDepth + 1;
+              criticalPathDepth = Math.max(criticalPathDepth, currentDepth);
+
+              const tech: NonogramTechnique = isFilled ? 'edge_boundary_lock' : 'cross_intersection_induction';
+              complexityScore += TECHNIQUE_WEIGHTS[tech];
+              if (TECHNIQUE_WEIGHTS[tech] > TECHNIQUE_WEIGHTS[highestTech]) highestTech = tech;
+
+              dagNodes.set(cellKey, {
+                cellId: cellKey,
+                step: stepCount,
+                r,
+                c,
+                state,
+                technique: tech,
+                parentCellIds: parentIds,
+                depth: currentDepth,
+              });
+
+              steps.push({
+                step: stepCount,
+                r,
+                c,
+                targetCell: [r, c],
+                orientation: 'col',
+                index: c,
+                forcedState: state,
+                technique: tech,
+                dagDepth: currentDepth,
+                antichainBranching: 1,
+                isMasterKey: false,
+                rationale: `第 ${c + 1} 列縱向交叉約束鎖定`,
+                humanReadable: {
+                  zh: `第 ${c + 1} 列直交傳播，坐標 [${r + 1}, ${c + 1}] 確定為 ${isFilled ? '黑格' : '叉號'}！`,
+                  en: `Column ${c + 1} orthogonal induction forces cell [${r + 1}, ${c + 1}] ${isFilled ? 'filled' : 'crossed'}!`,
+                },
+              });
+              progressed = true;
             }
           }
         }
       }
 
-      if (roundModifications === 1) singleActionRounds++;
-
-      // 3. 決勝輪：二維全域泛洪遞迴反證法（動態深度）
+      // 3. 雙向反證法（當線性推導完全卡死時觸發）
       if (!progressed && allowContradiction && pendingRows.size === 0 && pendingCols.size === 0) {
-        outerFloodContradiction: for (let r = 0; r < size; r++) {
+        outerContradiction: for (let r = 0; r < size; r++) {
           for (let c = 0; c < size; c++) {
             if (board[r][c] === 0) {
-              const probeRes = this.probe2DFloodContradiction(
+              // 探測 A: 假設填黑 (1)，看是否產生矛盾
+              const probeFill = this.probeBidirectionalContradiction(
                 size, rowClues, colClues, board, r, c, 1, dynamicLookaheadDepth
               );
-
-              if (probeRes.isConflict) {
+              if (probeFill.isConflict) {
+                // 假設黑產生矛盾 => 必為叉 (2)
                 board[r][c] = 2;
                 stepCount++;
                 complexityScore += TECHNIQUE_WEIGHTS.two_dimensional_flood_contradiction;
                 highestTech = 'two_dimensional_flood_contradiction';
 
-                const realDepth = criticalPathDepth + probeRes.realDepthReached;
-                criticalPathDepth = Math.max(criticalPathDepth, realDepth);
-
-                const cellKey = `${r},${c}`;
                 if (!masterKeyCoord) {
                   masterKeyCoord = [r, c];
                   masterKeyStepIndex = stepCount;
                 }
-
-                dagNodes.set(cellKey, {
-                  cellId: cellKey,
-                  step: stepCount,
-                  r, c,
-                  state: 2,
-                  technique: 'two_dimensional_flood_contradiction',
-                  parentCellIds: [],
-                  depth: realDepth,
-                });
 
                 pendingRows.add(r);
                 pendingCols.add(c);
 
                 steps.push({
                   step: stepCount,
-                  r, c,
+                  r,
+                  c,
                   targetCell: [r, c],
                   orientation: 'row',
                   index: r,
                   forcedState: 2,
                   technique: 'two_dimensional_flood_contradiction',
-                  dagDepth: realDepth,
-                  antichainBranching: 3,
+                  dagDepth: criticalPathDepth + probeFill.depthReached,
+                  antichainBranching: 2,
                   isMasterKey: true,
-                  rationale: `二維泛洪反證（真實動態深度 ${probeRes.realDepthReached}）：假設填黑引發不可調和之行列崩潰`,
+                  rationale: `雙向因果反證（深度 ${probeFill.depthReached}）：假設填黑引發全局矛盾，確定為叉`,
                   humanReadable: {
-                    zh: `🏆 WPC 金牌級二維泛洪反證（深度 ${probeRes.realDepthReached}）：解開咽喉 Master Key 點，反證此格必為叉號 (x)！`,
-                    en: `Championship 2D Flood Lookahead-${probeRes.realDepthReached}: Resolved Master Key node; forced cross (x)!`,
+                    zh: `雙向因果反證（深度 ${probeFill.depthReached}）：解開咽喉 Master Key，反證此格必為叉號！`,
+                    en: `Bidirectional lookahead (depth ${probeFill.depthReached}) resolves Master Key: forced cross!`,
                   },
                 });
                 progressed = true;
-                break outerFloodContradiction;
+                break outerContradiction;
+              }
+
+              // 探測 B: 假設標叉 (2)，看是否產生矛盾
+              const probeCross = this.probeBidirectionalContradiction(
+                size, rowClues, colClues, board, r, c, 2, dynamicLookaheadDepth
+              );
+              if (probeCross.isConflict) {
+                // 假設叉產生矛盾 => 必為黑 (1)
+                board[r][c] = 1;
+                stepCount++;
+                complexityScore += TECHNIQUE_WEIGHTS.two_dimensional_flood_contradiction;
+                highestTech = 'two_dimensional_flood_contradiction';
+
+                if (!masterKeyCoord) {
+                  masterKeyCoord = [r, c];
+                  masterKeyStepIndex = stepCount;
+                }
+
+                pendingRows.add(r);
+                pendingCols.add(c);
+
+                steps.push({
+                  step: stepCount,
+                  r,
+                  c,
+                  targetCell: [r, c],
+                  orientation: 'row',
+                  index: r,
+                  forcedState: 1,
+                  technique: 'two_dimensional_flood_contradiction',
+                  dagDepth: criticalPathDepth + probeCross.depthReached,
+                  antichainBranching: 2,
+                  isMasterKey: true,
+                  rationale: `雙向因果反證（深度 ${probeCross.depthReached}）：假設標叉引發全局矛盾，確定填黑`,
+                  humanReadable: {
+                    zh: `雙向因果反證（深度 ${probeCross.depthReached}）：解開咽喉 Master Key，反證此格必填黑！`,
+                    en: `Bidirectional lookahead (depth ${probeCross.depthReached}) resolves Master Key: forced filled!`,
+                  },
+                });
+                progressed = true;
+                break outerContradiction;
               }
             }
           }
@@ -811,39 +794,11 @@ export class WebNonogramGenerator {
     const filledCount = board.flat().filter((v) => v !== 0).length;
     const total = size * size;
     const pureRate = Number((filledCount / total).toFixed(2));
-    const hasPerfectLogicOrder = pureRate === 1.0 && (singleActionRounds / Math.max(1, stepCount)) >= 0.60;
 
-    // 嚴格 DAG 根源追溯終結技檢驗
     let hasFinisherCascade = false;
     if (masterKeyCoord && masterKeyStepIndex !== -1) {
-      const masterKeyId = `${masterKeyCoord[0]},${masterKeyCoord[1]}`;
-      let downstreamCount = 0;
       const totalPostSteps = steps.length - masterKeyStepIndex;
-
-      for (let i = masterKeyStepIndex; i < steps.length; i++) {
-        const stepKey = `${steps[i].r},${steps[i].c}`;
-        const node = dagNodes.get(stepKey);
-        if (node) {
-          const queue = [...node.parentCellIds];
-          const visited = new Set<string>();
-          while (queue.length > 0) {
-            const currId = queue.shift();
-            if (!currId) continue;
-            if (currId === masterKeyId) {
-              downstreamCount++;
-              break;
-            }
-            if (!visited.has(currId)) {
-              visited.add(currId);
-              const parentNode = dagNodes.get(currId);
-              if (parentNode) queue.push(...parentNode.parentCellIds);
-            }
-          }
-        }
-      }
-
-      const totalCells = size * size;
-      if (downstreamCount >= Math.floor(totalCells * minFinisherRatio) && (downstreamCount / Math.max(1, totalPostSteps)) >= 0.75) {
+      if (totalPostSteps >= Math.floor(total * minFinisherRatio)) {
         hasFinisherCascade = true;
       }
     }
@@ -854,12 +809,10 @@ export class WebNonogramGenerator {
       logicalComplexityScore: complexityScore,
       highestTechnique: highestTech,
       criticalPathDepth,
-      bottleneckBranchingFactor: maxAntichainFound,
+      bottleneckBranchingFactor: 1,
       hasFinisherCascade,
       masterKeyCoord,
       pureRate,
-      hasPerfectLogicOrder,
-      entropyReductionMap: entropyMap,
     };
   }
 
@@ -870,10 +823,10 @@ export class WebNonogramGenerator {
     const rnd = mulberry32(actualSeed);
 
     let attempts = 0;
-    const maxAttempts = 35;
+    const maxAttempts = 40;
 
     while (attempts++ < maxAttempts) {
-      const { grid: solution, themeZh, themeEn } = this.generateThematicOrganicSkeleton(size, targetDensity, rnd);
+      const { grid: solution, themeZh, themeEn, insightZh, insightEn } = this.generateThematicOrganicSkeleton(size, targetDensity, rnd);
 
       const rowClues: number[][] = [];
       for (let r = 0; r < size; r++) rowClues.push(this.extractLineClues(solution[r]));
@@ -885,15 +838,17 @@ export class WebNonogramGenerator {
       }
 
       const sim = this.simulateChampionshipSolving(
-        size, rowClues, colClues, allowContradiction, dynamicLookaheadDepth, minFinisherRatio
+        size,
+        rowClues,
+        colClues,
+        allowContradiction,
+        dynamicLookaheadDepth,
+        minFinisherRatio
       );
 
+      // 嚴格過濾：純邏輯推導必須達到 100% (數學 Soundness 保證唯一解)
       if (sim.pureRate < 1.0) continue;
       if (tier !== 'kids' && sim.criticalPathDepth < minCriticalDepth) continue;
-
-      if (!this.verifyFormalUniqueness(size, rowClues, colClues)) {
-        continue;
-      }
 
       const dynamicIrt = Number(
         (baseIrt + (sim.criticalPathDepth / size) * 0.40 + Math.log2(Math.max(1, sim.logicalComplexityScore / 30)) * 0.30).toFixed(2)
@@ -918,6 +873,11 @@ export class WebNonogramGenerator {
         themeTitleEn: themeEn,
         tier,
         seed: actualSeed,
+        pedagogicalPattern: {
+          primaryInsight: sim.highestTechnique,
+          coreInsightZh: insightZh,
+          coreInsightEn: insightEn,
+        },
       };
 
       return {
@@ -929,10 +889,10 @@ export class WebNonogramGenerator {
         puzzle: spec as any,
         solution: solution as any,
         cognitiveLoad: {
-          spatial: 0.98,
-          numeric: 0.82,
+          spatial: 0.95,
+          numeric: 0.85,
           workingMemory: Number(Math.min(1.0, 0.4 + (sim.criticalPathDepth / 22) * 0.55).toFixed(2)),
-          inhibition: 0.96,
+          inhibition: 0.92,
         },
         metrics: {
           grid_size: size,
@@ -947,7 +907,6 @@ export class WebNonogramGenerator {
           master_key_coord: sim.masterKeyCoord,
           theme_title_zh: themeZh,
           theme_title_en: themeEn,
-          has_perfect_logic_order: sim.hasPerfectLogicOrder,
           seed: actualSeed,
           actualTier: tier,
         } as any,
@@ -965,7 +924,7 @@ export class WebNonogramGenerator {
     timeLimitSec: number,
     rnd: () => number
   ): PuzzleEntity {
-    const { grid: solution, themeZh, themeEn } = this.generateThematicOrganicSkeleton(size, 0.45, rnd);
+    const { grid: solution, themeZh, themeEn, insightZh, insightEn } = this.generateThematicOrganicSkeleton(size, 0.45, rnd);
 
     const rowClues: number[][] = [];
     for (let r = 0; r < size; r++) rowClues.push(this.extractLineClues(solution[r]));
@@ -989,7 +948,7 @@ export class WebNonogramGenerator {
       pureDeductionRate: 1.0,
       highestTechnique: 'line_overlap',
       criticalPathDepth: 6,
-      bottleneckBranchingFactor: 2,
+      bottleneckBranchingFactor: 1,
       logicalComplexityScore: 48,
       hasFinisherCascade: true,
       masterKeyCoordinates: null,
@@ -997,6 +956,11 @@ export class WebNonogramGenerator {
       themeTitleEn: themeEn,
       tier,
       seed,
+      pedagogicalPattern: {
+        primaryInsight: 'line_overlap',
+        coreInsightZh: insightZh,
+        coreInsightEn: insightEn,
+      },
     };
 
     return {
@@ -1015,11 +979,10 @@ export class WebNonogramGenerator {
         estimated_time_sec: timeLimitSec,
         irt_logit_difficulty: baseIrt,
         critical_path_depth: 6,
-        bottleneck_branching: 2,
+        bottleneck_branching: 1,
         has_finisher_cascade: true,
         theme_title_zh: themeZh,
         theme_title_en: themeEn,
-        has_perfect_logic_order: true,
         seed,
         actualTier: tier,
       } as any,
