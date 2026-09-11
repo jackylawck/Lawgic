@@ -3,10 +3,12 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import { SecureStorage } from '../utils/secureStorage';
 import { useLanguage } from '../contexts/LanguageContext';
 import { ItemBankCalibrator } from '../utils/itemBankCalibrator';
+import { CognitiveDimension } from '../types/cognitive';
+import { createEngineMatcher } from '../registry/engineMetadata';
 
 export type TierKey = 'kids' | 'intermediate' | 'expert' | 'master' | 'legendary' | 'ultimate';
 export type ExtendedTierKey = TierKey;
-export type CognitiveDimension = 'spatial' | 'numeric' | 'workingMemory' | 'inhibition' | 'processingSpeed';
+export type { CognitiveDimension };
 
 const VALID_TIERS: readonly TierKey[] = ['kids', 'intermediate', 'expert', 'master', 'legendary', 'ultimate'];
 const isValidTier = (v: unknown): v is TierKey =>
@@ -191,9 +193,10 @@ const AGE_NORM_COHORTS = [
   { maxAge: 120, label: '55+', mean: 93, sd: 16.2 },
 ];
 
-const MASYU_ALIASES = new Set(['masyu', 'pearl']);
-const NURIKABE_ALIASES = new Set(['nurikabe']);
-const LIGHTUP_ALIASES = new Set(['lightup', 'akari']);
+// P1 行為契約：直接使用 engineMetadata 派生的高階比對函式
+const isMasyu = createEngineMatcher('masyu');
+const isNurikabe = createEngineMatcher('nurikabe');
+const isLightUp = createEngineMatcher('lightup');
 
 function computeAdaptiveBootstrapCI(values: number[], nIterations = 1000): MetricCI {
   const n = values.length;
@@ -257,9 +260,6 @@ function normalCDF(z: number): number {
   return Math.max(0.0001, Math.min(0.9999, p));
 }
 
-/**
- * P0 安全防御：白名單欄位校驗 + 嚴格 Tier 枚舉驗證，根治原型污染與髒數據
- */
 function sanitizeBookmark(raw: unknown): BookmarkRecord | null {
   if (!raw || typeof raw !== 'object') return null;
   const r = raw as Record<string, unknown>;
@@ -279,9 +279,6 @@ function sanitizeBookmark(raw: unknown): BookmarkRecord | null {
   };
 }
 
-/**
- * 100% 純狀態演繹器
- */
 function computeNextProfileState(
   prev: LearnerProfileState,
   recordWithTime: AttemptPayload
@@ -428,10 +425,8 @@ export const useLearnerProfile = () => {
       .catch((err) => console.warn('[useLearnerProfile] Persistence queue error:', err));
   }, []);
 
-  // P1 墓碑機制（Tombstone Reference）：追蹤在 Hydration 窗口內被用戶明確刪除的題目 ID
   const pendingDeletionsRef = useRef<Set<string>>(new Set());
 
-  // P1 核心修復：合併策略 + 墓碑過濾 + 顯式 pickLocal 治理
   useEffect(() => {
     SecureStorage.getItemSafe('logicore_learner_profile', DEFAULT_PROFILE).then((verified) => {
       setProfile((prev) => {
@@ -442,7 +437,6 @@ export const useLearnerProfile = () => {
           ...verifiedRecords.filter((r) => !existingIds.has(`${r.puzzleId}_${r.timestamp}`)),
         ].slice(0, 120);
 
-        // 合併書籤並套用墓碑：防止存儲的舊書籤覆蓋用戶在水合空隙中的刪除操作
         const mergedBookmarks = {
           ...(verified.bookmarks || {}),
           ...prev.bookmarks,
@@ -472,7 +466,6 @@ export const useLearnerProfile = () => {
     });
   }, []);
 
-  // 持久化副作用由 useEffect 嚴格接管
   const lastPersistedStateRef = useRef<LearnerProfileState | null>(null);
   useEffect(() => {
     if (profile.totalAttempts === 0 && Object.keys(profile.bookmarks).length === 0) return;
@@ -481,7 +474,6 @@ export const useLearnerProfile = () => {
     persistProfile(profile);
   }, [profile, persistProfile]);
 
-  // 最新指標引用保持，校準器僅依賴最新紀錄時間戳原語
   const profileRef = useRef(profile);
   useEffect(() => {
     profileRef.current = profile;
@@ -659,11 +651,11 @@ export const useLearnerProfile = () => {
   }, [profile, isEn]);
 
   const getSpatialCompositeIndex = useCallback((): SpatialCompositeIndex => {
-    // P2-3: 語意清理，直接使用 records 指向 recentRecords
     const records = profile.recentRecords;
-    const masyuRecords = records.filter((a) => MASYU_ALIASES.has(a.engineType) && a.isSuccess);
-    const nurikabeRecords = records.filter((a) => NURIKABE_ALIASES.has(a.engineType) && a.isSuccess);
-    const lightupRecords = records.filter((a) => LIGHTUP_ALIASES.has(a.engineType) && a.isSuccess);
+    // 使用防禦性 matcher 判斷引擎類型
+    const masyuRecords = records.filter((a) => isMasyu(a.engineType) && a.isSuccess);
+    const nurikabeRecords = records.filter((a) => isNurikabe(a.engineType) && a.isSuccess);
+    const lightupRecords = records.filter((a) => isLightUp(a.engineType) && a.isSuccess);
 
     const calcControl = (targetRecords: AttemptPayload[]) => {
       if (targetRecords.length === 0) return 72;
