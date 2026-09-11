@@ -27,30 +27,27 @@ export default {
           'sans-serif',
         ],
       },
-      // 🌟 iOS 動態島與底部 Home Indicator 安全邊界自適應擴展
+      // iOS 動態島與底部 Home Indicator 安全邊界自適應擴展
       spacing: {
-        safe: 'env(safe-area-inset-bottom, 0px)',
         'safe-top': 'env(safe-area-inset-top, 0px)',
         'safe-bottom': 'env(safe-area-inset-bottom, 0px)',
         'safe-left': 'env(safe-area-inset-left, 0px)',
         'safe-right': 'env(safe-area-inset-right, 0px)',
       },
       gridTemplateColumns: {
-        // 快速適配各類棋盤大小
         9: 'repeat(9, minmax(0, 1fr))',
         10: 'repeat(10, minmax(0, 1fr))',
-        12: 'repeat(12, minmax(0, 1fr))',
       },
       animation: {
-        'fade-in': 'fadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards',
+        'fade-in': 'fadeIn 0.22s cubic-bezier(0.16, 1, 0.3, 1) forwards',
         'pulse-subtle': 'pulseSubtle 2s cubic-bezier(0.4, 0, 0.6, 1) infinite',
         'pop-in': 'popIn 0.18s cubic-bezier(0.34, 1.56, 0.64, 1) forwards',
         'shake-err': 'shakeErr 0.35s cubic-bezier(0.36, 0.07, 0.19, 0.97) both',
       },
       keyframes: {
         fadeIn: {
-          from: { opacity: '0', transform: 'translateY(4px)' },
-          to: { opacity: '1', transform: 'translateY(0)' },
+          from: { opacity: '0', transform: 'translate3d(0, 6px, 0)' },
+          to: { opacity: '1', transform: 'translate3d(0, 0, 0)' },
         },
         popIn: {
           from: { opacity: '0', transform: 'scale(0.85)' },
