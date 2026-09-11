@@ -183,6 +183,7 @@ export const SudokuBoard: React.FC<Props> = ({
 
   const triggerHaptic = useCallback(
     (pattern: number | number[]) => {
+      // 前庭敏感使用者通常對突發感官刺激同樣敏感，reducedMotion 啟用時一併壓制實體震動
       if (hapticFeedback && !reducedMotion && typeof navigator !== 'undefined' && navigator.vibrate) {
         try {
           navigator.vibrate(pattern);
@@ -190,6 +191,15 @@ export const SudokuBoard: React.FC<Props> = ({
       }
     },
     [hapticFeedback, reducedMotion]
+  );
+
+  // 穩定化 81 格 Ref Callback 字典，消除每次渲染 162 次 ref churn
+  const cellRefCallbacks = useMemo(
+    () =>
+      Array.from({ length: 81 }, (_, idx) => (el: HTMLButtonElement | null) => {
+        cellButtonRefs.current[idx] = el;
+      }),
+    []
   );
 
   // 3. 自動候選數即時計算
@@ -718,13 +728,14 @@ export const SudokuBoard: React.FC<Props> = ({
       aria-label={isEn ? 'Sudoku Puzzle Game Board' : '數獨對弈盤面'}
       className="relative flex flex-col items-center justify-center w-full min-h-[90vh] select-none py-2 font-mono bg-slate-950 text-slate-100 overflow-hidden"
     >
+      {/* 視覺 Toast：加上 aria-hidden="true"，避免與 announce 產生雙重播報 */}
       {violationAlert && (
-        <div role="alert" className="fixed top-4 z-50 px-4 py-2 bg-rose-600 border border-rose-400 text-white font-bold text-xs rounded-full shadow-2xl animate-bounce">
+        <div aria-hidden="true" className="fixed top-4 z-50 px-4 py-2 bg-rose-600 border border-rose-400 text-white font-bold text-xs rounded-full shadow-2xl animate-bounce">
           {violationAlert}
         </div>
       )}
       {bookmarkToast && (
-        <div role="status" aria-live="polite" className="fixed top-4 z-50 px-4 py-2 bg-indigo-600 border border-indigo-400 text-white font-bold text-xs rounded-full shadow-2xl">
+        <div aria-hidden="true" className="fixed top-4 z-50 px-4 py-2 bg-indigo-600 border border-indigo-400 text-white font-bold text-xs rounded-full shadow-2xl">
           {bookmarkToast}
         </div>
       )}
@@ -814,13 +825,13 @@ export const SudokuBoard: React.FC<Props> = ({
         </div>
       </header>
 
+      {/* 設計決策：文字群組 aria-hidden，提示內容由 triggerHintLadder 的 announce('polite') 承載。
+          關閉按鈕保持可訪問性，消除雙重播報雜訊的同時支援鍵盤巡航關閉。 */}
       {activeHintText && (
         <div
-          role="status"
-          aria-live="polite"
           className="w-full max-w-[min(94vw,74vh)] bg-slate-900/95 border border-amber-500/70 text-amber-200 text-xs px-3 py-2 rounded-xl mb-2 flex items-center justify-between gap-2 shadow-2xl backdrop-blur animate-fade-in"
         >
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2" aria-hidden="true">
             <span className="px-1.5 py-0.2 bg-amber-500 text-slate-950 rounded font-black text-[9px]">
               L{hintLevel}
             </span>
@@ -830,7 +841,7 @@ export const SudokuBoard: React.FC<Props> = ({
             type="button"
             onClick={() => setActiveHintText(null)}
             aria-label={isEn ? 'Dismiss hint' : '關閉提示'}
-            className="text-slate-400 hover:text-slate-200 text-xs font-bold cursor-pointer"
+            className="text-slate-400 hover:text-slate-200 text-xs font-bold cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-amber-400 rounded-sm"
           >
             ✕
           </button>
@@ -907,9 +918,7 @@ export const SudokuBoard: React.FC<Props> = ({
                       className="w-full h-full relative"
                     >
                       <button
-                        ref={(el) => {
-                          cellButtonRefs.current[idx] = el;
-                        }}
+                        ref={cellRefCallbacks[idx]}
                         type="button"
                         tabIndex={isSelected ? 0 : -1} // Roving Tabindex
                         onClick={() => {
@@ -1102,7 +1111,6 @@ export const SudokuBoard: React.FC<Props> = ({
                   dimensions={profile.cognitiveDimensions}
                   previousDimensions={profile.previousCognitiveDimensions}
                   size={140}
-                  forceLang={lang}
                 />
                 <div className="text-[9px] text-slate-400">
                   <strong>Solving Path:</strong> {solvingPath.join(' ➔ ')}
