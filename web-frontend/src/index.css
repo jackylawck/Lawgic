@@ -11,25 +11,26 @@
   }
 
   html {
-    /* 啟用現代動態視口高度與標準色彩空間 */
-    height: 100%;
+    /* 啟用標準深色空間與明確背景，不依賴 body 隱式傳播 */
     color-scheme: dark;
+    background-color: #070a0f;
   }
 
   body {
     margin: 0;
     padding: 0;
-    min-height: 100%;
+    min-height: 100vh;
     min-height: 100dvh;
     background-color: #070a0f;
     color: #f8fafc;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
-    
-    /* 徹底杜絕行動端橡皮筋下拉重整與彈性晃動 */
+
+    /* 單一事實來源：徹底杜絕行動端橡皮筋彈性晃動 */
     overscroll-behavior: none;
-    overscroll-behavior-y: none;
+
+    /* 允許單指平移，雙指縮放由 viewport meta 統一管理 */
     touch-action: pan-x pan-y;
 
     /* 消除行動端點擊灰斑與系統長按選單干擾 */
@@ -79,7 +80,7 @@
   padding-bottom: var(--sab);
 }
 
-/* 螢幕閱讀器專用隱藏類 (Accessible Screen-Reader Only) */
+/* 現代標準螢幕閱讀器專用隱藏類 (Accessible Screen-Reader Only) */
 .sr-only {
   position: absolute !important;
   width: 1px !important;
@@ -87,7 +88,7 @@
   padding: 0 !important;
   margin: -1px !important;
   overflow: hidden !important;
-  clip: rect(0, 0, 0, 0) !important;
+  clip-path: inset(50%) !important;
   white-space: nowrap !important;
   border: 0 !important;
 }
@@ -96,7 +97,7 @@
    🎮 動畫特效系統 (GPU 硬件合成加速)
    ========================================================================== */
 
-/* 連勝心跳高能脈衝 */
+/* 連勝心跳高能脈衝：移除無效的 will-change: box-shadow，防範常駐 GPU 記憶體浪費 */
 @keyframes flame-pulse {
   0%, 100% {
     box-shadow: 0 0 15px rgba(249, 115, 22, 0.25), inset 0 0 10px rgba(249, 115, 22, 0.15);
@@ -108,7 +109,6 @@
 .animate-flame-heat {
   animation: flame-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
   transform: translate3d(0, 0, 0);
-  will-change: box-shadow;
 }
 
 /* 通關多巴胺慶典閃爍 */
@@ -128,7 +128,6 @@
 }
 .animate-victory-pulse {
   animation: victory-glow 1.1s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-  will-change: transform, opacity;
 }
 
 /* 平滑微交互淡入 */
@@ -144,73 +143,93 @@
 }
 .animate-fade-in {
   animation: fadeIn 0.22s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-  will-change: transform, opacity;
 }
 
-/* 碎紙屑粒子物理飄落 (支援 dvh 動態視口高度) */
+/* 碎紙屑粒子物理飄落 (105vh fallback + 105dvh 漸進增強) */
 @keyframes confettiFall {
   0% {
     transform: translate3d(0, -10px, 0) rotate(0deg);
     opacity: 1;
   }
   100% {
-    transform: translate3d(0, 105dvh, 0) rotate(720deg);
+    transform: translate3d(0, 105vh, 0) rotate(720deg);
     opacity: 0;
+  }
+}
+@supports (height: 100dvh) {
+  @keyframes confettiFall {
+    0% {
+      transform: translate3d(0, -10px, 0) rotate(0deg);
+      opacity: 1;
+    }
+    100% {
+      transform: translate3d(0, 105dvh, 0) rotate(720deg);
+      opacity: 0;
+    }
   }
 }
 .animate-confetti-fall {
   animation: confettiFall 3s linear infinite;
-  will-change: transform, opacity;
 }
 
 /* ==========================================================================
    ♿ 無障礙系統 (AccessibilityContext 連動標準)
    ========================================================================== */
 
-/* 1. 專注/減弱動態模式：徹底壓制所有閃爍、動畫與過渡 */
+/* 1. 手動專注模式：徹底壓制所有閃爍、動畫與過渡 */
 .a11y-focus-mode *,
 .a11y-focus-mode *::before,
-.a11y-focus-mode *::after,
-@media (prefers-reduced-motion: reduce) {
+.a11y-focus-mode *::after {
   animation-duration: 0.001ms !important;
   animation-iteration-count: 1 !important;
   transition-duration: 0.001ms !important;
   scroll-behavior: auto !important;
 }
 
-/* 2. 高對比模式：加強棋盤格線、強調可見性 */
-.a11y-high-contrast {
-  --contrast-border: #ffffff;
-}
-.a11y-high-contrast .border-slate-800,
-.a11y-high-contrast .border-slate-700 {
-  border-color: #f1f5f9 !important;
-}
-.a11y-high-contrast .bg-slate-900,
-.a11y-high-contrast .bg-slate-950 {
-  background-color: #000000 !important;
-}
-.a11y-high-contrast .text-slate-500,
-.a11y-high-contrast .text-slate-400 {
-  color: #e2e8f0 !important;
+/* 2. 系統級減弱動畫偏好：獨立 at-rule，防範 CSS 選擇器解析器丟棄 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
 }
 
-/* 3. 大字體無障礙增強 */
+/* 3. 高對比模式：屬性選擇器全域相容，防範未列舉色票斷層 */
+.a11y-high-contrast {
+  --contrast-border: #f1f5f9;
+  --contrast-bg: #000000;
+  --contrast-text: #e2e8f0;
+}
+.a11y-high-contrast :where([class*="border-slate-"]) {
+  border-color: var(--contrast-border) !important;
+}
+.a11y-high-contrast :where([class*="bg-slate-"]) {
+  background-color: var(--contrast-bg) !important;
+}
+.a11y-high-contrast :where([class*="text-slate-"]) {
+  color: var(--contrast-text) !important;
+}
+
+/* 4. 大字體無障礙增強 */
 .a11y-large-text {
   font-size: 112% !important;
 }
 
-/* 4. 色弱/色盲矩陣過濾（掛載於 body 上，徹底保護 position: fixed 頂層容器） */
-body[data-colorblind="protanopia"] {
-  filter: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg"><filter id="f"><feColorMatrix type="matrix" values="0.567,0.433,0,0,0 0.558,0.442,0,0,0 0,0.242,0.758,0,0 0,0,0,1,0"/></filter></svg>%23f');
+/* 5. 色弱/色盲矩陣過濾
+   掛載於 html 根元素上，保護 Toast、Modal 與 PWA 橫幅等 position: fixed 容器的包含塊 */
+html[data-colorblind="protanopia"] {
+  filter: url(#cb-protanopia);
 }
-body[data-colorblind="deuteranopia"] {
-  filter: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg"><filter id="f"><feColorMatrix type="matrix" values="0.625,0.375,0,0,0 0.7,0.3,0,0,0 0,0.3,0.7,0,0 0,0,0,1,0"/></filter></svg>%23f');
+html[data-colorblind="deuteranopia"] {
+  filter: url(#cb-deuteranopia);
 }
-body[data-colorblind="tritanopia"] {
-  filter: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg"><filter id="f"><feColorMatrix type="matrix" values="0.95,0.05,0,0,0 0,0.433,0.567,0,0 0,0.475,0.525,0,0 0,0,0,1,0"/></filter></svg>%23f');
+html[data-colorblind="tritanopia"] {
+  filter: url(#cb-tritanopia);
 }
-/* 全色盲 (Achromatopsia / 純灰階明度對比模式) */
-body[data-colorblind="achromatopsia"] {
-  filter: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg"><filter id="f"><feColorMatrix type="matrix" values="0.299,0.587,0.114,0,0 0.299,0.587,0.114,0,0 0.299,0.587,0.114,0,0 0,0,0,1,0"/></filter></svg>%23f');
+html[data-colorblind="achromatopsia"] {
+  filter: url(#cb-achromatopsia);
 }
