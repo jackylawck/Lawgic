@@ -2,30 +2,39 @@
 name = "sudoku_wasm"
 version = "0.1.0"
 edition = "2021"
-authors = ["Logicore Engineering Team"]
-description = "World-class zero-copy deterministic Sudoku propagation engine"
+description = "Zero-copy deterministic Sudoku CSP engine compiled to WebAssembly"
+license = "MIT"
+repository = "https://github.com/jackylawck/Lawgic"
+keywords = ["sudoku", "wasm", "csp", "solver"]
+categories = ["games", "wasm"]
 
 [lib]
+# 保留 cdylib 供前端載入 WASM，保留 rlib 供 cargo test / wasm-bindgen-test 靜態連結測試 harness
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-# 鎖定成熟穩定的 wasm-bindgen 綁定庫
 wasm-bindgen = "0.2.92"
+# 臨床級 panic 攔截器：提供精確的 Rust 呼叫堆疊輸出，且支援可選關閉以供生產瘦身
+console_error_panic_hook = { version = "0.1.7", optional = true }
+
+[dev-dependencies]
+wasm-bindgen-test = "0.3.42"
+
+[features]
+default = ["console_error_panic_hook"]
 
 [profile.release]
-# 🌟 極限速度優化 (針對數獨 CSP 位元回溯徹底內聯)
 opt-level = 3
-# 🌟 肥大跨 Crate 全局連結時優化 (Fat LTO)
 lto = "fat"
-# 🌟 單代碼生成單元，最大化全域暫存器排程與死碼消除
 codegen-units = 1
-# 🌟 移除 unwinding 展開機制，體積驟降且消除分支預測損耗
-panic = "abort"
-# 🌟 徹底剝離所有除錯符號
 strip = "symbols"
-# 🌟 關閉 release 模式下的溢位安全檢查以完全消除邊界開銷
-overflow-checks = false
+# 保留算術溢位檢查：防範索引或候選數回繞產生幽靈多重解，以極低開銷換取數學演算正確性
+overflow-checks = true
 
-[package.metadata.wasm-pack.profile.release]
-# 🌟 核心：由 rustc 自身全權接管優化，完全關閉外掛 wasm-opt，杜絕 validator 錯誤
+# 開發模式跳過 wasm-opt，避免每次本地調試額外耗費編譯時間
+[package.metadata.wasm-pack.profile.dev]
 wasm-opt = false
+
+# 生產模式啟用 Binaryen wasm-opt 進行二進位級深層重構
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = ["-O3", "--enable-bulk-memory", "--enable-mutable-globals"]
