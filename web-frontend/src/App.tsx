@@ -104,7 +104,7 @@ PuzzleTimer.displayName = 'PuzzleTimer';
 const MainDashboard: React.FC = () => {
   const t = useT();
   const { lang } = useLanguage();
-  const isEn = lang === 'en'; // 修復 TS2367：依據語言上下文狀態判斷，而非拿翻譯文字比對
+  const isEn = lang === 'en';
 
   const { playSound } = useAccessibility();
   const { profile, getCompositeCognitiveIndex } = useLearnerProfile();
@@ -117,6 +117,11 @@ const MainDashboard: React.FC = () => {
   const [showComplianceModal, setShowComplianceModal] = useState<boolean>(false);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
 
+  // ── PWA 生命週期受控更新 ──
+  const [hasUpdate, setHasUpdate] = useState<boolean>(false);
+  const [isUpdating, setIsUpdating] = useState<boolean>(false);
+  const fallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const boardContainerRef = useRef<HTMLDivElement>(null);
   const lastMoveTimeRef = useRef<number>(0);
   const toastTimeoutRef = useRef<ReturnType<typeof setTimeout>>();
@@ -128,8 +133,63 @@ const MainDashboard: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    return () => clearTimeout(toastTimeoutRef.current);
+    return () => {
+      clearTimeout(toastTimeoutRef.current);
+      if (fallbackTimerRef.current) {
+        clearTimeout(fallbackTimerRef.current);
+        fallbackTimerRef.current = null;
+      }
+    };
   }, []);
+
+  useEffect(() => {
+    return EventBus.on('update-available', () => {
+      setHasUpdate(true);
+    });
+  }, []);
+
+  const handleApplyUpdate = useCallback(async () => {
+    if (isUpdating) return;
+    setIsUpdating(true);
+
+    const controllerChangeHandler = () => {
+      if (fallbackTimerRef.current) {
+        clearTimeout(fallbackTimerRef.current);
+        fallbackTimerRef.current = null;
+      }
+      window.location.reload();
+    };
+
+    try {
+      if ('serviceWorker' in navigator) {
+        const reg = await navigator.serviceWorker.getRegistration();
+        if (reg?.waiting) {
+          navigator.serviceWorker.addEventListener(
+            'controllerchange',
+            controllerChangeHandler,
+            { once: true }
+          );
+
+          reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+
+          fallbackTimerRef.current = setTimeout(() => {
+            console.warn('[PWA] Fallback timer expired. Forcing reload.');
+            window.location.reload();
+          }, 3000);
+          return;
+        }
+      }
+      window.location.reload();
+    } catch (e) {
+      if (fallbackTimerRef.current) {
+        clearTimeout(fallbackTimerRef.current);
+        fallbackTimerRef.current = null;
+      }
+      console.warn('[PWA] Update dispatch failed:', e);
+      setIsUpdating(false);
+      window.location.reload();
+    }
+  }, [isUpdating]);
 
   const handleChallengeLoaded = useCallback((imported: PuzzleEntity) => {
     setSelectedType(imported.engine_type);
@@ -268,6 +328,22 @@ const MainDashboard: React.FC = () => {
       {toastMsg && (
         <div className="fixed top-2 z-50 px-3 py-1.5 bg-cyan-600 border border-cyan-400 text-white font-bold text-xs rounded-full shadow-2xl animate-fade-in pointer-events-none">
           {toastMsg}
+        </div>
+      )}
+
+      {/* PWA 智慧更新橫幅：安全區域自適應，尊重用戶主動更新權利 */}
+      {hasUpdate && (
+        <div className="fixed top-[max(3.75rem,calc(env(safe-area-inset-top)+0.75rem))] z-[60] flex items-center gap-2 px-3.5 py-1.5 bg-indigo-950/90 border border-indigo-500/70 text-indigo-200 text-xs font-bold rounded-full shadow-2xl backdrop-blur-md">
+          <span>🚀 {isEn ? 'Engine Update Ready' : '核心演算法有新版本'}</span>
+          <button
+            onClick={handleApplyUpdate}
+            disabled={isUpdating}
+            className={`px-2.5 py-0.5 bg-indigo-600 hover:bg-indigo-500 active:scale-95 text-white rounded-full text-[10px] font-mono transition cursor-pointer ${
+              isUpdating ? 'opacity-50 cursor-wait' : ''
+            }`}
+          >
+            {isUpdating ? (isEn ? 'Updating...' : '更新中...') : (isEn ? 'Reload' : '更新')}
+          </button>
         </div>
       )}
 
