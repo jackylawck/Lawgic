@@ -1,5 +1,6 @@
+// web-frontend/src/registry/RendererRegistry.tsx
 import React, { lazy, Suspense, useMemo } from 'react';
-import { PuzzleEntity, PuzzleSpec } from '../generated/types';
+import { PuzzleEntity, PuzzleSpec } from '../generated';
 
 /**
  * ⚠️ 相容性過渡層下線標準 (Compatibility Facade Sunset Policy)
