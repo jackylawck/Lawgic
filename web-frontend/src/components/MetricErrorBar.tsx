@@ -19,8 +19,10 @@ export interface MetricErrorBarProps {
   readonly polarity?: MetricPolarity;
   readonly metricNameZh?: string;
   readonly metricNameEn?: string;
-  /** 可選的語言覆蓋（例如匯出報告特定視圖使用），取代無法擴充的 isEn 布林值 */
+  /** 可選的語言覆蓋（例如匯出報告特定視圖使用），推薦使用 */
   readonly forceLang?: Language;
+  /** @deprecated 向下相容支援，建議改用 forceLang 或由 LanguageContext 自動派發 */
+  readonly isEn?: boolean;
 }
 
 interface EvaluationTheme {
@@ -152,10 +154,12 @@ export const MetricErrorBar: React.FC<MetricErrorBarProps> = ({
   metricNameZh = '心理計量指標',
   metricNameEn = 'Psychometric Metric',
   forceLang,
+  isEn: propIsEn,
 }) => {
   const { lang: contextLang } = useLanguage();
-  const currentLang = forceLang || contextLang;
-  const isEn = currentLang === 'en';
+  // 兼顧向前擴充與既有調用端向下相容性
+  const resolvedLang: Language = forceLang || (propIsEn !== undefined ? (propIsEn ? 'en' : 'zh') : contextLang);
+  const isEn = resolvedLang === 'en';
 
   // 深度整合全域無障礙設定：色盲模式、高對比度與前庭減少動態
   const { colorBlindMode, highContrast, reducedMotion } = useAccessibilitySettings();
@@ -192,7 +196,6 @@ export const MetricErrorBar: React.FC<MetricErrorBarProps> = ({
   }, [sem]);
 
   // 2. 幾何投影記憶運算 (防禦微小數與零跨距，消除 render body 閉包開銷)
-  // 設計決策：使用 left/width 佈局屬性在低頻結算下代碼最精確可控，可接受單次微小 reflow
   const { actualPos, benchPos, ciLeft, ciRight } = useMemo(() => {
     const rawMin = Math.min(safeActual, safeBench, safeCiLow);
     const rawMax = Math.max(safeActual, safeBench, safeCiHigh);
@@ -232,20 +235,16 @@ export const MetricErrorBar: React.FC<MetricErrorBarProps> = ({
 
   return (
     <div
-      /* 採用 role="group" 取代過重的 role="region"，避免密集圖表導致頁面 Landmarks 膨脹 */
       role="group"
       aria-labelledby={headingId}
-      /* 設計決策：採用固定 7px 字級以維持密集數據佈局的絕對穩定性，大字體模式由外層容器縮放保障 */
       className="w-full bg-slate-900/90 border border-slate-800 rounded-lg p-2.5 font-mono text-[7px] select-none shadow-inner"
     >
       {/* 頂部 Header 與顯著性標籤 */}
       <div className="flex justify-between items-center text-slate-400 font-bold mb-1.5 gap-2">
         <div className="flex items-center gap-1.5 min-w-0 flex-1">
-          {/* 修正：<h3> 顯式宣告 min-w-0，消除 flex-item 預設 min-width: auto 阻斷 truncate 的 CSS 缺陷 */}
           <h3 id={headingId} className="truncate min-w-0 text-[7px] font-bold text-slate-300 m-0 p-0">
             {metricTitle} · {isEn ? '95% CI BENCHMARK' : '95% 信賴區間對照'}
           </h3>
-          {/* 設計決策：badge 標記 aria-hidden 避免重複播報；聽覺語意已完整融入 accessibleMeterText */}
           <span
             className={`px-1 py-0.5 rounded border text-[6.5px] font-bold flex items-center gap-0.5 shrink-0 ${evalTheme.badgeClass}`}
             aria-hidden="true"
@@ -259,21 +258,15 @@ export const MetricErrorBar: React.FC<MetricErrorBarProps> = ({
         </span>
       </div>
 
-      {/* ARIA Meter 視覺化軌道
-          遵循 WAI-ARIA 1.2 規範：
-          1. 唯讀展示型元件，嚴禁掛載 tabIndex，不製造偽可互動焦點陷阱
-          2. 採用 text-only meter 模式，單一依賴包含 metricTitle 的 aria-valuetext 自我描述 */}
+      {/* ARIA Meter 視覺化軌道 */}
       <div
         role="meter"
         aria-valuetext={accessibleMeterText}
         className="relative h-7 w-full flex items-center"
       >
-        {/* 基準水平軸線 */}
         <div className="absolute inset-x-0 h-0.5 bg-slate-800 rounded-full" aria-hidden="true" />
 
-        {/* 95% CI 範圍帶
-            設計決策：CI 帶視覺寬度下限設為 2%，平衡極小視窗下的視覺可見性與統計相對精度；
-            若啟用 reducedMotion 則移除過渡動畫，杜絕前庭刺激；平常僅針對 left 與 width 插值 */}
+        {/* 95% CI 範圍帶 */}
         <div
           className={`absolute h-3 bg-cyan-950/60 border-t border-b border-cyan-500/50 rounded-xs ${
             reducedMotion ? '' : 'transition-[left,width] duration-200'
@@ -296,14 +289,14 @@ export const MetricErrorBar: React.FC<MetricErrorBarProps> = ({
           aria-hidden="true"
         />
 
-        {/* 常模錨點 (WCAG 1.4.1 幾何形狀通道分離：常模使用旋轉 45 度菱形) */}
+        {/* 常模錨點 (45度旋轉菱形) */}
         <div
           className="absolute w-2.5 h-2.5 bg-amber-400 shadow-sm shadow-amber-400/80 z-10"
           style={{ left: `${benchPos}%`, transform: 'translateX(-50%) rotate(45deg)' }}
           aria-hidden="true"
         />
 
-        {/* 實際表現錨點 (高光實體圓點 + 動態無障礙補償色階光環) */}
+        {/* 實際表現錨點 */}
         <div
           className={`absolute w-3 h-3 rounded-full border-2 border-slate-950 shadow-md z-20 ${
             reducedMotion ? '' : 'transition-[left,background-color] duration-200'
@@ -318,8 +311,7 @@ export const MetricErrorBar: React.FC<MetricErrorBarProps> = ({
         />
       </div>
 
-      {/* 底部數據與圖例 (雙通道形狀 + 雙向色票對齊)
-          設計決策：保留可讀文字圖例屬於刻意的保守冗餘設計，確保任何螢幕閱讀器與弱視使用者均能獲取精確數值 */}
+      {/* 底部數據與圖例 */}
       <div className="flex justify-between items-center text-[6.5px] text-slate-500 mt-1 border-t border-slate-800/60 pt-1">
         <div className="flex items-center gap-1">
           <span
@@ -333,7 +325,6 @@ export const MetricErrorBar: React.FC<MetricErrorBarProps> = ({
         </div>
 
         <div className="flex items-center gap-1">
-          {/* 幾何形狀通道分離：常模採旋轉 45 度菱形 */}
           <span className="w-1.5 h-1.5 rotate-45 bg-amber-400 inline-block shrink-0" aria-hidden="true" />
           <span>
             {isEn ? 'Norm' : '常模'}: <strong className="text-slate-200">{safeBench}{unit}</strong>
