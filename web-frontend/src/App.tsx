@@ -1,3 +1,4 @@
+// web-frontend/src/App.tsx
 import React, { useState, useRef, useEffect, useCallback, memo } from 'react';
 import { ErrorBoundary } from 'react-error-boundary';
 import { LanguageProvider, useLanguage } from './contexts/LanguageContext';
@@ -15,35 +16,9 @@ import { useGlobalHotkeys } from './hooks/useGlobalHotkeys';
 import { VaultManager } from './utils/vaultStorage';
 import { EventBus } from './events/bus';
 import { useT } from './locales';
+import { ALL_GAMES, PuzzleMeta } from './registry/engineMetadata';
 
-interface PuzzleMeta {
-  id: string;
-  nameZh: string;
-  nameEn: string;
-  icon: string;
-}
-
-const ALL_GAMES: PuzzleMeta[] = [
-  { id: 'maze', nameZh: '空間迷宮', nameEn: 'Maze', icon: '🌀' },
-  { id: 'sudoku', nameZh: '數獨魔陣', nameEn: 'Sudoku', icon: '🔢' },
-  { id: 'nonogram', nameZh: '像素數織', nameEn: 'Nonogram', icon: '🎨' },
-  { id: 'nurikabe', nameZh: '暗夜數牆', nameEn: 'Nurikabe', icon: '🧱' },
-  { id: 'skyscraper', nameZh: '摩天透視', nameEn: 'Skyscraper', icon: '🏢' },
-  { id: 'hashi', nameZh: '星際數橋', nameEn: 'Hashi', icon: '🌉' },
-  { id: 'kropki', nameZh: '黑白雙星', nameEn: 'Kropki', icon: '⚪' },
-  { id: 'slitherlink', nameZh: '迴路封閉', nameEn: 'Slitherlink', icon: '➰' },
-  { id: 'tents', nameZh: '帳篷扎營', nameEn: 'Tents & Trees', icon: '⛺' },
-  { id: 'lightup', nameZh: '燈泡照明', nameEn: 'Light Up', icon: '💡' },
-  { id: 'kakuro', nameZh: '數和密碼', nameEn: 'Kakuro', icon: '➕' },
-  { id: 'hitori', nameZh: '孤島數壹', nameEn: 'Hitori', icon: '⬛' },
-  { id: 'futoshiki', nameZh: '天平不等', nameEn: 'Futoshiki', icon: '⚖️' },
-  { id: 'masyu', nameZh: '珍珠迴路', nameEn: 'Masyu', icon: '⚪' },
-  { id: 'dominoes', nameZh: '骨牌矩陣', nameEn: 'Dominoes', icon: '🀄' },
-  { id: 'heyawake', nameZh: '連環分室', nameEn: 'Heyawake', icon: '🚪' },
-  { id: 'yajilin', nameZh: '矢印迴路', nameEn: 'Yajilin', icon: '🧭' },
-  { id: 'shikaku', nameZh: '四角分割', nameEn: 'Shikaku', icon: '📐' },
-];
-
+export type { PuzzleMeta };
 export const LEVEL_KEYS: ExtendedTierKey[] = VALID_TIERS;
 
 const EngineFallbackUI: React.FC<{ resetErrorBoundary: () => void; error?: Error }> = ({ resetErrorBoundary, error }) => {
@@ -117,7 +92,6 @@ const MainDashboard: React.FC = () => {
   const [showComplianceModal, setShowComplianceModal] = useState<boolean>(false);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
 
-  // ── PWA 生命週期受控更新 ──
   const [hasUpdate, setHasUpdate] = useState<boolean>(false);
   const [isUpdating, setIsUpdating] = useState<boolean>(false);
   const fallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -331,7 +305,6 @@ const MainDashboard: React.FC = () => {
         </div>
       )}
 
-      {/* PWA 智慧更新橫幅：安全區域自適應，尊重用戶主動更新權利 */}
       {hasUpdate && (
         <div className="fixed top-[max(3.75rem,calc(env(safe-area-inset-top)+0.75rem))] z-[60] flex items-center gap-2 px-3.5 py-1.5 bg-indigo-950/90 border border-indigo-500/70 text-indigo-200 text-xs font-bold rounded-full shadow-2xl backdrop-blur-md">
           <span>🚀 {isEn ? 'Engine Update Ready' : '核心演算法有新版本'}</span>
@@ -368,7 +341,6 @@ const MainDashboard: React.FC = () => {
         </div>
       )}
 
-      {/* 頂部狀態列 */}
       <div className="w-full max-w-sm sm:max-w-md flex items-center justify-between px-1 mb-1 text-[8px] text-slate-500">
         <div className="flex items-center gap-1.5">
           <button
@@ -405,7 +377,6 @@ const MainDashboard: React.FC = () => {
         </button>
       </div>
 
-      {/* 主選單標頭 */}
       <header className="w-full max-w-sm sm:max-w-md flex items-center justify-between gap-1.5 mb-2 pb-1.5 border-b border-slate-800">
         <div className="flex flex-col shrink-0 leading-tight">
           <span className="text-xs font-black tracking-widest text-indigo-400">LOGICORE</span>
@@ -449,7 +420,6 @@ const MainDashboard: React.FC = () => {
         <LangSwitcher />
       </header>
 
-      {/* 核心謎題舞台 */}
       {activePuzzle ? (
         <section
           ref={boardContainerRef}
@@ -505,7 +475,6 @@ const MainDashboard: React.FC = () => {
             />
           )}
 
-          {/* 雙向升降階調整通道 */}
           <div className="flex gap-1.5 mt-2 w-full">
             {currentLevel !== 'kids' && (
               <button
@@ -527,7 +496,6 @@ const MainDashboard: React.FC = () => {
             )}
           </div>
 
-          {/* 謎題即時指標條 */}
           <div className="mt-2 flex items-center justify-between w-full px-1 text-[9px] text-slate-500 border-t border-slate-800/80 pt-1.5">
             <PuzzleTimer activeId={activePuzzle.id} />
             <div className="flex items-center gap-2">
@@ -551,7 +519,6 @@ const MainDashboard: React.FC = () => {
         </div>
       )}
 
-      {/* 治理與合規聲明頁尾 */}
       <footer className="w-full max-w-sm sm:max-w-md mt-auto pt-3 pb-2 flex flex-col items-center gap-1 border-t border-slate-900 text-[8px] text-slate-600">
         <div className="flex items-center gap-2">
           <span className="inline-flex items-center gap-1 text-emerald-500/80 font-semibold">
