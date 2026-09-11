@@ -1,36 +1,20 @@
-// web-frontend/src/App.tsx
-import React, { useState, useMemo, useRef, useEffect, useCallback, memo } from 'react';
+import React, { useState, useRef, useEffect, useCallback, memo } from 'react';
 import { ErrorBoundary } from 'react-error-boundary';
-import { LanguageProvider, useLanguage } from './contexts/LanguageContext';
+import { LanguageProvider } from './contexts/LanguageContext';
 import { AccessibilityProvider, useAccessibility } from './contexts/AccessibilityContext';
 import { PuzzleRenderer, CognitiveDashboard } from './registry/RendererRegistry';
-import { PUZZLE_CATALOG, PuzzleEntity, TierKey } from './generated';
+import { PuzzleEntity } from './generated';
 import { LangSwitcher } from './components/LangSwitcher';
 import { VirtualGamepad } from './components/VirtualGamepad';
 import { ComplianceModal } from './components/ComplianceModal';
 import { useLearnerProfile, ExtendedTierKey } from './hooks/useLearnerProfile';
 import { useLongTermScheduler } from './hooks/useLongTermScheduler';
-import { ChallengeCodec } from './utils/challengeCodec';
+import { PUZZLE_CATALOG } from './generated';
+import { usePuzzlePool, VALID_TIERS } from './hooks/usePuzzlePool';
+import { useGlobalHotkeys } from './hooks/useGlobalHotkeys';
 import { VaultManager } from './utils/vaultStorage';
-
-import { WebMazeGenerator } from './engines/mazeGenerator';
-import { WebSudokuGenerator } from './engines/sudokuGenerator';
-import { WebNonogramGenerator } from './engines/nonogramGenerator';
-import { WebNurikabeGenerator } from './engines/nurikabeGenerator';
-import { WebSkyscraperGenerator } from './engines/skyscraperGenerator';
-import { WebHashiGenerator } from './engines/hashiGenerator';
-import { WebKropkiGenerator } from './engines/kropkiGenerator';
-import { WebSlitherlinkGenerator } from './engines/slitherlinkGenerator';
-import { WebTentsGenerator } from './engines/tentsGenerator';
-import { WebLightUpGenerator } from './engines/lightupGenerator';
-import { WebFutoshikiGenerator } from './engines/futoshikiGenerator';
-import { WebHitoriGenerator } from './engines/hitoriGenerator';
-import { WebKakuroGenerator } from './engines/kakuroGenerator';
-import { WebMasyuGenerator } from './engines/masyuGenerator';
-import { WebDominoesGenerator } from './engines/dominoesGenerator';
-import { WebHeyawakeGenerator } from './engines/heyawakeGenerator';
-import { WebYajilinGenerator } from './engines/yajilinGenerator';
-import { WebShikakuGenerator } from './engines/shikakuGenerator';
+import { EventBus } from './events/bus';
+import { useT } from './locales';
 
 interface PuzzleMeta {
   id: string;
@@ -60,25 +44,7 @@ const ALL_GAMES: PuzzleMeta[] = [
   { id: 'shikaku', nameZh: '四角分割', nameEn: 'Shikaku', icon: '📐' },
 ];
 
-export const LEVEL_KEYS: ExtendedTierKey[] = ['kids', 'intermediate', 'expert', 'master', 'legendary', 'ultimate'];
-
-const TIER_NAMES: Record<ExtendedTierKey, { zh: string; en: string }> = {
-  kids: { zh: '兒童', en: 'Kids' },
-  intermediate: { zh: '進階', en: 'Intermediate' },
-  expert: { zh: '專家', en: 'Expert' },
-  master: { zh: '大師', en: 'Master' },
-  legendary: { zh: '傳奇', en: 'Legendary' },
-  ultimate: { zh: '終極', en: 'Ultimate' },
-};
-
-const TIER_IRT_BASELINE: Record<ExtendedTierKey, number> = {
-  kids: 0.65,
-  intermediate: 1.45,
-  expert: 2.35,
-  master: 3.15,
-  legendary: 3.75,
-  ultimate: 4.35,
-};
+export const LEVEL_KEYS: ExtendedTierKey[] = VALID_TIERS;
 
 const EngineFallbackUI: React.FC<{ resetErrorBoundary: () => void; error?: Error }> = ({ resetErrorBoundary, error }) => {
   const isChunkError =
@@ -87,9 +53,7 @@ const EngineFallbackUI: React.FC<{ resetErrorBoundary: () => void; error?: Error
 
   const handleReload = () => {
     if ('caches' in window) {
-      caches.keys().then((keys) => {
-        keys.forEach((k) => caches.delete(k));
-      });
+      caches.keys().then((keys) => keys.forEach((k) => caches.delete(k)));
     }
     window.location.reload();
   };
@@ -100,9 +64,7 @@ const EngineFallbackUI: React.FC<{ resetErrorBoundary: () => void; error?: Error
         {isChunkError ? '版本已更新 / New Version Available' : '載入異常 / Render Error'}
       </p>
       {error?.message && (
-        <p className="text-red-400/80 text-[10px] mt-1 break-all px-2 font-mono">
-          {error.message}
-        </p>
+        <p className="text-red-400/80 text-[10px] mt-1 break-all px-2 font-mono">{error.message}</p>
       )}
       <div className="flex gap-2 mt-3">
         <button
@@ -127,9 +89,7 @@ const PuzzleTimer: React.FC<{ activeId: string | undefined }> = memo(({ activeId
 
   useEffect(() => {
     setElapsed(0);
-    const interval = setInterval(() => {
-      setElapsed((prev) => prev + 1);
-    }, 1000);
+    const interval = setInterval(() => setElapsed((prev) => prev + 1), 1000);
     return () => clearInterval(interval);
   }, [activeId]);
 
@@ -141,328 +101,102 @@ const PuzzleTimer: React.FC<{ activeId: string | undefined }> = memo(({ activeId
 });
 PuzzleTimer.displayName = 'PuzzleTimer';
 
-// 非同步非阻塞引擎生成分發器
-async function generateEnginePuzzleAsync(gameId: string, tier: ExtendedTierKey): Promise<PuzzleEntity | null> {
-  try {
-    let puzzle: any = null;
-    const genMap: Record<string, any> = {
-      maze: WebMazeGenerator,
-      sudoku: WebSudokuGenerator,
-      nonogram: WebNonogramGenerator,
-      nurikabe: WebNurikabeGenerator,
-      skyscraper: WebSkyscraperGenerator,
-      hashi: WebHashiGenerator,
-      kropki: WebKropkiGenerator,
-      slitherlink: WebSlitherlinkGenerator,
-      tents: WebTentsGenerator,
-      lightup: WebLightUpGenerator,
-      futoshiki: WebFutoshikiGenerator,
-      hitori: WebHitoriGenerator,
-      kakuro: WebKakuroGenerator,
-      masyu: WebMasyuGenerator,
-      dominoes: WebDominoesGenerator,
-      heyawake: WebHeyawakeGenerator,
-      yajilin: WebYajilinGenerator,
-      shikaku: WebShikakuGenerator,
-    };
-
-    const genClass = genMap[gameId];
-    if (!genClass) return null;
-
-    if (typeof genClass.generateAsync === 'function') {
-      puzzle = await genClass.generateAsync(tier as TierKey);
-    } else {
-      puzzle = await new Promise((resolve) => {
-        setTimeout(() => resolve(genClass.generate(tier as TierKey)), 0);
-      });
-    }
-
-    if (!puzzle) return null;
-    if (!puzzle.engine_type) puzzle.engine_type = gameId;
-
-    if (!puzzle.puzzle) {
-      puzzle.puzzle = {
-        rows: puzzle.rows || puzzle.size || 6,
-        cols: puzzle.cols || puzzle.size || 6,
-        clues: puzzle.clues,
-        grid: puzzle.grid,
-        solution: puzzle.solution,
-        seed: puzzle.seed,
-        pureDeductionRate: puzzle.pureDeductionRate || 1.0,
-      };
-    }
-
-    puzzle.tier = tier;
-
-    if (!puzzle.metrics) {
-      puzzle.metrics = {};
-    }
-
-    const baselineIrt = TIER_IRT_BASELINE[tier];
-    puzzle.metrics.irt_logit_difficulty = Number(
-      (puzzle.metrics.irt_logit_difficulty ? Math.max(puzzle.metrics.irt_logit_difficulty, baselineIrt) : baselineIrt).toFixed(2)
-    );
-
-    return puzzle as PuzzleEntity;
-  } catch (e) {
-    console.error(`[Generator Error] ${gameId} @ ${tier}:`, e);
-    return null;
-  }
-}
-
-const MAX_CACHED_PER_TIER = 25;
-
 const MainDashboard: React.FC = () => {
-  const { lang } = useLanguage();
-  const isEn = lang === 'en';
+  const t = useT();
   const { playSound } = useAccessibility();
   const { profile, getCompositeCognitiveIndex } = useLearnerProfile();
   const { getRecommendedSchedulePuzzle } = useLongTermScheduler(profile, PUZZLE_CATALOG);
 
-  const t = useMemo(() => ({
-    synthesizing: isEn ? 'Synthesizing Topology...' : '神經網絡拓撲生成中...',
-    tournamentOn: isEn ? '🏆 TOURNAMENT SANCTIONED' : '🏆 賽事認證模式',
-    tournamentOff: isEn ? '○ TOURNAMENT OFF' : '○ 自由訓練模式',
-    prev: isEn ? '◀ Prev' : '◀ 上一題',
-    next: isEn ? 'Next ▶' : '下一題 ▶',
-    generate: isEn ? 'Generate' : '現場生成',
-    tierJumpUp: isEn ? 'Tier Jump (+1)' : '升階挑戰 (+1)',
-    tierJumpDown: isEn ? 'Tier Step (-1)' : '降階調整 (-1)',
-    puzzleProgress: isEn ? 'Puzzle' : '進度',
-    loading: isEn ? 'Generating puzzles...' : '題目載入生成中...',
-    titleSuffix: isEn ? 'Logic Arena' : '羅輯・遊戲',
-    mark: isEn ? 'MARK' : '標記',
-    close: isEn ? 'Close' : '關閉',
-    dashboardTooltip: isEn ? 'Open Longitudinal Cognitive Dashboard' : '開啟全域縱向認知儀表板',
-    smartDrill: isEn ? 'AI Drill' : '智能靶向',
-    vaultCard: isEn ? 'Legendary Vault' : '傳奇金庫',
-    complianceNotice: isEn ? 'Governance & Compliance' : '架構治理與合規聲明',
-    zeroTrustVerified: isEn ? 'W3C Zero-Trust Proof Active' : 'W3C 零信任密碼學存證就緒',
-  }), [isEn]);
-
   const [selectedType, setSelectedType] = useState<string>('maze');
   const [currentLevel, setCurrentLevel] = useState<ExtendedTierKey>('kids');
-  const [puzzleIndex, setPuzzleIndex] = useState<number>(0);
   const [tournamentMode, setTournamentMode] = useState<boolean>(false);
   const [showDashboardModal, setShowDashboardModal] = useState<boolean>(false);
   const [showComplianceModal, setShowComplianceModal] = useState<boolean>(false);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
-  const [isGenerating, setIsGenerating] = useState<boolean>(false);
 
-  const isGeneratingRef = useRef<boolean>(false);
   const boardContainerRef = useRef<HTMLDivElement>(null);
+  const lastMoveTimeRef = useRef<number>(0);
+  const toastTimeoutRef = useRef<ReturnType<typeof setTimeout>>();
 
-  const [dynamicPool, setDynamicPool] = useState<Record<string, Record<ExtendedTierKey, PuzzleEntity[]>>>(() => {
-    const pool: Record<string, Record<ExtendedTierKey, PuzzleEntity[]>> = {};
-    ALL_GAMES.forEach((g) => {
-      pool[g.id] = {
-        kids: [],
-        intermediate: [],
-        expert: [],
-        master: [],
-        legendary: [],
-        ultimate: [],
-      };
-    });
-    return pool;
-  });
-
-  const activeList = useMemo(() => {
-    const staticCatalog = PUZZLE_CATALOG[selectedType] || [];
-    const staticFiltered = staticCatalog.filter((p) => ((p.tier as ExtendedTierKey) || 'kids') === currentLevel);
-    const liveList = dynamicPool[selectedType]?.[currentLevel] || [];
-    return [...liveList, ...staticFiltered];
-  }, [selectedType, currentLevel, dynamicPool]);
-
-  const activePuzzle = useMemo(() => {
-    if (activeList.length === 0) return null;
-    return activeList[puzzleIndex % activeList.length];
-  }, [activeList, puzzleIndex]);
-
-  const appendBatchPuzzles = useCallback(
-    async (gameId: string, tier: ExtendedTierKey, count: number = 3) => {
-      if (isGeneratingRef.current) return;
-      isGeneratingRef.current = true;
-      setIsGenerating(true);
-
-      const generated: PuzzleEntity[] = [];
-      for (let i = 0; i < count; i++) {
-        try {
-          const p = await generateEnginePuzzleAsync(gameId, tier);
-          if (p) {
-            p.id = `${gameId}_${tier}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
-            generated.push(p);
-          }
-        } catch (err) {
-          console.warn(`Engine ${gameId} batch gen error:`, err);
-        }
-      }
-
-      if (generated.length > 0) {
-        setDynamicPool((prev) => {
-          const gameBucket = prev[gameId] || {
-            kids: [],
-            intermediate: [],
-            expert: [],
-            master: [],
-            legendary: [],
-            ultimate: [],
-          };
-          const tierBucket = gameBucket[tier] || [];
-          const updated = [...tierBucket, ...generated];
-          const bounded = updated.length > MAX_CACHED_PER_TIER ? updated.slice(updated.length - MAX_CACHED_PER_TIER) : updated;
-
-          return {
-            ...prev,
-            [gameId]: {
-              ...gameBucket,
-              [tier]: bounded,
-            },
-          };
-        });
-      }
-
-      isGeneratingRef.current = false;
-      setIsGenerating(false);
-    },
-    []
-  );
-
-  useEffect(() => {
-    if (activeList.length < 2 && !isGeneratingRef.current) {
-      appendBatchPuzzles(selectedType, currentLevel, 3);
-    }
-  }, [selectedType, currentLevel, activeList.length, appendBatchPuzzles]);
-
-  useEffect(() => {
-    if (activeList.length > 0 && puzzleIndex >= activeList.length - 1 && !isGeneratingRef.current) {
-      appendBatchPuzzles(selectedType, currentLevel, 3);
-    }
-  }, [puzzleIndex, activeList.length, selectedType, currentLevel, appendBatchPuzzles]);
-
-  useEffect(() => {
-    const handleNav = (e: Event) => {
-      const customEvent = e as CustomEvent<{ gameId?: string; tier?: ExtendedTierKey }>;
-      if (customEvent.detail?.gameId) {
-        setSelectedType(customEvent.detail.gameId);
-        if (customEvent.detail.tier) {
-          setCurrentLevel(customEvent.detail.tier);
-        }
-        setPuzzleIndex(0);
-      }
-    };
-    window.addEventListener('logicore:navigate-game', handleNav);
-    return () => window.removeEventListener('logicore:navigate-game', handleNav);
+  const showToast = useCallback((msg: string, duration = 2500) => {
+    clearTimeout(toastTimeoutRef.current);
+    setToastMsg(msg);
+    toastTimeoutRef.current = setTimeout(() => setToastMsg(null), duration);
   }, []);
 
   useEffect(() => {
-    const checkHashChallenge = () => {
-      const hash = window.location.hash;
-      if (hash.startsWith('#challenge=') || hash.startsWith('#c=')) {
-        const code = hash.replace(/^#(challenge|c)=/, '');
-        const importedPuzzle = ChallengeCodec.decode(code);
-        if (importedPuzzle) {
-          const targetTier = (importedPuzzle.tier as ExtendedTierKey) || 'kids';
-          setSelectedType(importedPuzzle.engine_type);
-          setCurrentLevel(targetTier);
+    return () => clearTimeout(toastTimeoutRef.current);
+  }, []);
 
-          setDynamicPool((prev) => {
-            const gameBucket = prev[importedPuzzle.engine_type] || {
-              kids: [],
-              intermediate: [],
-              expert: [],
-              master: [],
-              legendary: [],
-              ultimate: [],
-            };
-            const currentList = gameBucket[targetTier] || [];
-            return {
-              ...prev,
-              [importedPuzzle.engine_type]: {
-                ...gameBucket,
-                [targetTier]: [importedPuzzle, ...currentList],
-              },
-            };
-          });
-          setPuzzleIndex(0);
+  const handleChallengeLoaded = useCallback((imported: PuzzleEntity) => {
+    setSelectedType(imported.engine_type);
+    setCurrentLevel(imported.tier as ExtendedTierKey);
+    const gameMeta = ALL_GAMES.find((g) => g.id === imported.engine_type);
+    const name = gameMeta ? (t.tiers.kids === 'Kids' ? gameMeta.nameEn : gameMeta.nameZh) : 'Puzzle';
+    showToast(t.toast.challengeLoaded(name, imported.metrics?.irt_logit_difficulty || '1.0'), 3000);
+  }, [t, showToast]);
 
-          const pRows = importedPuzzle.puzzle?.rows || '?';
-          const pCols = importedPuzzle.puzzle?.cols || '?';
-          const pIrt = importedPuzzle.metrics?.irt_logit_difficulty || '1.0';
-          const gameMeta = ALL_GAMES.find((g) => g.id === importedPuzzle.engine_type);
-          const name = isEn ? gameMeta?.nameEn || 'Puzzle' : gameMeta?.nameZh || '益智謎題';
+  const {
+    activeList,
+    activePuzzle,
+    puzzleIndex,
+    setPuzzleIndex,
+    isGenerating,
+    triggerManualGenerate,
+  } = usePuzzlePool(selectedType, currentLevel, handleChallengeLoaded);
 
-          setToastMsg(
-            isEn
-              ? `🎯 Challenge Loaded! [${name} · ${pRows}×${pCols} · IRT ${pIrt}]`
-              : `🎯 賽事挑戰載入！【${name} · ${pRows}×${pCols} · 難度 IRT ${pIrt}】`
-          );
-          setTimeout(() => setToastMsg(null), 3000);
-        }
-      }
-    };
+  const handlePrevPuzzle = useCallback(() => {
+    if (activeList.length === 0) return;
+    playSound('step');
+    if (navigator.vibrate) navigator.vibrate(8);
+    setPuzzleIndex((prev) => (prev - 1 + activeList.length) % activeList.length);
+    boardContainerRef.current?.focus();
+  }, [activeList.length, playSound, setPuzzleIndex]);
 
-    checkHashChallenge();
-    window.addEventListener('hashchange', checkHashChallenge);
-    return () => window.removeEventListener('hashchange', checkHashChallenge);
-  }, [isEn]);
+  const handleNextPuzzle = useCallback(() => {
+    if (activeList.length === 0) return;
+    playSound('step');
+    if (navigator.vibrate) navigator.vibrate(10);
+    setPuzzleIndex((prev) => (prev + 1) % activeList.length);
+    boardContainerRef.current?.focus();
+  }, [activeList.length, playSound, setPuzzleIndex]);
+
+  const handleLiveGenerate = useCallback(async () => {
+    if (tournamentMode) return;
+    playSound('click');
+    if (navigator.vibrate) navigator.vibrate(20);
+    const success = await triggerManualGenerate();
+    if (success) showToast(t.toast.dynamicSynthesized);
+    boardContainerRef.current?.focus();
+  }, [tournamentMode, playSound, triggerManualGenerate, showToast, t]);
+
+  useGlobalHotkeys({
+    onPrev: handlePrevPuzzle,
+    onNext: handleNextPuzzle,
+    onGenerate: handleLiveGenerate,
+    onToggleTournament: () => setTournamentMode((prev) => !prev),
+    disabled: showDashboardModal || showComplianceModal,
+  });
+
+  useEffect(() => {
+    return EventBus.on('navigate-game', (detail) => {
+      if (!detail.gameId && !detail.tier) return;
+      if (detail.gameId) setSelectedType(detail.gameId);
+      if (detail.tier) setCurrentLevel(detail.tier);
+      setPuzzleIndex(0);
+    });
+  }, [setPuzzleIndex]);
 
   useEffect(() => {
     const activeGame = ALL_GAMES.find((g) => g.id === selectedType);
+    const isEn = t.tiers.kids === 'Kids';
     const gameName = activeGame ? (isEn ? activeGame.nameEn : activeGame.nameZh) : 'Cognitive Arena';
-    const tierName = isEn ? TIER_NAMES[currentLevel].en : TIER_NAMES[currentLevel].zh;
-    document.title = `${gameName} [${tierName}] | ${t.titleSuffix}`;
-  }, [selectedType, currentLevel, isEn, t.titleSuffix]);
-
-  const isSpatialExplorationType = selectedType === 'maze';
-
-  const handlePrevPuzzle = useCallback(() => {
-    playSound('step');
-    if (navigator.vibrate) navigator.vibrate(8);
-    setPuzzleIndex((prev) => (prev > 0 ? prev - 1 : Math.max(0, activeList.length - 1)));
-    boardContainerRef.current?.focus();
-  }, [activeList.length, playSound]);
-
-  const handleNextPuzzle = useCallback(() => {
-    playSound('step');
-    if (navigator.vibrate) navigator.vibrate(10);
-    setPuzzleIndex((prev) => (prev + 1) % (activeList.length || 1));
-    boardContainerRef.current?.focus();
-  }, [activeList.length, playSound]);
-
-  const handleLiveGenerate = useCallback(async () => {
-    if (tournamentMode) return; // 賽事認證模式下鎖死重新生成
-    playSound('click');
-    if (navigator.vibrate) navigator.vibrate(20);
-    setIsGenerating(true);
-
-    try {
-      const newPuzzle = await generateEnginePuzzleAsync(selectedType, currentLevel);
-      if (newPuzzle) {
-        newPuzzle.id = `${selectedType}_${currentLevel}_manual_${Date.now().toString(36)}`;
-        setDynamicPool((prev) => {
-          const gameBucket = prev[selectedType];
-          const tierBucket = gameBucket[currentLevel] || [];
-          return {
-            ...prev,
-            [selectedType]: {
-              ...gameBucket,
-              [currentLevel]: [newPuzzle, ...tierBucket],
-            },
-          };
-        });
-        setPuzzleIndex(0);
-        setToastMsg(isEn ? '⚡ Dynamic puzzle synthesized' : '⚡ 演算法已即時合成全新題目');
-        setTimeout(() => setToastMsg(null), 2000);
-      }
-    } finally {
-      setIsGenerating(false);
-      boardContainerRef.current?.focus();
-    }
-  }, [selectedType, currentLevel, isEn, playSound, tournamentMode]);
+    const tierName = t.tiers[currentLevel];
+    document.title = `${gameName} [${tierName}] | ${t.status.titleSuffix}`;
+  }, [selectedType, currentLevel, t]);
 
   const handleTierJump = useCallback(
-    (steps: number = 1) => {
+    (steps: number) => {
       playSound('hint');
       if (navigator.vibrate) navigator.vibrate([20, 30, 20]);
       const currentIdx = LEVEL_KEYS.indexOf(currentLevel);
@@ -472,7 +206,7 @@ const MainDashboard: React.FC = () => {
         setPuzzleIndex(0);
       }
     },
-    [currentLevel, playSound]
+    [currentLevel, playSound, setPuzzleIndex]
   );
 
   const handleSmartDrill = useCallback(() => {
@@ -482,10 +216,9 @@ const MainDashboard: React.FC = () => {
       setSelectedType(recommendation.type);
       setCurrentLevel(recommendation.tier);
       setPuzzleIndex(0);
-      setToastMsg(`🎯 ${recommendation.reason}`);
-      setTimeout(() => setToastMsg(null), 3500);
+      showToast(`🎯 ${recommendation.reason}`, 3500);
     }
-  }, [getRecommendedSchedulePuzzle, playSound]);
+  }, [getRecommendedSchedulePuzzle, playSound, setPuzzleIndex, showToast]);
 
   const handleShareVaultBadge = useCallback(() => {
     if (!activePuzzle) return;
@@ -498,35 +231,16 @@ const MainDashboard: React.FC = () => {
       timeSpentSec: activePuzzle.metrics?.estimated_time_sec || 60,
       iq: Math.round(100 + (activePuzzle.metrics?.irt_logit_difficulty || 1.0) * 15),
     });
-    navigator.clipboard.writeText(badge).then(() => {
-      setToastMsg(isEn ? '📋 ASCII Badge copied to clipboard!' : '📋 認證戰績卡已複製至剪貼簿！');
-      setTimeout(() => setToastMsg(null), 2500);
-    });
-  }, [activePuzzle, currentLevel, isEn, playSound]);
 
-  const isAnyModalOpen = showDashboardModal || showComplianceModal;
-  useEffect(() => {
-    const handleGlobalKey = (e: KeyboardEvent) => {
-      if (isAnyModalOpen) return;
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
-      if (e.key === '[' || e.key === 'PageUp') { e.preventDefault(); handlePrevPuzzle(); }
-      if (e.key === ']' || e.key === 'PageDown') { e.preventDefault(); handleNextPuzzle(); }
-      
-      // 錦標賽模式下封死 R 鍵刷新
-      if ((e.key === 'r' || e.key === 'R') && !e.ctrlKey && !e.metaKey) {
-        e.preventDefault();
-        if (!tournamentMode) handleLiveGenerate();
-      }
-      if ((e.key === 't' || e.key === 'T') && !e.ctrlKey && !e.metaKey) {
-        e.preventDefault();
-        setTournamentMode((prev) => !prev);
-      }
-    };
-    window.addEventListener('keydown', handleGlobalKey);
-    return () => window.removeEventListener('keydown', handleGlobalKey);
-  }, [handlePrevPuzzle, handleNextPuzzle, handleLiveGenerate, isAnyModalOpen, tournamentMode]);
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+      navigator.clipboard.writeText(badge)
+        .then(() => showToast(t.toast.badgeCopied))
+        .catch(() => showToast(t.toast.clipboardDenied));
+    } else {
+      showToast(t.toast.clipboardUnsupported);
+    }
+  }, [activePuzzle, currentLevel, playSound, showToast, t]);
 
-  const lastMoveTimeRef = useRef<number>(0);
   const handleJoystickMove = useCallback((x: number, y: number) => {
     const now = Date.now();
     if (now - lastMoveTimeRef.current < 150) return;
@@ -535,28 +249,21 @@ const MainDashboard: React.FC = () => {
     let dx = 0;
     let dy = 0;
     if (x > threshold) dx = 1;
-    else if (x < -threshold) dy = -1;
+    else if (x < -threshold) dx = -1;
     if (y > threshold) dy = 1;
     else if (y < -threshold) dy = -1;
 
     if (dx !== 0 || dy !== 0) {
       lastMoveTimeRef.current = now;
-      window.dispatchEvent(new CustomEvent('logicore:joystick-move', { detail: { dx, dy } }));
+      EventBus.emit('joystick-move', { dx, dy });
     }
   }, []);
 
-  const handleJoystickLook = useCallback((x: number, y: number) => {
-    window.dispatchEvent(new CustomEvent('logicore:joystick-look', { detail: { x, y } }));
-  }, []);
-
-  const handleJoystickAction = useCallback(() => {
-    window.dispatchEvent(new CustomEvent('logicore:joystick-action'));
-  }, []);
-
-  const cci = useMemo(() => getCompositeCognitiveIndex(), [getCompositeCognitiveIndex]);
+  const cci = getCompositeCognitiveIndex();
+  const isEn = t.tiers.kids === 'Kids';
 
   return (
-    <main className="min-h-screen bg-[#070a0f] text-slate-200 flex flex-col items-center py-2 px-2 font-mono selection:bg-indigo-600 safe-padding-top safe-padding-bottom">
+    <main className="min-h-screen bg-[#070a0f] text-slate-200 flex flex-col items-center py-2 px-2 font-mono selection:bg-indigo-600">
       {toastMsg && (
         <div className="fixed top-2 z-50 px-3 py-1.5 bg-cyan-600 border border-cyan-400 text-white font-bold text-xs rounded-full shadow-2xl animate-fade-in pointer-events-none">
           {toastMsg}
@@ -566,7 +273,7 @@ const MainDashboard: React.FC = () => {
       {isGenerating && (
         <div className="fixed top-1 left-1/2 -translate-x-1/2 z-50 flex items-center gap-1.5 px-3 py-1 bg-slate-900/95 border border-indigo-500/80 rounded-full text-indigo-300 text-[8px] font-mono shadow-2xl animate-pulse pointer-events-none">
           <div className="w-2 h-2 rounded-full border border-indigo-400 border-t-transparent animate-spin" />
-          <span>🧠 {t.synthesizing}</span>
+          <span>🧠 {t.status.synthesizing}</span>
         </div>
       )}
 
@@ -576,7 +283,6 @@ const MainDashboard: React.FC = () => {
             <button
               onClick={() => setShowDashboardModal(false)}
               className="absolute top-3 right-3 z-10 w-7 h-7 flex items-center justify-center bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-full font-bold text-xs transition cursor-pointer"
-              title={t.close}
             >
               ✕
             </button>
@@ -591,7 +297,6 @@ const MainDashboard: React.FC = () => {
           <button
             onClick={() => setShowDashboardModal(true)}
             className="flex items-center gap-1 hover:text-cyan-300 transition cursor-pointer"
-            title={t.dashboardTooltip}
           >
             <span className="font-bold text-cyan-400">IQ {cci.standardIQ}</span>
             <span>(±{cci.semIQ})</span>
@@ -603,9 +308,8 @@ const MainDashboard: React.FC = () => {
           <button
             onClick={handleSmartDrill}
             className="px-1.5 py-0.5 rounded bg-purple-950/60 border border-purple-700/60 text-purple-300 font-bold hover:bg-purple-900 transition cursor-pointer"
-            title="AI Spaced Repetition Drill"
           >
-            ⚡ {t.smartDrill}
+            ⚡ {t.actions.smartDrill}
           </button>
         </div>
 
@@ -620,7 +324,7 @@ const MainDashboard: React.FC = () => {
               : 'bg-slate-900 border-slate-800 text-slate-500 hover:text-slate-300'
           }`}
         >
-          {tournamentMode ? t.tournamentOn : t.tournamentOff}
+          {tournamentMode ? t.status.tournamentOn : t.status.tournamentOff}
         </button>
       </div>
 
@@ -628,7 +332,9 @@ const MainDashboard: React.FC = () => {
       <header className="w-full max-w-sm sm:max-w-md flex items-center justify-between gap-1.5 mb-2 pb-1.5 border-b border-slate-800">
         <div className="flex flex-col shrink-0 leading-tight">
           <span className="text-xs font-black tracking-widest text-indigo-400">LOGICORE</span>
-          <span className="text-[6.5px] font-bold text-slate-500 tracking-wider">{t.titleSuffix}</span>
+          <span className="text-[6.5px] font-bold text-slate-500 tracking-wider">
+            {t.status.titleSuffix}
+          </span>
         </div>
 
         <div className="flex items-center gap-1.5 flex-1 min-w-0">
@@ -657,7 +363,7 @@ const MainDashboard: React.FC = () => {
           >
             {LEVEL_KEYS.map((tierKey) => (
               <option key={tierKey} value={tierKey} className="bg-slate-900 text-cyan-300">
-                {isEn ? TIER_NAMES[tierKey].en : TIER_NAMES[tierKey].zh}
+                {t.tiers[tierKey]}
               </option>
             ))}
           </select>
@@ -678,7 +384,7 @@ const MainDashboard: React.FC = () => {
               onClick={handlePrevPuzzle}
               className="py-2 bg-slate-900 hover:bg-slate-800 active:scale-95 text-slate-300 text-[10px] font-bold border border-slate-800 rounded-lg transition cursor-pointer shadow-sm"
             >
-              {t.prev}
+              {t.actions.prev}
             </button>
             <button
               onClick={handleLiveGenerate}
@@ -690,13 +396,13 @@ const MainDashboard: React.FC = () => {
               }`}
             >
               <span>⚡</span>
-              <span>{t.generate}</span>
+              <span>{t.actions.generate}</span>
             </button>
             <button
               onClick={handleNextPuzzle}
               className="py-2 bg-indigo-600 hover:bg-indigo-500 active:scale-95 text-white font-black text-[10px] border border-indigo-400 rounded-lg shadow-md transition cursor-pointer"
             >
-              {t.next}
+              {t.actions.next}
             </button>
           </div>
 
@@ -713,12 +419,12 @@ const MainDashboard: React.FC = () => {
             </ErrorBoundary>
           </div>
 
-          {isSpatialExplorationType && (
+          {selectedType === 'maze' && (
             <VirtualGamepad
               onMove={handleJoystickMove}
-              onRotate={handleJoystickLook}
-              onAction={handleJoystickAction}
-              actionLabel={t.mark}
+              onRotate={(x, y) => EventBus.emit('joystick-look', { x, y })}
+              onAction={() => EventBus.emit('joystick-action')}
+              actionLabel={t.actions.mark}
             />
           )}
 
@@ -730,7 +436,7 @@ const MainDashboard: React.FC = () => {
                 className="flex-1 py-1.5 bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-400 hover:text-slate-200 text-[10px] font-bold rounded-lg transition shadow flex items-center justify-center gap-1 cursor-pointer"
               >
                 <span>🔽</span>
-                <span>{t.tierJumpDown}</span>
+                <span>{t.actions.tierStepDown}</span>
               </button>
             )}
             {currentLevel !== 'ultimate' && (
@@ -739,44 +445,41 @@ const MainDashboard: React.FC = () => {
                 className="flex-1 py-1.5 bg-gradient-to-r from-indigo-950 via-purple-950 to-slate-900 hover:from-indigo-900 border border-indigo-700/60 text-indigo-300 text-[10px] font-bold rounded-lg transition shadow flex items-center justify-center gap-1 cursor-pointer"
               >
                 <span>🚀</span>
-                <span>{t.tierJumpUp}</span>
+                <span>{t.actions.tierStepUp}</span>
               </button>
             )}
           </div>
 
           {/* 謎題即時指標條 */}
           <div className="mt-2 flex items-center justify-between w-full px-1 text-[9px] text-slate-500 border-t border-slate-800/80 pt-1.5">
-            <div>
-              <PuzzleTimer activeId={activePuzzle.id} />
-            </div>
+            <PuzzleTimer activeId={activePuzzle.id} />
             <div className="flex items-center gap-2">
               <button
                 onClick={handleShareVaultBadge}
                 className="hover:text-amber-400 transition cursor-pointer text-[8px] flex items-center gap-0.5"
-                title="Copy ASCII Badge"
               >
                 <span>🏆</span>
-                <span className="underline">{t.vaultCard}</span>
+                <span className="underline">{t.status.vaultCard}</span>
               </button>
               <span>•</span>
               <div>
-                {t.puzzleProgress}: {puzzleIndex + 1}/{activeList.length}
+                {t.status.puzzleProgress}: {puzzleIndex + 1}/{activeList.length}
               </div>
             </div>
           </div>
         </section>
       ) : (
         <div className="mt-12 p-8 border border-slate-800 text-center max-w-sm rounded-xl">
-          <p className="text-slate-500 text-xs">{t.loading}</p>
+          <p className="text-slate-500 text-xs">{t.status.loading}</p>
         </div>
       )}
 
-      {/* 零信任審計、架構合規與免責聲明頁尾 */}
+      {/* 治理與合規聲明頁尾 */}
       <footer className="w-full max-w-sm sm:max-w-md mt-auto pt-3 pb-2 flex flex-col items-center gap-1 border-t border-slate-900 text-[8px] text-slate-600">
         <div className="flex items-center gap-2">
           <span className="inline-flex items-center gap-1 text-emerald-500/80 font-semibold">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-            {t.zeroTrustVerified}
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+            {t.status.zeroTrustVerified}
           </span>
           <span>•</span>
           <button
@@ -785,10 +488,9 @@ const MainDashboard: React.FC = () => {
               setShowComplianceModal(true);
             }}
             className="text-slate-400 hover:text-indigo-300 underline transition cursor-pointer flex items-center gap-0.5"
-            aria-haspopup="dialog"
           >
             <span>⚖️</span>
-            <span>{t.complianceNotice}</span>
+            <span>{t.status.complianceNotice}</span>
           </button>
         </div>
         <div className="text-slate-600 text-[7px] tracking-wide">
@@ -796,10 +498,7 @@ const MainDashboard: React.FC = () => {
         </div>
       </footer>
 
-      <ComplianceModal
-        isOpen={showComplianceModal}
-        onClose={() => setShowComplianceModal(false)}
-      />
+      <ComplianceModal isOpen={showComplianceModal} onClose={() => setShowComplianceModal(false)} />
     </main>
   );
 };
