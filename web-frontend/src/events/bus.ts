@@ -5,6 +5,7 @@ export interface EventMap {
   'joystick-look': { x: number; y: number };
   'joystick-action': void;
   'navigate-game': { gameId?: string; tier?: ExtendedTierKey };
+  'update-available': { version?: string };
 }
 
 type EventKey = keyof EventMap;
