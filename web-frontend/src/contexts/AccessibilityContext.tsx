@@ -103,7 +103,7 @@ export const AccessibilityProvider: React.FC<{ readonly children: ReactNode }> =
     settingsRef.current = settings;
   }, [settings]);
 
-  // 使用 useState 惰性工廠安全初始化 Set
+  // 使用 useState 惰性工廠安全初始化 Set，杜絕 useRef 存入函數引發的型別崩潰
   const [initialOverrides] = useState<Set<keyof AccessibilitySettings>>(() => {
     if (typeof window === 'undefined') return new Set();
     try {
@@ -224,7 +224,7 @@ export const AccessibilityProvider: React.FC<{ readonly children: ReactNode }> =
     const ctx = audioCtxRef.current;
     if (ctx && ctx.state === 'suspended') {
       try {
-        // 設置 500ms 超時降級，杜絕特定環境下 Promise 永遠 pending 造成主執行緒掛死
+        // 設置 500ms 超時降級，防止在受限瀏覽器策略下 Promise 永遠 pending 阻塞主執行緒
         await Promise.race([
           ctx.resume(),
           new Promise<void>((resolve) => setTimeout(resolve, 500)),
@@ -315,6 +315,7 @@ export const AccessibilityProvider: React.FC<{ readonly children: ReactNode }> =
             break;
           }
           case 'celebration': {
+            // Master Bus 匯流排提供 0.6 (-4.4 dB) 餘裕，防範多聲部相位重疊削波
             const masterGain = ctx.createGain();
             masterGain.gain.setValueAtTime(0.6, now);
             masterGain.connect(ctx.destination);
@@ -541,9 +542,16 @@ export const AccessibilityProvider: React.FC<{ readonly children: ReactNode }> =
   );
 
   const resetSettings = useCallback(() => {
+    // 立即取消掛起的防抖寫入，杜絕競爭寫入
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+      saveTimeoutRef.current = null;
+    }
+
     userOverridesRef.current.clear();
     setSettings(DEFAULT_SETTINGS);
-    // 即時持久化：杜絕 250ms 防抖時間差導致刷新後舊覆寫復活
+
+    // 即時持久化：杜絕時間差導致刷新後舊覆寫復活
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(DEFAULT_SETTINGS));
       localStorage.setItem(STORAGE_USER_OVERRIDES_KEY, '[]');
@@ -595,4 +603,14 @@ export const useAccessibilityActions = (): AccessibilityActions => {
     throw new Error('useAccessibilityActions must be used within an AccessibilityProvider');
   }
   return ctx;
+};
+
+/**
+ * @deprecated 建議拆分使用 `useAccessibilitySettings` (純讀取狀態) 與 `useAccessibilityActions` (操作方法)
+ * 以獲得最佳的 React 渲染效能隔離。此聚合 Hook 保留作為向下相容支援。
+ */
+export const useAccessibility = (): AccessibilitySettings & AccessibilityActions => {
+  const settings = useAccessibilitySettings();
+  const actions = useAccessibilityActions();
+  return useMemo(() => ({ ...settings, ...actions }), [settings, actions]);
 };
