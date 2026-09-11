@@ -1,15 +1,17 @@
 // web-frontend/src/registry/RendererRegistry.tsx
 import React, { lazy, Suspense, useMemo } from 'react';
 import { PuzzleEntity, PuzzleSpec } from '../generated';
+import {
+  ENGINE_METADATA,
+  EngineTypeKey,
+  normalizeEngineType,
+  normalizeAlias,
+} from './engineMetadata';
 
 /**
  * ⚠️ 相容性過渡層下線標準 (Compatibility Facade Sunset Policy)
  * 追蹤 Issue: https://github.com/jackylawck/Lawgic/issues/1
  * 代碼標記: TECH-DEBT-REGISTRY-FACADE
- * 
- * 【下線條件】：
- * 1. 18 款棋盤組件規格讀取統一為 `props.puzzle.xxx`。
- * 2. `grep -rn "props\.\(regionSize\|walls\|rowHints\|colHints\|holes\)" src/components/` 輸出為空。
  */
 
 export interface BaseBoardProps {
@@ -26,7 +28,7 @@ export interface BaseBoardProps {
   difficulty: string;
   tournamentMode: boolean;
   seed?: number;
-  [key: string]: unknown; // 暫時保留供過渡期解構相容
+  [key: string]: unknown;
 }
 
 class PermanentModuleError extends Error {
@@ -95,46 +97,40 @@ export const CognitiveDashboard = safeLazyWithRetry<Record<string, never>>(
   'CognitiveDashboard'
 );
 
-export const RENDERERS: Record<string, React.ComponentType<BaseBoardProps>> = {
+// 主名元件綁定（若漏填任何一款引擎，TypeScript 會精確報錯）
+const COMPONENT_MAP: Record<EngineTypeKey, React.ComponentType<BaseBoardProps>> = {
   maze: MazeBoard,
   sudoku: SudokuBoard,
   nonogram: NonogramBoard,
-  picross: NonogramBoard,
-  griddlers: NonogramBoard,
   nurikabe: NurikabeBoard,
   skyscraper: SkyscraperBoard,
-  skyscrapers: SkyscraperBoard,
   hashi: HashiBoard,
-  hashiwokakero: HashiBoard,
-  bridges: HashiBoard,
   kropki: KropkiBoard,
-  kropki_dots: KropkiBoard,
   slitherlink: SlitherlinkBoard,
-  fences: SlitherlinkBoard,
-  loop: SlitherlinkBoard,
   tents: TentsBoard,
-  tentstrees: TentsBoard,
-  'tents-and-trees': TentsBoard,
-  tents_and_trees: TentsBoard,
   lightup: LightUpBoard,
-  akari: LightUpBoard,
   futoshiki: FutoshikiBoard,
-  futo: FutoshikiBoard,
-  hutosiki: FutoshikiBoard,
   hitori: HitoriBoard,
   kakuro: KakuroBoard,
-  cross_sums: KakuroBoard,
   masyu: MasyuBoard,
-  pearl: MasyuBoard,
   dominoes: DominoesBoard,
-  domino: DominoesBoard,
   heyawake: HeyawakeBoard,
-  heya: HeyawakeBoard,
   yajilin: YajilinBoard,
-  arrow_loop: YajilinBoard,
   shikaku: ShikakuBoard,
-  divide_by_squares: ShikakuBoard,
 };
+
+// 全量別名直接自 ENGINE_METADATA 衍生，徹底消滅手寫重複維護
+export const RENDERERS: Record<string, React.ComponentType<BaseBoardProps>> = (() => {
+  const map: Record<string, React.ComponentType<BaseBoardProps>> = { ...COMPONENT_MAP };
+  for (const [canonical, meta] of Object.entries(ENGINE_METADATA)) {
+    const Component = COMPONENT_MAP[canonical as EngineTypeKey];
+    if (!Component) continue;
+    for (const alias of meta.aliases) {
+      map[normalizeAlias(alias)] = Component;
+    }
+  }
+  return Object.freeze(map);
+})();
 
 interface PuzzleRendererProps {
   puzzle: PuzzleEntity;
@@ -152,11 +148,11 @@ const BoardLoadingFallback: React.FC = () => (
 
 export const PuzzleRenderer: React.FC<PuzzleRendererProps> = ({ puzzle, tournamentMode = false }) => {
   const normalizedType = useMemo(() => {
-    return puzzle?.engine_type?.toLowerCase().trim().replace(/[\s-_]+/g, '_') || '';
+    return normalizeEngineType(puzzle?.engine_type || '');
   }, [puzzle?.engine_type]);
 
   const Component = useMemo(() => {
-    return RENDERERS[normalizedType] || RENDERERS[normalizedType.replace(/_/g, '')];
+    return RENDERERS[normalizedType];
   }, [normalizedType]);
 
   const normalizedProps = useMemo<BaseBoardProps | null>(() => {
