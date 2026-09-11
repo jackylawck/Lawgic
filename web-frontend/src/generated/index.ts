@@ -30,9 +30,9 @@ export interface CognitiveLoad {
 
 /**
  * 引擎題目規格介面（唯一事實來源）
- * 供 RendererRegistry 與各 Board 元件共用，杜絕型別循環依賴
+ * 使用交集型別相容具體 Spec (FutoshikiSpec, SudokuSpec, MazeSpec 等)，杜絕 TS2322 缺少索引簽名錯誤
  */
-export interface PuzzleSpec {
+export type PuzzleSpec = {
   rows?: number;
   cols?: number;
   height?: number;
@@ -45,8 +45,7 @@ export interface PuzzleSpec {
   seed?: number;
   tier?: string;
   difficulty?: string;
-  [key: string]: unknown;
-}
+} & Record<string, any>;
 
 export interface PuzzleMetrics {
   estimated_time_sec?: number;
@@ -185,7 +184,7 @@ function normalizePuzzle(
       decision_depth: raw.metrics?.decision_depth || 0,
       propagation_steps: raw.metrics?.propagation_steps || 100,
       difficulty_tier: tier,
-      seed, // 補齊 seed，對齊 RendererRegistry
+      seed,
     },
   };
 }
