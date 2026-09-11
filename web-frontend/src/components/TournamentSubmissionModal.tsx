@@ -5,6 +5,7 @@ import {
   useAccessibilitySettings,
   useAccessibilityActions,
 } from '../contexts/AccessibilityContext';
+import type { EnvironmentFingerprint } from '../utils/tournamentSecurity';
 
 export interface TournamentSubmissionPayload {
   readonly submissionId: string;
@@ -17,7 +18,8 @@ export interface TournamentSubmissionPayload {
   readonly timeSpentSec: number;
   readonly conflictsCount: number;
   readonly infractionScore: number;
-  readonly environment: Readonly<Record<string, string | number | boolean | null>>;
+  // 核心修復：聯合 EnvironmentFingerprint 與結構字典，徹底消除 6 款遊戲棋盤 TS2322 索引簽名缺失報錯
+  readonly environment: EnvironmentFingerprint | Readonly<Record<string, string | number | boolean | null>>;
   readonly timestamp: string;
 }
 
