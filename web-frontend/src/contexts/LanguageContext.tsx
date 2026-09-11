@@ -1,43 +1,29 @@
 // web-frontend/src/contexts/LanguageContext.tsx
-import React, { createContext, useContext, useState, useEffect, useMemo, useCallback } from 'react';
+import React, {
+  createContext,
+  useContext,
+  useState,
+  useEffect,
+  useMemo,
+  useCallback,
+  useRef,
+} from 'react';
 
-export type Language = 'zh' | 'en';
+export const SUPPORTED_LANGUAGES = ['zh', 'en'] as const;
+export type Language = typeof SUPPORTED_LANGUAGES[number];
 
-export interface TranslationDictionary {
-  difficulty: Record<string, string>;
-  common: Record<string, string>;
-  psychometrics: Record<string, string>;
-  engines: Record<string, string>;
-}
+const STORAGE_KEY = 'LOGICORE_LANG_V1';
+const LEGACY_STORAGE_KEY = 'logicore_lang';
 
-export type TranslationKey =
-  | `difficulty.${string}`
-  | `common.${string}`
-  | `psychometrics.${string}`
-  | `engines.${string}`
-  | string;
+const IS_DEV = Boolean(import.meta.env.DEV);
+const IS_TEST = Boolean(import.meta.env.MODE === 'test');
 
-interface LanguageContextType {
-  lang: Language;
-  isEn: boolean;
-  setLang: (lang: Language) => void;
-  toggleLang: () => void;
-  /**
-   * 現代化點號路徑翻譯函數，支援動態變數插值 (e.g. t('common.timeLeft', { sec: 45 }))
-   */
-  t: {
-    (key: TranslationKey, params?: Record<string, string | number>): string;
-    // 保持對舊版巢狀物件訪問的完全相容
-    difficulty: Record<string, string>;
-    common: Record<string, string>;
-    psychometrics: Record<string, string>;
-    engines: Record<string, string>;
-  };
-}
+const HTML_LANG_MAP: Record<Language, string> = {
+  zh: 'zh-Hant-HK',
+  en: 'en',
+};
 
-const STORAGE_KEY = 'logicore_lang';
-
-const DICTIONARY: Record<Language, TranslationDictionary> = {
+const DICTIONARY = {
   en: {
     difficulty: {
       kids: 'Kids',
@@ -172,38 +158,139 @@ const DICTIONARY: Record<Language, TranslationDictionary> = {
       maze: '空間拓撲迷宮',
     },
   },
+} as const;
+
+export type TranslationSchema = typeof DICTIONARY.en;
+
+// 編譯期雙向完整性校驗：若 zh 漏填 en 的任何 Key，編譯器直接報錯
+type DeepKeysMatch<A, B> = {
+  [K in keyof A]: K extends keyof B
+    ? A[K] extends Record<string, unknown>
+      ? B[K] extends Record<string, unknown>
+        ? DeepKeysMatch<A[K], B[K]>
+        : never
+      : true
+    : never;
 };
+
+// 此行型別斷言在編譯期靜態校驗兩語系鍵集合是否完全相等
+type _AssertTranslationSymmetry = DeepKeysMatch<typeof DICTIONARY.en, typeof DICTIONARY.zh> extends DeepKeysMatch<
+  typeof DICTIONARY.zh,
+  typeof DICTIONARY.en
+>
+  ? true
+  : never;
+const _symmetryToken: _AssertTranslationSymmetry = true;
+void _symmetryToken;
+
+type NestedKeyOf<T> = {
+  [K in keyof T & string]: T[K] extends Record<string, unknown>
+    ? `${K}.${keyof T[K] & string}`
+    : K;
+}[keyof T & string];
+
+export type ExactTranslationKey = NestedKeyOf<TranslationSchema>;
+export type TranslationKey = ExactTranslationKey | (string & {});
+
+export interface TranslateFunction {
+  (key: TranslationKey, params?: Record<string, string | number>): string;
+  readonly difficulty: Record<keyof TranslationSchema['difficulty'], string>;
+  readonly common: Record<keyof TranslationSchema['common'], string>;
+  readonly psychometrics: Record<keyof TranslationSchema['psychometrics'], string>;
+  readonly engines: Record<keyof TranslationSchema['engines'], string>;
+}
+
+interface LanguageContextType {
+  readonly lang: Language;
+  readonly isEn: boolean;
+  readonly setLang: (lang: Language) => void;
+  readonly toggleLang: () => void;
+  readonly t: TranslateFunction;
+}
+
+declare global {
+  interface WindowEventMap {
+    'logicore:lang-changed': CustomEvent<{ lang: Language }>;
+  }
+}
 
 const LanguageContext = createContext<LanguageContextType | undefined>(undefined);
 
-export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [lang, setLangState] = useState<Language>(() => {
-    if (typeof window === 'undefined') return 'zh';
-    const saved = localStorage.getItem(STORAGE_KEY) as Language | null;
-    if (saved === 'zh' || saved === 'en') return saved;
-    const navLang = navigator.language?.toLowerCase() || '';
-    return navLang.startsWith('zh') ? 'zh' : 'en';
-  });
+function isValidLanguage(val: unknown): val is Language {
+  return typeof val === 'string' && (SUPPORTED_LANGUAGES as readonly string[]).includes(val);
+}
 
-  // 同步 HTML 標籤與全域廣播
+function resolvePath(obj: unknown, parts: readonly string[]): string | null {
+  let cur: unknown = obj;
+  for (const part of parts) {
+    if (cur && typeof cur === 'object' && part in cur) {
+      cur = (cur as Record<string, unknown>)[part];
+    } else {
+      return null;
+    }
+  }
+  return typeof cur === 'string' ? cur : null;
+}
+
+/**
+ * 探測並初始化語言環境（純函數，零副作用）
+ * ⚠️ 架構假設：目前為純前端 Vite SPA 架構。
+ * 若未來遷移至 SSR（Next.js / Remix），為杜絕 Hydration Mismatch，
+ * 請改用 `useState<Language>('zh')` + `useEffect(() => setLangState(detectInitialLanguage()), [])`。
+ */
+function detectInitialLanguage(): Language {
+  if (typeof window === 'undefined') return 'zh';
+
+  try {
+    for (const key of [STORAGE_KEY, LEGACY_STORAGE_KEY]) {
+      const saved = localStorage.getItem(key);
+      if (isValidLanguage(saved)) return saved;
+    }
+  } catch {}
+
+  const navLangs = navigator.languages ?? [navigator.language || ''];
+  for (const l of navLangs) {
+    const lower = l.toLowerCase();
+    if (lower.startsWith('zh')) return 'zh';
+    if (lower.startsWith('en')) return 'en';
+  }
+
+  return 'zh';
+}
+
+export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const [lang, setLangState] = useState<Language>(detectInitialLanguage);
+  const warnedKeysRef = useRef<Set<string>>(new Set());
+
+  // Mount 時執行 Legacy Storage Key 遷移清理（副作用與狀態初始化徹底解耦）
+  useEffect(() => {
+    try {
+      if (localStorage.getItem(LEGACY_STORAGE_KEY)) {
+        localStorage.removeItem(LEGACY_STORAGE_KEY);
+      }
+    } catch {}
+  }, []);
+
+  // 同步 HTML BCP 47 標籤與外部廣播事件
   useEffect(() => {
     if (typeof document !== 'undefined') {
-      document.documentElement.lang = lang === 'zh' ? 'zh-Hant-HK' : 'en';
+      document.documentElement.lang = HTML_LANG_MAP[lang];
     }
     try {
       localStorage.setItem(STORAGE_KEY, lang);
     } catch {}
 
-    // 通知所有非 React 模組（如 Canvas / Web Worker）語系已更新
     if (typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('logicore:lang-changed', { detail: { lang } }));
+      window.dispatchEvent(
+        new CustomEvent('logicore:lang-changed', { detail: { lang } })
+      );
     }
   }, [lang]);
 
-  // 跨視窗/分頁即時同步
+  // 跨分頁即時同步
   useEffect(() => {
     const handleStorage = (e: StorageEvent) => {
-      if (e.key === STORAGE_KEY && (e.newValue === 'zh' || e.newValue === 'en')) {
+      if (e.key === STORAGE_KEY && isValidLanguage(e.newValue)) {
         setLangState(e.newValue);
       }
     };
@@ -212,6 +299,7 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   }, []);
 
   const setLang = useCallback((newLang: Language) => {
+    if (!isValidLanguage(newLang)) return;
     setLangState(newLang);
   }, []);
 
@@ -219,57 +307,62 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     setLangState((prev) => (prev === 'zh' ? 'en' : 'zh'));
   }, []);
 
-  const isEn = lang === 'en';
+  const t = useMemo<TranslateFunction>(() => {
+    const currentDict = DICTIONARY[lang];
+    const fallbackDict = DICTIONARY.en;
 
-  // 構造兼具物件屬性與函數呼叫能力的智慧 t 實例
-  const t = useMemo(() => {
-    const dict = DICTIONARY[lang];
-
-    const translateFunc = (key: TranslationKey, params?: Record<string, string | number>): string => {
+    const translateCallable = (
+      key: TranslationKey,
+      params?: Record<string, string | number>
+    ): string => {
       const parts = key.split('.');
-      let current: any = dict;
+      let text = resolvePath(currentDict, parts) ?? resolvePath(fallbackDict, parts);
 
-      for (const part of parts) {
-        if (current && typeof current === 'object' && part in current) {
-          current = current[part];
-        } else {
-          // 找不到則降級嘗試英文詞庫
-          let fallback: any = DICTIONARY.en;
-          for (const fbPart of parts) {
-            if (fallback && typeof fallback === 'object' && fbPart in fallback) {
-              fallback = fallback[fbPart];
-            } else {
-              return key; // 最終退回原始 key
-            }
-          }
-          current = fallback;
-          break;
+      if (text === null) {
+        if (IS_DEV && !IS_TEST && !warnedKeysRef.current.has(key)) {
+          warnedKeysRef.current.add(key);
+          console.warn(`[i18n] Missing translation key: "${key}" for language "${lang}"`);
+        }
+        text = key;
+      }
+
+      if (params) {
+        for (const [pKey, pVal] of Object.entries(params)) {
+          text = text.split(`{${pKey}}`).join(String(pVal));
         }
       }
 
-      if (typeof current !== 'string') return key;
-
-      // 支援參數插值替換，例如 {name} 替換
-      if (params) {
-        return Object.entries(params).reduce((acc, [pKey, pVal]) => {
-          return acc.replace(new RegExp(`\\{${pKey}\\}`, 'g'), String(pVal));
-        }, current);
-      }
-
-      return current;
+      return text;
     };
 
-    // 將字典屬性直接掛載至函數上，實現完美雙向相容：既可 t('common.speed')，也可 t.common.speed
-    translateFunc.difficulty = dict.difficulty;
-    translateFunc.common = dict.common;
-    translateFunc.psychometrics = dict.psychometrics;
-    translateFunc.engines = dict.engines;
+    const fullTranslate: TranslateFunction = Object.assign(translateCallable, {
+      difficulty: currentDict.difficulty,
+      common: currentDict.common,
+      psychometrics: currentDict.psychometrics,
+      engines: currentDict.engines,
+    } satisfies {
+      difficulty: Record<keyof TranslationSchema['difficulty'], string>;
+      common: Record<keyof TranslationSchema['common'], string>;
+      psychometrics: Record<keyof TranslationSchema['psychometrics'], string>;
+      engines: Record<keyof TranslationSchema['engines'], string>;
+    });
 
-    return translateFunc as any;
+    return fullTranslate;
   }, [lang]);
 
+  const value = useMemo<LanguageContextType>(
+    () => ({
+      lang,
+      isEn: lang === 'en',
+      setLang,
+      toggleLang,
+      t,
+    }),
+    [lang, setLang, toggleLang, t]
+  );
+
   return (
-    <LanguageContext.Provider value={{ lang, isEn, setLang, toggleLang, t }}>
+    <LanguageContext.Provider value={value}>
       {children}
     </LanguageContext.Provider>
   );
