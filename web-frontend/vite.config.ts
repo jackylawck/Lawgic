@@ -1,29 +1,24 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import wasm from 'vite-plugin-wasm';
-import topLevelAwait from 'vite-plugin-top-level-await';
 import path from 'path';
 import { readFileSync, writeFileSync } from 'fs';
 
 export default defineConfig(({ mode }) => {
   const isProd = mode === 'production';
-  // 單一事實來源：CI/CD 優先取 Git Commit SHA 前 7 碼，本機開發取當前時間戳 Base36
   const buildHash = process.env.GITHUB_SHA?.slice(0, 7) || Date.now().toString(36);
 
   return {
-    // 1. 核心外掛鏈（補齊 topLevelAwait 保證 WASM 與非同步模組生產構建安全）
+    // 核心外掛鏈：只保留 react 和 wasm，完全不要 topLevelAwait
     plugins: [
       react(),
       wasm(),
-      topLevelAwait(),
-      // 機制保證：在 build 完成後自動替換 dist/sw.js 的版本佔位符
       {
         name: 'inject-sw-version',
-        apply: 'build', // M2: 僅在生產打包 (vite build) 執行，dev/preview 模式不觸發
+        apply: 'build',
         closeBundle() {
           const swPath = path.resolve(__dirname, 'dist/sw.js');
           try {
-            // M1: 使用 replaceAll 確保全域替換具備冪等性
             const content = readFileSync(swPath, 'utf-8').replaceAll('__BUILD_HASH__', buildHash);
             writeFileSync(swPath, content);
             console.info(`[vite] Successfully injected SW version hash: ${buildHash}`);
@@ -34,7 +29,6 @@ export default defineConfig(({ mode }) => {
       },
     ],
 
-    // 2. 適配 GitHub Pages 子路徑部署
     base: './',
 
     resolve: {
@@ -43,13 +37,11 @@ export default defineConfig(({ mode }) => {
       },
     },
 
-    // 3. 注入全域編譯版本元數據供前端 React 代碼直讀
     define: {
       __BUILD_HASH__: JSON.stringify(buildHash),
       __BUILD_TIME__: JSON.stringify(new Date().toISOString()),
     },
 
-    // 4. 本地開發與預覽環境隔離標頭
     server: {
       port: 3000,
       host: true,
@@ -68,9 +60,8 @@ export default defineConfig(({ mode }) => {
       },
     },
 
-    // 5. 生產級構建與防禦型分包策略
     build: {
-      target: 'es2022',
+      target: 'es2022', // 原生支援 Top-level await
       outDir: 'dist',
       assetsDir: 'assets',
       cssCodeSplit: true,
@@ -103,16 +94,14 @@ export default defineConfig(({ mode }) => {
       minify: 'esbuild',
     },
 
-    // 6. 配置服從意圖：僅抹除純除錯 trace 與 log，保留 info 追蹤生命週期，保留 warn/error 供故障審計
     esbuild: {
       pure: isProd ? ['console.log', 'console.debug', 'console.trace'] : [],
       drop: isProd ? ['debugger'] : [],
     },
 
-    // 7. Web Worker 與獨立線程原生支援
     worker: {
       format: 'es',
-      plugins: () => [wasm(), topLevelAwait()],
+      plugins: () => [wasm()],
     },
   };
 });
