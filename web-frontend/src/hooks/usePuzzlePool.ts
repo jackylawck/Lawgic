@@ -22,12 +22,13 @@ import { WebHeyawakeGenerator } from '../engines/heyawakeGenerator';
 import { WebYajilinGenerator } from '../engines/yajilinGenerator';
 import { WebShikakuGenerator } from '../engines/shikakuGenerator';
 
+// 修復 TS2741：允許生成器為同步或非同步實作
 export interface PuzzleGenerator {
-  generate(tier: TierKey): PuzzleEntity;
+  generate?(tier: TierKey): PuzzleEntity;
   generateAsync?(tier: TierKey): Promise<PuzzleEntity>;
 }
 
-const GENERATOR_REGISTRY: Record<string, PuzzleGenerator> = {
+const GENERATOR_REGISTRY: Record<string, any> = {
   maze: WebMazeGenerator,
   sudoku: WebSudokuGenerator,
   nonogram: WebNonogramGenerator,
@@ -73,10 +74,10 @@ async function generateEnginePuzzleAsync(gameId: string, tier: ExtendedTierKey):
     const genClass = GENERATOR_REGISTRY[gameId];
     if (!genClass) return null;
 
-    let puzzle: PuzzleEntity;
+    let puzzle: any = null;
     if (typeof genClass.generateAsync === 'function') {
       puzzle = await genClass.generateAsync(tier as TierKey);
-    } else {
+    } else if (typeof genClass.generate === 'function') {
       puzzle = await new Promise((resolve) => {
         setTimeout(() => resolve(genClass.generate(tier as TierKey)), 0);
       });
@@ -86,27 +87,32 @@ async function generateEnginePuzzleAsync(gameId: string, tier: ExtendedTierKey):
     if (!puzzle.engine_type) puzzle.engine_type = gameId;
 
     if (!puzzle.puzzle) {
-      const anyP = puzzle as any;
       puzzle.puzzle = {
-        rows: anyP.rows || anyP.size || 6,
-        cols: anyP.cols || anyP.size || 6,
-        clues: anyP.clues,
-        grid: anyP.grid,
-        solution: anyP.solution,
-        seed: anyP.seed,
-        pureDeductionRate: anyP.pureDeductionRate || 1.0,
+        rows: puzzle.rows || puzzle.size || 6,
+        cols: puzzle.cols || puzzle.size || 6,
+        clues: puzzle.clues,
+        grid: puzzle.grid,
+        solution: puzzle.solution,
+        seed: puzzle.seed,
+        pureDeductionRate: puzzle.pureDeductionRate || 1.0,
       };
     }
 
     puzzle.tier = tier;
-    if (!puzzle.metrics) puzzle.metrics = {};
 
+    // 修復 TS2741：安全初始化 metrics
     const baselineIrt = TIER_IRT_BASELINE[tier];
-    puzzle.metrics.irt_logit_difficulty = Number(
-      (puzzle.metrics.irt_logit_difficulty ? Math.max(puzzle.metrics.irt_logit_difficulty, baselineIrt) : baselineIrt).toFixed(2)
-    );
+    if (!puzzle.metrics) {
+      puzzle.metrics = {
+        irt_logit_difficulty: baselineIrt,
+      };
+    } else {
+      puzzle.metrics.irt_logit_difficulty = Number(
+        (puzzle.metrics.irt_logit_difficulty ? Math.max(puzzle.metrics.irt_logit_difficulty, baselineIrt) : baselineIrt).toFixed(2)
+      );
+    }
 
-    return puzzle;
+    return puzzle as PuzzleEntity;
   } catch (e) {
     console.error(`[Generator Error] ${gameId} @ ${tier}:`, e);
     return null;
