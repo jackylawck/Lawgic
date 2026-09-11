@@ -1,55 +1,75 @@
-// web-frontend/src/registry/RendererRegistry.tsx
 import React, { lazy, Suspense, useMemo } from 'react';
-import { PuzzleEntity } from '../generated';
+import { PuzzleEntity, PuzzleSpec } from '../generated/types';
+
+/**
+ * ⚠️ 相容性過渡層下線標準 (Compatibility Facade Sunset Policy)
+ * 追蹤 Issue: https://github.com/jackylawck/Lawgic/issues/1
+ * 代碼標記: TECH-DEBT-REGISTRY-FACADE
+ * 
+ * 【下線條件】：
+ * 1. 18 款棋盤組件規格讀取統一為 `props.puzzle.xxx`。
+ * 2. `grep -rn "props\.\(regionSize\|walls\|rowHints\|colHints\|holes\)" src/components/` 輸出為空。
+ */
 
 export interface BaseBoardProps {
   puzzleData: PuzzleEntity;
-  puzzle: any;
-  clues?: any;
-  grid?: any;
-  solution?: any;
+  puzzle: PuzzleSpec;
+  rawEntity: PuzzleEntity;
+  clues?: unknown;
+  grid?: unknown;
+  solution?: unknown;
   rows: number;
   cols: number;
   size: number;
   tier: string;
   difficulty: string;
   tournamentMode: boolean;
-  [key: string]: any;
+  seed?: number;
+  [key: string]: unknown; // 暫時保留供過渡期解構相容
 }
 
-/**
- * 健壯的動態載入器：
- * 1. 相容 named export 與 default export
- * 2. 內建 3 次指數退避重試，抵抗弱網與 Service Worker 快取更新造成的 Chunk 載入中斷
- */
-const safeLazyWithRetry = (importFn: () => Promise<any>, exportName: string, retries = 3) => {
+class PermanentModuleError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'PermanentModuleError';
+  }
+}
+
+const safeLazyWithRetry = <P extends object = BaseBoardProps>(
+  importFn: () => Promise<any>,
+  exportName: string,
+  retries = 3
+): React.LazyExoticComponent<React.ComponentType<P>> => {
   return lazy(() => {
-    const run = (attemptsLeft: number): Promise<{ default: React.ComponentType<any> }> => {
+    const run = (attemptsLeft: number): Promise<{ default: React.ComponentType<P> }> => {
       return importFn()
         .then((m) => {
           const Component = m[exportName] || m.default;
           if (!Component) {
-            throw new Error(`Component "${exportName}" is not properly exported.`);
+            throw new PermanentModuleError(
+              `Component "${exportName}" is not properly exported from module.`
+            );
           }
           return { default: Component };
         })
         .catch((err) => {
-          if (attemptsLeft <= 1) {
-            console.error(`[RendererRegistry] Failed to load chunk for "${exportName}" after retries:`, err);
+          if (err instanceof PermanentModuleError) {
             throw err;
           }
-          return new Promise((resolve) => {
-            setTimeout(() => {
-              resolve(run(attemptsLeft - 1));
-            }, 300 * (4 - attemptsLeft));
-          });
+
+          if (attemptsLeft <= 1) {
+            console.error(`[RendererRegistry] Failed to load chunk for "${exportName}":`, err);
+            throw err;
+          }
+
+          const delay = 300 * Math.pow(2, retries - attemptsLeft);
+          return new Promise((resolve) => setTimeout(() => resolve(run(attemptsLeft - 1)), delay));
         });
     };
     return run(retries);
   });
 };
 
-// 代碼分割載入全套 18 款謎題組件（精確包含副檔名，防範 Rollup 解析歧義）
 const MazeBoard = safeLazyWithRetry(() => import('../components/MazeBoard'), 'MazeBoard');
 const SudokuBoard = safeLazyWithRetry(() => import('../components/SudokuBoard'), 'SudokuBoard');
 const NonogramBoard = safeLazyWithRetry(() => import('../components/NonogramBoard'), 'NonogramBoard');
@@ -69,66 +89,48 @@ const HeyawakeBoard = safeLazyWithRetry(() => import('../components/HeyawakeBoar
 const YajilinBoard = safeLazyWithRetry(() => import('../components/YajilinBoard'), 'YajilinBoard');
 const ShikakuBoard = safeLazyWithRetry(() => import('../components/ShikakuBoard'), 'ShikakuBoard');
 
-export const CognitiveDashboard = safeLazyWithRetry(
+export const CognitiveDashboard = safeLazyWithRetry<Record<string, never>>(
   () => import('../components/CognitiveDashboard'),
   'CognitiveDashboard'
 );
 
-// 國際賽事全別名註冊矩陣 (Alias Mapping)
-export const RENDERERS: Record<string, React.ComponentType<any>> = {
+export const RENDERERS: Record<string, React.ComponentType<BaseBoardProps>> = {
   maze: MazeBoard,
-
   sudoku: SudokuBoard,
-
   nonogram: NonogramBoard,
   picross: NonogramBoard,
   griddlers: NonogramBoard,
-
   nurikabe: NurikabeBoard,
-
   skyscraper: SkyscraperBoard,
   skyscrapers: SkyscraperBoard,
-
   hashi: HashiBoard,
   hashiwokakero: HashiBoard,
   bridges: HashiBoard,
-
   kropki: KropkiBoard,
   kropki_dots: KropkiBoard,
-
   slitherlink: SlitherlinkBoard,
   fences: SlitherlinkBoard,
   loop: SlitherlinkBoard,
-
   tents: TentsBoard,
   tentstrees: TentsBoard,
   'tents-and-trees': TentsBoard,
   tents_and_trees: TentsBoard,
-
   lightup: LightUpBoard,
   akari: LightUpBoard,
-
   futoshiki: FutoshikiBoard,
   futo: FutoshikiBoard,
   hutosiki: FutoshikiBoard,
-
   hitori: HitoriBoard,
-
   kakuro: KakuroBoard,
   cross_sums: KakuroBoard,
-
   masyu: MasyuBoard,
   pearl: MasyuBoard,
-
   dominoes: DominoesBoard,
   domino: DominoesBoard,
-
   heyawake: HeyawakeBoard,
   heya: HeyawakeBoard,
-
   yajilin: YajilinBoard,
   arrow_loop: YajilinBoard,
-
   shikaku: ShikakuBoard,
   divide_by_squares: ShikakuBoard,
 };
@@ -152,30 +154,26 @@ export const PuzzleRenderer: React.FC<PuzzleRendererProps> = ({ puzzle, tourname
     return puzzle?.engine_type?.toLowerCase().trim().replace(/[\s-_]+/g, '_') || '';
   }, [puzzle?.engine_type]);
 
-  // 支援直接映射與底線/破折號通用降級查詢
   const Component = useMemo(() => {
     return RENDERERS[normalizedType] || RENDERERS[normalizedType.replace(/_/g, '')];
   }, [normalizedType]);
 
-  // 規格歸一化 (Normalization)
-  const normalizedProps = useMemo(() => {
+  const normalizedProps = useMemo<BaseBoardProps | null>(() => {
     if (!puzzle) return null;
 
-    const rawAny = puzzle as any;
-    const spec = puzzle.puzzle && typeof puzzle.puzzle === 'object' ? (puzzle.puzzle as any) : {};
+    const topLevelFields = puzzle as unknown as Record<string, unknown>;
+    const spec: PuzzleSpec =
+      puzzle.puzzle && typeof puzzle.puzzle === 'object' ? puzzle.puzzle : {};
 
-    // 萃取維度
-    const rows = Number(spec.rows || spec.height || spec.size || rawAny.size || 6);
-    const cols = Number(spec.cols || spec.width || spec.size || rawAny.size || 6);
+    const rows = Number(spec.rows ?? spec.height ?? spec.size ?? topLevelFields.size ?? 6);
+    const cols = Number(spec.cols ?? spec.width ?? spec.size ?? topLevelFields.size ?? 6);
     const size = Math.max(rows, cols);
+    const activeTier = String(puzzle.tier ?? spec.tier ?? spec.difficulty ?? 'kids');
 
-    // 難度標籤萃取
-    const activeTier = String(puzzle.tier || spec.tier || spec.difficulty || 'kids');
-
-    // 題目與解答數據抽取 (確保陣列或物件非 undefined)
-    const clues = spec.clues !== undefined ? spec.clues : (rawAny.clues !== undefined ? rawAny.clues : spec.grid);
-    const grid = spec.grid !== undefined ? spec.grid : (rawAny.grid !== undefined ? rawAny.grid : spec.clues);
-    const solution = puzzle.solution !== undefined ? puzzle.solution : spec.solution;
+    const clues = spec.clues ?? topLevelFields.clues ?? spec.grid;
+    const grid = spec.grid ?? topLevelFields.grid ?? spec.clues;
+    const solution = spec.solution ?? puzzle.solution ?? topLevelFields.solution;
+    const metricsSeed = puzzle.metrics?.seed;
 
     return {
       ...spec,
@@ -191,7 +189,7 @@ export const PuzzleRenderer: React.FC<PuzzleRendererProps> = ({ puzzle, tourname
       tier: activeTier,
       difficulty: activeTier,
       tournamentMode: Boolean(tournamentMode),
-      seed: spec.seed || (puzzle.metrics as any)?.seed,
+      seed: spec.seed ?? metricsSeed,
     };
   }, [puzzle, tournamentMode]);
 
@@ -208,10 +206,12 @@ export const PuzzleRenderer: React.FC<PuzzleRendererProps> = ({ puzzle, tourname
     );
   }
 
-  // 以 puzzle.id 作為核心 key，確保題目切換時組件狀態完整重新掛載
+  const componentKey =
+    puzzle.id || `${normalizedType}_${normalizedProps.tier}_${normalizedProps.seed ?? 'no_seed'}`;
+
   return (
     <Suspense fallback={<BoardLoadingFallback />}>
-      <Component key={puzzle.id || `${normalizedType}_${normalizedProps.tier}`} {...normalizedProps} />
+      <Component key={componentKey} {...normalizedProps} />
     </Suspense>
   );
 };
