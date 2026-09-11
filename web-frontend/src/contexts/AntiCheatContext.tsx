@@ -14,6 +14,8 @@ export type ViolationCategory =
   | 'untrusted_input'
   | 'cadence_speed';
 
+export type CadenceHistogram = readonly [number, number, number, number, number, number];
+
 export interface AuditEventEntry {
   readonly seq: number;
   readonly t: number; // 相對開賽的精確單調毫秒 (monotonic time)
@@ -39,12 +41,11 @@ export interface ExtendedSecurityAuditTrail extends SecurityAuditTrail {
   clockAnomalies: number;
   unnaturalSpeedEvents: number;
   contextMenuBlocks: number;
-  // 世界級賽事審計規格
   sessionStartTime: number;
   eventStream: readonly AuditEventEntry[];
   totalEventCount: number;
   rollingHash: string;
-  cadenceHistogram: readonly [number, number, number, number, number, number]; // [0-20ms, 20-40ms, 40-70ms, 70-120ms, 120-250ms, >250ms]
+  cadenceHistogram: CadenceHistogram;
   cadenceBaselineMedian?: number;
   environment: EnvironmentFingerprint;
   submissionAttestation: string;
@@ -72,7 +73,7 @@ const DEVTOOLS_DIMENSION_THRESHOLD = 160;
 const VIBRATION_PATTERN = [80, 40, 80, 40, 120];
 const CATEGORY_THROTTLE_MS = 1000;
 const CADENCE_BASELINE_SAMPLES = 20;
-const MAX_EVENT_STREAM_SIZE = 1000; // 記憶體上限防禦，超額改為計數推進
+const MAX_EVENT_STREAM_SIZE = 1000;
 const GENESIS_HASH = '0000000000000000000000000000000000000000000000000000000000000000';
 
 const VIOLATION_MESSAGES: Record<ViolationCategory, { zh: string; en: string }> = {
@@ -114,9 +115,6 @@ const VIOLATION_MESSAGES: Record<ViolationCategory, { zh: string; en: string }> 
   },
 };
 
-/**
- * 採集客戶端環境指紋
- */
 function captureEnvironmentFingerprint(): EnvironmentFingerprint {
   if (typeof window === 'undefined') {
     return {
@@ -143,9 +141,6 @@ function captureEnvironmentFingerprint(): EnvironmentFingerprint {
   });
 }
 
-/**
- * 標準 Web Crypto SHA-256 雜湊
- */
 async function computeSha256(payload: string): Promise<string> {
   if (typeof crypto === 'undefined' || !crypto.subtle) {
     return `NOCRYPTO_${Date.now().toString(36)}`;
@@ -161,9 +156,6 @@ async function computeSha256(payload: string): Promise<string> {
   }
 }
 
-/**
- * 快速字串雜湊（同步鏈結備用）
- */
 function fastMurmur32(str: string): string {
   let h = 2166136261;
   for (let i = 0; i < str.length; i++) {
@@ -184,12 +176,10 @@ export const AntiCheatProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const sessionMonotonicOriginRef = useRef<number>(performance.now());
   const sessionEpochStartRef = useRef<number>(Date.now());
 
-  // 不可變事件流與滾動雜湊鏈
   const eventStreamRef = useRef<AuditEventEntry[]>([]);
   const totalEventCountRef = useRef<number>(0);
   const rollingHashRef = useRef<string>(GENESIS_HASH);
 
-  // 審計計數器
   const auditCountersRef = useRef({
     tabSwitches: 0,
     blurEvents: 0,
@@ -207,7 +197,6 @@ export const AntiCheatProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const devToolsOpenRef = useRef<boolean>(false);
   const consecutiveClockSkewRef = useRef<number>(0);
 
-  // Cadence 直方圖分桶：[0-20ms, 20-40ms, 40-70ms, 70-120ms, 120-250ms, >250ms]
   const cadenceHistogramRef = useRef<[number, number, number, number, number, number]>([0, 0, 0, 0, 0, 0]);
   const initialCadenceSamplesRef = useRef<number[]>([]);
   const lockedBaselineMedianRef = useRef<number | null>(null);
@@ -216,7 +205,6 @@ export const AntiCheatProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   const categoryThrottleMapRef = useRef<Map<ViolationCategory, number>>(new Map());
 
-  // 追加審計事件（帶記憶體溢出保護）
   const appendAuditEvent = useCallback((category: ViolationCategory, meta?: Record<string, unknown>) => {
     totalEventCountRef.current += 1;
     const seq = totalEventCountRef.current;
@@ -228,7 +216,6 @@ export const AntiCheatProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     const eventHash = fastMurmur32(rawPayload);
     rollingHashRef.current = eventHash;
 
-    // 超過上限時只更新滾動鏈與計數，杜絕記憶體膨脹
     if (eventStreamRef.current.length < MAX_EVENT_STREAM_SIZE) {
       eventStreamRef.current.push({
         seq,
@@ -241,7 +228,6 @@ export const AntiCheatProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }
   }, []);
 
-  // 警報派發
   const triggerAlert = useCallback((category: ViolationCategory, meta?: Record<string, unknown>) => {
     appendAuditEvent(category, meta);
 
@@ -271,7 +257,7 @@ export const AntiCheatProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           navigator.vibrate(VIBRATION_PATTERN);
         }
       } catch {
-        // 忽略觸覺攔截
+        // 忽略受安全策略限制的振動拒絕
       }
     }
 
@@ -282,7 +268,6 @@ export const AntiCheatProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }, 3500);
   }, [appendAuditEvent]);
 
-  // 全域監聽
   useEffect(() => {
     const handleVisibility = () => {
       if (!isActiveRef.current) return;
@@ -351,7 +336,6 @@ export const AntiCheatProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     };
   }, [triggerAlert]);
 
-  // 定時器受控管理
   const [monitoringEnabled, setMonitoringEnabled] = useState<boolean>(false);
 
   useEffect(() => {
@@ -407,7 +391,6 @@ export const AntiCheatProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     };
   }, [monitoringEnabled, triggerAlert]);
 
-  // 輸入行為分析與直方圖分桶
   const verifyTrustedInput = useCallback(
     (e?: UIEvent): boolean => {
       if (!isActiveRef.current) return true;
@@ -421,7 +404,6 @@ export const AntiCheatProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       if (lastActionTimeRef.current > 0) {
         const delta = now - lastActionTimeRef.current;
 
-        // 記錄 Cadence 直方圖
         if (delta < 20) cadenceHistogramRef.current[0]++;
         else if (delta < 40) cadenceHistogramRef.current[1]++;
         else if (delta < 70) cadenceHistogramRef.current[2]++;
@@ -457,29 +439,30 @@ export const AntiCheatProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     [triggerAlert]
   );
 
+  // 避免數組展開被推導為 number[]，明確約束 6 元 Tuple
   const getAuditSnapshotSync = useCallback((): ExtendedSecurityAuditTrail => {
+    const [c0, c1, c2, c3, c4, c5] = cadenceHistogramRef.current;
     return {
       ...auditCountersRef.current,
       sessionStartTime: sessionEpochStartRef.current,
       eventStream: [...eventStreamRef.current],
       totalEventCount: totalEventCountRef.current,
       rollingHash: rollingHashRef.current,
-      cadenceHistogram: [...cadenceHistogramRef.current],
+      cadenceHistogram: [c0, c1, c2, c3, c4, c5],
       cadenceBaselineMedian: lockedBaselineMedianRef.current ?? undefined,
       environment: captureEnvironmentFingerprint(),
       submissionAttestation: 'UNVERIFIED_LOCAL_SNAPSHOT',
     };
   }, []);
 
-  // 正式賽後提交快照：結合 SHA-256 滾動雜湊鏈與伺服器 Nonce 產生不可變證明
   const getAuditSnapshot = useCallback(async (): Promise<ExtendedSecurityAuditTrail> => {
     const rawCounters = { ...auditCountersRef.current };
     const totalCount = totalEventCountRef.current;
     const finalRollingHash = rollingHashRef.current;
     const env = captureEnvironmentFingerprint();
-    const histogram = [...cadenceHistogramRef.current];
+    const [c0, c1, c2, c3, c4, c5] = cadenceHistogramRef.current;
+    const histogram: CadenceHistogram = [c0, c1, c2, c3, c4, c5];
 
-    // 全量資料摘要封裝（涵蓋 Nonce、鏈頭、計數與直方圖）
     const claimPayload = JSON.stringify({
       nonce: sessionNonceRef.current,
       startEpoch: sessionEpochStartRef.current,
@@ -604,10 +587,6 @@ export const useAntiCheatAlert = () => {
   return context;
 };
 
-/**
- * 舊版相容適配層
- * ⚠️ 效能指引：解題畫布等高頻元件請直接使用 `useAntiCheatActions()`，避免因告警跳出觸發非必要的畫布重繪。
- */
 export const useAntiCheat = () => {
   const actions = useAntiCheatActions();
   const alert = useAntiCheatAlert();
