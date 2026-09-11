@@ -18,6 +18,12 @@ export interface PuzzleMeta {
   readonly icon: string;
 }
 
+/**
+ * 18 款核心引擎唯一事實來源矩陣
+ * 
+ * ⚠️ 排列規則：按 Cattell-Horn-Carroll (CHC) 認知架構維度分組排列
+ * (Spatial -> Numeric -> Working Memory -> Inhibition -> Processing Speed)
+ */
 export const ENGINE_METADATA = {
   maze: {
     primaryDimension: 'spatial',
@@ -27,7 +33,7 @@ export const ENGINE_METADATA = {
   skyscraper: {
     primaryDimension: 'spatial',
     aliases: ['skyscrapers'],
-    ui: { nameZh: '摩天大樓', nameEn: 'Skyscraper', icon: '🏙️' },
+    ui: { nameZh: '摩天透視', nameEn: 'Skyscraper', icon: '🏢' },
   },
   masyu: {
     primaryDimension: 'spatial',
@@ -37,17 +43,17 @@ export const ENGINE_METADATA = {
   lightup: {
     primaryDimension: 'spatial',
     aliases: ['akari'],
-    ui: { nameZh: '點亮燈泡', nameEn: 'Light Up', icon: '💡' },
+    ui: { nameZh: '燈泡照明', nameEn: 'Light Up', icon: '💡' },
   },
   yajilin: {
     primaryDimension: 'spatial',
     aliases: ['arrow_loop'],
-    ui: { nameZh: '箭頭迴圈', nameEn: 'Yajilin', icon: '🔁' },
+    ui: { nameZh: '矢印迴路', nameEn: 'Yajilin', icon: '🧭' },
   },
   dominoes: {
     primaryDimension: 'spatial',
     aliases: ['domino'],
-    ui: { nameZh: '骨牌密碼', nameEn: 'Dominoes', icon: '🀄' },
+    ui: { nameZh: '骨牌矩陣', nameEn: 'Dominoes', icon: '🀄' },
   },
   sudoku: {
     primaryDimension: 'numeric',
@@ -57,7 +63,7 @@ export const ENGINE_METADATA = {
   kakuro: {
     primaryDimension: 'numeric',
     aliases: ['cross_sums'],
-    ui: { nameZh: '交叉十和', nameEn: 'Kakuro', icon: '➕' },
+    ui: { nameZh: '數和密碼', nameEn: 'Kakuro', icon: '➕' },
   },
   hashi: {
     primaryDimension: 'numeric',
@@ -67,47 +73,47 @@ export const ENGINE_METADATA = {
   shikaku: {
     primaryDimension: 'numeric',
     aliases: ['divide_by_squares'],
-    ui: { nameZh: '方塊分割', nameEn: 'Shikaku', icon: '🔲' },
+    ui: { nameZh: '四角分割', nameEn: 'Shikaku', icon: '📐' },
   },
   kropki: {
     primaryDimension: 'numeric',
     aliases: ['kropki_dots'],
-    ui: { nameZh: '點距數論', nameEn: 'Kropki', icon: '⚫' },
+    ui: { nameZh: '黑白雙星', nameEn: 'Kropki', icon: '⚪' },
   },
   futoshiki: {
     primaryDimension: 'numeric',
     aliases: ['futo', 'hutosiki'],
-    ui: { nameZh: '不等之境', nameEn: 'Futoshiki', icon: '⚖️' },
+    ui: { nameZh: '天平不等', nameEn: 'Futoshiki', icon: '⚖️' },
   },
   nonogram: {
     primaryDimension: 'workingMemory',
     aliases: ['picross', 'griddlers'],
-    ui: { nameZh: '數織像素', nameEn: 'Nonogram', icon: '🎨' },
+    ui: { nameZh: '像素數織', nameEn: 'Nonogram', icon: '🎨' },
   },
   slitherlink: {
     primaryDimension: 'workingMemory',
     aliases: ['fences', 'loop'],
-    ui: { nameZh: '線索巡迴', nameEn: 'Slitherlink', icon: '➰' },
+    ui: { nameZh: '迴路封閉', nameEn: 'Slitherlink', icon: '➰' },
   },
   heyawake: {
     primaryDimension: 'workingMemory',
     aliases: ['heya'],
-    ui: { nameZh: '隔間透視', nameEn: 'Heyawake', icon: '🚪' },
+    ui: { nameZh: '連環分室', nameEn: 'Heyawake', icon: '🚪' },
   },
   nurikabe: {
     primaryDimension: 'inhibition',
     aliases: [],
-    ui: { nameZh: '黑海連橫', nameEn: 'Nurikabe', icon: '🌊' },
+    ui: { nameZh: '暗夜數牆', nameEn: 'Nurikabe', icon: '🧱' },
   },
   hitori: {
     primaryDimension: 'inhibition',
     aliases: [],
-    ui: { nameZh: '孤芳自賞', nameEn: 'Hitori', icon: '👤' },
+    ui: { nameZh: '孤島數壹', nameEn: 'Hitori', icon: '⬛' },
   },
   tents: {
     primaryDimension: 'processingSpeed',
     aliases: ['tentstrees', 'tents_and_trees'],
-    ui: { nameZh: '營地之樹', nameEn: 'Tents & Trees', icon: '⛺' },
+    ui: { nameZh: '帳篷扎營', nameEn: 'Tents & Trees', icon: '⛺' },
   },
 } as const satisfies Record<string, EngineMeta>;
 
@@ -140,16 +146,10 @@ export function normalizeEngineType(raw: string): string {
   return ENGINE_ALIASES[sanitized] ?? sanitized;
 }
 
-/**
- * P1 行為契約：產生大小寫與符號無感的引擎比對函式
- */
 export function createEngineMatcher(canonical: EngineTypeKey): (raw: string) => boolean {
   return (raw: string) => normalizeEngineType(raw) === canonical;
 }
 
-/**
- * P0 閉環：全域唯一選單清單，由 ENGINE_METADATA 100% 自動衍生
- */
 export const ALL_GAMES: readonly PuzzleMeta[] = Object.freeze(
   Object.entries(ENGINE_METADATA).map(([id, meta]) => ({
     id,
