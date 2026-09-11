@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh-HK" class="dark scroll-smooth">
+<html lang="zh-HK" class="dark scroll-smooth bg-[#070a0f]">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, shrink-to-fit=no, viewport-fit=cover" />
@@ -13,7 +13,7 @@
   <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
 
   <!-- 嚴格合規 CSP：支援 WASM、Web Worker、Data URI 與原生 Web Crypto -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: blob:; font-src 'self' data: https://fonts.gstatic.com; connect-src 'self' data: blob:; worker-src 'self' blob: data:; object-src 'none'; base-uri 'self'; form-action 'none';" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' data: blob:; worker-src 'self' blob: data:; object-src 'none'; base-uri 'self'; form-action 'none';" />
   <meta http-equiv="X-Content-Type-Options" content="nosniff" />
   <meta name="referrer" content="strict-origin-when-cross-origin" />
 
@@ -26,11 +26,7 @@
   <meta name="robots" content="index, follow" />
   <link rel="canonical" href="https://jackylawck.github.io/Lawgic/" />
 
-  <!-- 外部字型極速預連線 -->
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-
-  <!-- PWA 與圖標鏈結 -->
+  <!-- PWA 與圖標鏈結（標準相對路徑） -->
   <link rel="manifest" href="./manifest.json" />
   <link rel="apple-touch-icon" href="./Lawgic192icon.png" />
   <link rel="icon" type="image/png" sizes="192x192" href="./Lawgic192icon.png" />
@@ -51,7 +47,7 @@
   <meta name="twitter:description" content="Deterministic procedural puzzle generator & cognitive assessment engine." />
   <meta name="twitter:image" content="https://jackylawck.github.io/Lawgic/Lawgic512icon.png" />
 
-  <!-- 豐富結構化資料 (Schema.org) -->
+  <!-- 結構化資料 (Schema.org) -->
   <script type="application/ld+json">
   {
     "@context": "https://schema.org",
@@ -72,22 +68,11 @@
   }
   </script>
 
-  <!-- 首屏平滑樣式、安全邊界適配與首屏載入動畫 -->
+  <!-- 首屏平滑樣式與極簡骨架動畫 -->
   <style>
-    :root {
-      --sat: env(safe-area-inset-top, 0px);
-      --sab: env(safe-area-inset-bottom, 0px);
-      --sal: env(safe-area-inset-left, 0px);
-      --sar: env(safe-area-inset-right, 0px);
-    }
-    body {
-      padding-top: var(--sat);
-      padding-bottom: var(--sab);
-      padding-left: var(--sal);
-      padding-right: var(--sar);
+    html, body {
       background-color: #070a0f;
     }
-    /* 首屏極簡骨架指示器（React 渲染後自動被頂替） */
     #initial-loader {
       display: flex;
       flex-direction: column;
@@ -120,7 +105,25 @@
     </div>
   </noscript>
 
-  <!-- React 根掛載節點，內置輕量首屏骨架 -->
+  <!-- ♿ P0-1 補齊：全域無障礙色弱/色盲矩陣濾鏡池 (零空間開銷，跨瀏覽器 100% 穩定) -->
+  <svg style="position: absolute; width: 0; height: 0; overflow: hidden;" aria-hidden="true" focusable="false">
+    <defs>
+      <filter id="cb-protanopia">
+        <feColorMatrix type="matrix" values="0.567,0.433,0,0,0 0.558,0.442,0,0,0 0,0.242,0.758,0,0 0,0,0,1,0"/>
+      </filter>
+      <filter id="cb-deuteranopia">
+        <feColorMatrix type="matrix" values="0.625,0.375,0,0,0 0.7,0.3,0,0,0 0,0.3,0.7,0,0 0,0,0,1,0"/>
+      </filter>
+      <filter id="cb-tritanopia">
+        <feColorMatrix type="matrix" values="0.95,0.05,0,0,0 0,0.433,0.567,0,0 0,0.475,0.525,0,0 0,0,0,1,0"/>
+      </filter>
+      <filter id="cb-achromatopsia">
+        <feColorMatrix type="matrix" values="0.299,0.587,0.114,0,0 0.299,0.587,0.114,0,0 0.299,0.587,0.114,0,0 0,0,0,1,0"/>
+      </filter>
+    </defs>
+  </svg>
+
+  <!-- React 根掛載節點 -->
   <div id="root">
     <div id="initial-loader">
       <div class="initial-spinner"></div>
@@ -130,7 +133,7 @@
     </div>
   </div>
 
-  <!-- 主程式入口（已在 main.tsx 中整合單一可靠的 PWA 與錯誤守護，避免重複註冊） -->
-  <script type="module" src="/src/main.tsx"></script>
+  <!-- P0-2 規範修復：相對路徑入口腳本 -->
+  <script type="module" src="./src/main.tsx"></script>
 </body>
 </html>
