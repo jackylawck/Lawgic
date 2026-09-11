@@ -3,853 +3,596 @@ import React, {
   createContext,
   useContext,
   useState,
-  useEffect,
   useCallback,
-  useMemo,
   useRef,
+  useEffect,
+  useMemo,
+  ReactNode,
 } from 'react';
-import { useLanguage } from './LanguageContext';
 
 export type ColorBlindMode = 'none' | 'protanopia' | 'deuteranopia' | 'tritanopia' | 'achromatopsia';
-export type TextScaleRatio = 100 | 125 | 150 | 200; // 遵循 WCAG 1.4.4: 支援 200% 等比縮放
+
+export type SoundEffectType =
+  | 'click'
+  | 'step'
+  | 'success'
+  | 'conflict'
+  | 'alert'
+  | 'hint'
+  | 'celebration';
+
+/** WCAG 1.4.4 離散文字縮放階梯 (百分比) */
+export type TextScaleRatio = 100 | 125 | 150 | 200;
 
 export interface AccessibilitySettings {
-  highContrast: boolean;
-  reducedMotion: boolean; // 遵循 WCAG 2.3.3
-  textScale: TextScaleRatio; // 遵循 WCAG 1.4.4: 4 檔等比縮放階梯
-  colorBlindMode: ColorBlindMode; // 補償性高對比調色板與幾何雙通道 (WCAG 1.4.1)
-  soundFeedback: boolean;
-  hapticFeedback: boolean;
-  screenReaderOptimized: boolean;
-}
-
-export interface ColorBlindOptionMeta {
-  key: ColorBlindMode;
-  label: string;
-  description: string;
-}
-
-export type SoundEffectType = 'click' | 'step' | 'success' | 'conflict' | 'alert' | 'hint';
-
-export interface A11yAuditRecord {
-  readonly timestamp: number;
-  readonly source: 'user' | 'system' | 'storage' | 'migration' | 'reset';
-  readonly key: keyof AccessibilitySettings | 'motionOverride' | 'contrastOverride';
-  readonly from: unknown;
-  readonly to: unknown;
+  readonly reducedMotion: boolean;
+  readonly highContrast: boolean;
+  readonly colorBlindMode: ColorBlindMode;
+  readonly soundFeedback: boolean;
+  readonly hapticFeedback: boolean;
+  readonly textScale: TextScaleRatio;
+  readonly screenReaderOptimized: boolean;
 }
 
 export interface AccessibilityActions {
-  toggleHighContrast: () => void;
-  toggleReducedMotion: () => void;
-  setTextScale: (scale: TextScaleRatio) => void;
-  cycleTextScale: () => void;
-  setColorBlindMode: (mode: ColorBlindMode) => void;
-  toggleSoundFeedback: () => void;
-  toggleHapticFeedback: () => void;
-  toggleScreenReaderOptimized: () => void;
-  resetSettings: () => void;
-  clearMotionOverride: () => void;
-  clearContrastOverride: () => void;
-  playSound: (type: SoundEffectType) => void;
-  announce: (message: string, priority?: 'polite' | 'assertive') => void;
-  getAuditLog: () => readonly A11yAuditRecord[];
-  clearAuditLog: () => void;
+  readonly updateSetting: <K extends keyof AccessibilitySettings>(
+    key: K,
+    value: AccessibilitySettings[K]
+  ) => void;
+  readonly resetSettings: () => void;
+  readonly playSound: (type: SoundEffectType) => Promise<void>;
+  readonly announce: (message: string, priority?: 'polite' | 'assertive') => void;
 }
 
-interface StoredOverrides {
-  motion: boolean;
-  contrast: boolean;
-}
+const STORAGE_KEY = 'logicore_a11y_settings';
+const STORAGE_USER_OVERRIDES_KEY = 'logicore_a11y_overrides';
 
-interface PersistedState {
-  version: 6;
-  settings: AccessibilitySettings;
-  overrides: StoredOverrides;
-}
+/** 音訊指數衰減底限閾值 (約 -80 dB，防止 exponentialRamp 趨零引發 RangeError) */
+const AUDIO_SILENCE_FLOOR = 0.0001;
 
-const AccessibilitySettingsContext = createContext<AccessibilitySettings | undefined>(undefined);
-const AccessibilityActionsContext = createContext<AccessibilityActions | undefined>(undefined);
-
-// 單一原子存儲 Key 與向後相容遷移鏈
-const ATOMIC_STORAGE_KEY = 'LOGICORE_A11Y_STATE_V6';
-const LEGACY_STORAGE_KEYS = [
-  'LOGICORE_A11Y_SETTINGS',
-  'LOGICORE_A11Y_SETTINGS_V5',
-  'LOGICORE_A11Y_SETTINGS_V4',
-  'LOGICORE_A11Y_SETTINGS_V3',
-];
-const LEGACY_OVERRIDES_KEY = 'LOGICORE_A11Y_OVERRIDES';
-
-const LIVE_POLITE_ID = 'logicore-live-polite';
-const LIVE_ASSERTIVE_ID = 'logicore-live-assertive';
+/** 螢幕閱讀器訊息間隔（涵蓋 NVDA / JAWS / VoiceOver 消化週期） */
+const ANNOUNCE_INTERVAL_MS = 150;
 const MAX_QUEUE_SIZE = 5;
-const MAX_AUDIT_LOG_SIZE = 50;
-const TEXT_SCALE_STEPS: readonly TextScaleRatio[] = [100, 125, 150, 200] as const;
+
+/** 慶祝大三和弦琶音譜表 (C5 -> E5 -> G5 -> C6 -> E6) */
+const CELEBRATION_NOTES = [
+  { f: 523.25, offset: 0.00, dur: 0.35, peakGain: 0.15 }, // C5
+  { f: 659.25, offset: 0.10, dur: 0.35, peakGain: 0.18 }, // E5
+  { f: 783.99, offset: 0.20, dur: 0.45, peakGain: 0.20 }, // G5
+  { f: 1046.50, offset: 0.32, dur: 0.65, peakGain: 0.25 }, // C6
+  { f: 1318.51, offset: 0.36, dur: 0.50, peakGain: 0.10 }, // E6
+] as const;
 
 const DEFAULT_SETTINGS: AccessibilitySettings = {
-  highContrast: false,
   reducedMotion: false,
-  textScale: 100,
+  highContrast: false,
   colorBlindMode: 'none',
   soundFeedback: true,
   hapticFeedback: true,
+  textScale: 100,
   screenReaderOptimized: false,
 };
 
-/**
- * 載入並遷移歷史版本的存儲設定，具備原子化結構與智慧意圖仲裁
- */
-function loadPersistedState(): PersistedState {
-  let rawAtomic: string | null = null;
-  if (typeof localStorage !== 'undefined') {
-    rawAtomic = localStorage.getItem(ATOMIC_STORAGE_KEY);
-  }
+const SettingsContext = createContext<AccessibilitySettings | null>(null);
+const ActionsContext = createContext<AccessibilityActions | null>(null);
 
-  const systemPrefersReducedMotion = Boolean(
-    typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
-  );
-  const systemPrefersHighContrast = Boolean(
-    typeof window !== 'undefined' && window.matchMedia?.('(prefers-contrast: more)').matches
-  );
-
-  // 1. 若已有 V6 原子存檔，直接解析
-  if (rawAtomic) {
+export const AccessibilityProvider: React.FC<{ readonly children: ReactNode }> = ({ children }) => {
+  // 1. 初始化設定（兼顧 Storage 與系統 Preference）
+  const [settings, setSettings] = useState<AccessibilitySettings>(() => {
+    if (typeof window === 'undefined') return DEFAULT_SETTINGS;
     try {
-      const parsed: PersistedState = JSON.parse(rawAtomic);
-      if (parsed.version === 6 && parsed.settings && parsed.overrides) {
-        const nextSettings = { ...DEFAULT_SETTINGS, ...parsed.settings };
-        if (!parsed.overrides.motion) {
-          nextSettings.reducedMotion = systemPrefersReducedMotion;
-        }
-        if (!parsed.overrides.contrast) {
-          nextSettings.highContrast = systemPrefersHighContrast;
-        }
-        return {
-          version: 6,
-          settings: nextSettings,
-          overrides: {
-            motion: Boolean(parsed.overrides.motion),
-            contrast: Boolean(parsed.overrides.contrast),
-          },
-        };
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (saved) {
+        return { ...DEFAULT_SETTINGS, ...JSON.parse(saved) };
       }
-    } catch {}
-  }
-
-  // 2. 舊版非原子化資料遷移
-  let migratedSettings = { ...DEFAULT_SETTINGS };
-  let migratedOverrides: StoredOverrides = { motion: false, contrast: false };
-
-  if (typeof localStorage !== 'undefined') {
-    // 嘗試讀取舊版 overrides
-    const rawLegacyOverrides = localStorage.getItem(LEGACY_OVERRIDES_KEY);
-    if (rawLegacyOverrides) {
-      try {
-        const parsed = JSON.parse(rawLegacyOverrides);
-        migratedOverrides = {
-          motion: Boolean(parsed.motion),
-          contrast: Boolean(parsed.contrast),
-        };
-      } catch {}
+      const prefersReduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      const prefersContrast = window.matchMedia('(prefers-contrast: more)').matches;
+      return {
+        ...DEFAULT_SETTINGS,
+        reducedMotion: prefersReduced,
+        highContrast: prefersContrast,
+      };
+    } catch {
+      return DEFAULT_SETTINGS;
     }
+  });
 
-    // 嘗試讀取舊版 settings
-    let rawLegacySettings: string | null = null;
-    for (const key of LEGACY_STORAGE_KEYS) {
-      rawLegacySettings = localStorage.getItem(key);
-      if (rawLegacySettings) break;
-    }
-
-    if (rawLegacySettings) {
-      try {
-        const parsed = JSON.parse(rawLegacySettings);
-        if (typeof parsed.largeText === 'boolean' && !parsed.textScale) {
-          parsed.textScale = parsed.largeText ? 125 : 100;
-        }
-
-        // 若無舊版 overrides 記錄，比對當前系統偏好
-        if (!rawLegacyOverrides) {
-          if (typeof parsed.reducedMotion === 'boolean') {
-            migratedOverrides.motion = parsed.reducedMotion !== systemPrefersReducedMotion;
-          }
-          if (typeof parsed.highContrast === 'boolean') {
-            migratedOverrides.contrast = parsed.highContrast !== systemPrefersHighContrast;
-          }
-        }
-
-        migratedSettings = { ...migratedSettings, ...parsed };
-      } catch {}
-    } else {
-      migratedSettings.reducedMotion = systemPrefersReducedMotion;
-      migratedSettings.highContrast = systemPrefersHighContrast;
-    }
-  }
-
-  if (!migratedOverrides.motion) {
-    migratedSettings.reducedMotion = systemPrefersReducedMotion;
-  }
-  if (!migratedOverrides.contrast) {
-    migratedSettings.highContrast = systemPrefersHighContrast;
-  }
-
-  return {
-    version: 6,
-    settings: migratedSettings,
-    overrides: migratedOverrides,
-  };
-}
-
-function ensureLiveRegions() {
-  if (typeof document === 'undefined') return;
-
-  const createRegion = (id: string, role: string, live: string) => {
-    let el = document.getElementById(id);
-    if (!el) {
-      el = document.createElement('div');
-      el.id = id;
-      el.setAttribute('role', role);
-      el.setAttribute('aria-live', live);
-      el.setAttribute('aria-atomic', 'true');
-      el.setAttribute('aria-relevant', 'additions text');
-      el.style.cssText =
-        'position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0;pointer-events:none;';
-      document.body.appendChild(el);
-    }
-  };
-
-  createRegion(LIVE_POLITE_ID, 'status', 'polite');
-  createRegion(LIVE_ASSERTIVE_ID, 'alert', 'assertive');
-}
-
-export const AccessibilityProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const audioCtxRef = useRef<AudioContext | null>(null);
-  const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  // 1. 狀態初始化（以 useState 惰性回呼保證生命週期只執行一次）
-  const [initialData] = useState(() => loadPersistedState());
-  const [settings, setSettings] = useState<AccessibilitySettings>(initialData.settings);
-
-  // 使用者覆寫意圖標記
-  const userOverrodeMotionRef = useRef<boolean>(initialData.overrides.motion);
-  const userOverrodeContrastRef = useRef<boolean>(initialData.overrides.contrast);
-
-  const settingsRef = useRef<AccessibilitySettings>(settings);
+  // 使用 useEffect 於 Commit 階段同步 ref，維護並發純度
+  const settingsRef = useRef(settings);
   useEffect(() => {
     settingsRef.current = settings;
   }, [settings]);
 
-  // 本地記憶體審計日誌（恪守隱私，絕不上傳）
-  const auditLogRef = useRef<A11yAuditRecord[]>([]);
-  const logA11yEvent = useCallback(
-    (source: A11yAuditRecord['source'], key: A11yAuditRecord['key'], from: unknown, to: unknown) => {
-      if (auditLogRef.current.length >= MAX_AUDIT_LOG_SIZE) {
-        auditLogRef.current.shift();
-      }
-      auditLogRef.current.push({
-        timestamp: Date.now(),
-        source,
-        key,
-        from,
-        to,
-      });
-    },
-    []
-  );
+  // 使用 useState 惰性工廠安全初始化 Set
+  const [initialOverrides] = useState<Set<keyof AccessibilitySettings>>(() => {
+    if (typeof window === 'undefined') return new Set();
+    try {
+      const saved = localStorage.getItem(STORAGE_USER_OVERRIDES_KEY);
+      if (!saved) return new Set();
+      const parsed = JSON.parse(saved) as unknown;
+      if (!Array.isArray(parsed)) return new Set();
+      return new Set(
+        parsed.filter((k): k is keyof AccessibilitySettings => typeof k === 'string')
+      );
+    } catch {
+      return new Set();
+    }
+  });
 
-  // 2. DOM 雙通道 Live Regions 初始化
+  const userOverridesRef = useRef<Set<keyof AccessibilitySettings>>(initialOverrides);
+
+  // 2. 儲存防抖 (250ms Debounced Storage) 與清理
+  const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
-    ensureLiveRegions();
-  }, []);
-
-  // 3. 系統偏好動態即時監聽（純函數先算後設，受人本覆寫保護）
-  useEffect(() => {
-    if (typeof window === 'undefined' || !window.matchMedia) return;
-
-    const motionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
-    const contrastQuery = window.matchMedia('(prefers-contrast: more)');
-
-    const handleMotionChange = (e: MediaQueryListEvent) => {
-      if (userOverrodeMotionRef.current) return;
-      const prev = settingsRef.current;
-      if (prev.reducedMotion === e.matches) return;
-
-      const next = { ...prev, reducedMotion: e.matches };
-      settingsRef.current = next;
-      logA11yEvent('system', 'reducedMotion', prev.reducedMotion, e.matches);
-      setSettings(next);
-    };
-
-    const handleContrastChange = (e: MediaQueryListEvent) => {
-      if (userOverrodeContrastRef.current) return;
-      const prev = settingsRef.current;
-      if (prev.highContrast === e.matches) return;
-
-      const next = { ...prev, highContrast: e.matches };
-      settingsRef.current = next;
-      logA11yEvent('system', 'highContrast', prev.highContrast, e.matches);
-      setSettings(next);
-    };
-
-    motionQuery.addEventListener('change', handleMotionChange);
-    contrastQuery.addEventListener('change', handleContrastChange);
-
-    return () => {
-      motionQuery.removeEventListener('change', handleMotionChange);
-      contrastQuery.removeEventListener('change', handleContrastChange);
-    };
-  }, [logA11yEvent]);
-
-  // 4. 跨分頁原子化即時同步（原子解析 + 逐欄位真實差分日誌）
-  useEffect(() => {
-    const handleStorage = (e: StorageEvent) => {
-      if (e.key !== ATOMIC_STORAGE_KEY || !e.newValue) return;
-
+    if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+    saveTimeoutRef.current = setTimeout(() => {
       try {
-        const payload: PersistedState = JSON.parse(e.newValue);
-        if (payload.version !== 6 || !payload.settings || !payload.overrides) return;
-
-        // 同步遠端分頁的 overrides 意圖
-        userOverrodeMotionRef.current = payload.overrides.motion;
-        userOverrodeContrastRef.current = payload.overrides.contrast;
-
-        const prev = settingsRef.current;
-        const incoming = payload.settings;
-
-        const nextReducedMotion = userOverrodeMotionRef.current
-          ? incoming.reducedMotion
-          : prev.reducedMotion;
-        const nextHighContrast = userOverrodeContrastRef.current
-          ? incoming.highContrast
-          : prev.highContrast;
-
-        const merged: AccessibilitySettings = {
-          ...prev,
-          ...incoming,
-          reducedMotion: nextReducedMotion,
-          highContrast: nextHighContrast,
-        };
-
-        // 逐欄位差分審計，廢除硬編碼 textScale 偽日誌
-        (Object.keys(merged) as (keyof AccessibilitySettings)[]).forEach((k) => {
-          if (prev[k] !== merged[k]) {
-            logA11yEvent('storage', k, prev[k], merged[k]);
-          }
-        });
-
-        settingsRef.current = merged;
-        setSettings(merged);
-      } catch {}
-    };
-
-    window.addEventListener('storage', handleStorage);
-    return () => window.removeEventListener('storage', handleStorage);
-  }, [logA11yEvent]);
-
-  // 5. WCAG 樣式連動與防抖原子持久化
-  useEffect(() => {
-    if (typeof document === 'undefined') return;
-    const root = document.documentElement;
-
-    root.classList.toggle('a11y-high-contrast', settings.highContrast);
-    root.classList.toggle('a11y-reduced-motion', settings.reducedMotion);
-    root.classList.toggle('a11y-screen-reader', settings.screenReaderOptimized);
-
-    root.style.setProperty('--a11y-font-scale', `${settings.textScale / 100}`);
-    root.dataset.textScale = String(settings.textScale);
-    root.dataset.colorblind = settings.colorBlindMode;
-
-    if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
-    debounceTimerRef.current = setTimeout(() => {
-      try {
-        const stateToPersist: PersistedState = {
-          version: 6,
-          settings,
-          overrides: {
-            motion: userOverrodeMotionRef.current,
-            contrast: userOverrodeContrastRef.current,
-          },
-        };
-        localStorage.setItem(ATOMIC_STORAGE_KEY, JSON.stringify(stateToPersist));
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+        localStorage.setItem(
+          STORAGE_USER_OVERRIDES_KEY,
+          JSON.stringify(Array.from(userOverridesRef.current))
+        );
       } catch {}
     }, 250);
 
     return () => {
-      if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+      if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
     };
   }, [settings]);
 
-  // 6. 音訊上下文生命週期：前背景自動掛起與恢復
+  // 獨立處理 CSS 變數派發與卸載清理
   useEffect(() => {
-    const handleVisibility = () => {
-      if (!audioCtxRef.current) return;
-      if (document.hidden && audioCtxRef.current.state === 'running') {
-        audioCtxRef.current.suspend().catch(() => {});
-      } else if (!document.hidden && audioCtxRef.current.state === 'suspended') {
-        audioCtxRef.current.resume().catch(() => {});
+    document.documentElement.style.setProperty(
+      '--a11y-font-scale',
+      (settings.textScale / 100).toString()
+    );
+    return () => {
+      document.documentElement.style.removeProperty('--a11y-font-scale');
+    };
+  }, [settings.textScale]);
+
+  // 3. 系統 matchMedia 監聽與雙向跨分頁 Storage 同步
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const motionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const contrastQuery = window.matchMedia('(prefers-contrast: more)');
+
+    const handleMotion = (e: MediaQueryListEvent) => {
+      if (!userOverridesRef.current.has('reducedMotion')) {
+        setSettings((prev) => ({ ...prev, reducedMotion: e.matches }));
       }
     };
+    const handleContrast = (e: MediaQueryListEvent) => {
+      if (!userOverridesRef.current.has('highContrast')) {
+        setSettings((prev) => ({ ...prev, highContrast: e.matches }));
+      }
+    };
+
+    const handleStorage = (e: StorageEvent) => {
+      if (e.key === STORAGE_KEY && e.newValue) {
+        try {
+          const remote = JSON.parse(e.newValue);
+          setSettings((prev) => {
+            const merged = { ...prev, ...remote };
+            if (userOverridesRef.current.has('reducedMotion')) {
+              merged.reducedMotion = prev.reducedMotion;
+            }
+            if (userOverridesRef.current.has('highContrast')) {
+              merged.highContrast = prev.highContrast;
+            }
+            return merged;
+          });
+        } catch {}
+      }
+      if (e.key === STORAGE_USER_OVERRIDES_KEY && e.newValue) {
+        try {
+          const parsed = JSON.parse(e.newValue) as unknown;
+          if (Array.isArray(parsed)) {
+            userOverridesRef.current = new Set(
+              parsed.filter((k): k is keyof AccessibilitySettings => typeof k === 'string')
+            );
+          }
+        } catch {}
+      }
+    };
+
+    motionQuery.addEventListener('change', handleMotion);
+    contrastQuery.addEventListener('change', handleContrast);
+    window.addEventListener('storage', handleStorage);
+
+    return () => {
+      motionQuery.removeEventListener('change', handleMotion);
+      contrastQuery.removeEventListener('change', handleContrast);
+      window.removeEventListener('storage', handleStorage);
+    };
+  }, []);
+
+  // 4. 音訊子系統 (Web Audio API 單例與生命週期安全治理)
+  const audioCtxRef = useRef<AudioContext | null>(null);
+
+  const ensureAudioReady = useCallback(async (): Promise<AudioContext | null> => {
+    if (typeof window === 'undefined') return null;
+    if (!audioCtxRef.current) {
+      const AudioCtxClass =
+        window.AudioContext ||
+        (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      if (AudioCtxClass) {
+        audioCtxRef.current = new AudioCtxClass();
+      }
+    }
+    const ctx = audioCtxRef.current;
+    if (ctx && ctx.state === 'suspended') {
+      try {
+        // 設置 500ms 超時降級，杜絕特定環境下 Promise 永遠 pending 造成主執行緒掛死
+        await Promise.race([
+          ctx.resume(),
+          new Promise<void>((resolve) => setTimeout(resolve, 500)),
+        ]);
+      } catch {}
+    }
+    return ctx;
+  }, []);
+
+  // 音訊背景暫停 (Visibility Change) 與卸載清理
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+
+    const handleVisibility = () => {
+      const ctx = audioCtxRef.current;
+      if (!ctx) return;
+      if (document.hidden && ctx.state === 'running') {
+        ctx.suspend().catch(() => {});
+      } else if (!document.hidden && ctx.state === 'suspended') {
+        ctx.resume().catch(() => {});
+      }
+    };
+
     document.addEventListener('visibilitychange', handleVisibility);
     return () => {
       document.removeEventListener('visibilitychange', handleVisibility);
-      if (audioCtxRef.current) {
+      if (audioCtxRef.current && audioCtxRef.current.state !== 'closed') {
         audioCtxRef.current.close().catch(() => {});
         audioCtxRef.current = null;
       }
     };
   }, []);
 
-  // 7. 零依賴程序化音效合成
-  const playSound = useCallback((type: SoundEffectType) => {
-    if (!settingsRef.current.soundFeedback || typeof window === 'undefined') return;
+  const playSound = useCallback(
+    async (type: SoundEffectType): Promise<void> => {
+      if (!settingsRef.current.soundFeedback) return;
+      const ctx = await ensureAudioReady();
+      if (!ctx) return;
 
-    try {
-      const AudioContextClass =
-        window.AudioContext ||
-        (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-      if (!AudioContextClass) return;
+      try {
+        const now = ctx.currentTime;
 
-      if (!audioCtxRef.current) {
-        audioCtxRef.current = new AudioContextClass();
-      }
-      const ctx = audioCtxRef.current;
-      if (ctx.state === 'suspended') {
-        ctx.resume().catch(() => {});
-      }
+        /* 設計決策：瞬態合成器子圖 (Oscillator -> ToneGain -> MasterGain) 依賴 Web Audio API
+           底層音訊線程在 oscillator.stop() 後自動切斷引用並由引擎 GC 回收，無定時器洩漏風險。 */
+        switch (type) {
+          case 'click': {
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(800, now);
+            gain.gain.setValueAtTime(0.08, now);
+            gain.gain.exponentialRampToValueAtTime(AUDIO_SILENCE_FLOOR, now + 0.04);
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+            osc.start(now);
+            osc.stop(now + 0.04);
+            break;
+          }
+          case 'step': {
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.type = 'triangle';
+            osc.frequency.setValueAtTime(440, now);
+            gain.gain.setValueAtTime(0.06, now);
+            gain.gain.exponentialRampToValueAtTime(AUDIO_SILENCE_FLOOR, now + 0.05);
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+            osc.start(now);
+            osc.stop(now + 0.05);
+            break;
+          }
+          case 'success': {
+            [587.33, 880].forEach((freq, idx) => {
+              const toneOsc = ctx.createOscillator();
+              const toneGain = ctx.createGain();
+              toneOsc.type = 'triangle';
+              toneOsc.frequency.setValueAtTime(freq, now + idx * 0.08);
+              toneGain.gain.setValueAtTime(0.12, now + idx * 0.08);
+              toneGain.gain.exponentialRampToValueAtTime(
+                AUDIO_SILENCE_FLOOR,
+                now + idx * 0.08 + 0.25
+              );
+              toneOsc.connect(toneGain);
+              toneGain.connect(ctx.destination);
+              toneOsc.start(now + idx * 0.08);
+              toneOsc.stop(now + idx * 0.08 + 0.25);
+            });
+            break;
+          }
+          case 'celebration': {
+            const masterGain = ctx.createGain();
+            masterGain.gain.setValueAtTime(0.6, now);
+            masterGain.connect(ctx.destination);
 
-      const now = ctx.currentTime;
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
+            CELEBRATION_NOTES.forEach(({ f, offset, dur, peakGain }) => {
+              const toneOsc = ctx.createOscillator();
+              const toneGain = ctx.createGain();
 
-      osc.connect(gain);
-      gain.connect(ctx.destination);
+              toneOsc.type = 'triangle';
+              toneOsc.frequency.setValueAtTime(f, now + offset);
 
-      switch (type) {
-        case 'click':
-          osc.type = 'triangle';
-          osc.frequency.setValueAtTime(440, now);
-          osc.frequency.exponentialRampToValueAtTime(880, now + 0.04);
-          gain.gain.setValueAtTime(0.08, now);
-          gain.gain.linearRampToValueAtTime(0.001, now + 0.04);
-          osc.start(now);
-          osc.stop(now + 0.04);
-          break;
+              toneGain.gain.setValueAtTime(peakGain, now + offset);
+              toneGain.gain.exponentialRampToValueAtTime(
+                AUDIO_SILENCE_FLOOR,
+                now + offset + dur
+              );
 
-        case 'step':
-          osc.type = 'sine';
-          osc.frequency.setValueAtTime(523.25, now);
-          gain.gain.setValueAtTime(0.06, now);
-          gain.gain.linearRampToValueAtTime(0.001, now + 0.06);
-          osc.start(now);
-          osc.stop(now + 0.06);
-          break;
+              toneOsc.connect(toneGain);
+              toneGain.connect(masterGain);
 
-        case 'hint':
-          osc.type = 'sine';
-          osc.frequency.setValueAtTime(587.33, now);
-          osc.frequency.exponentialRampToValueAtTime(880, now + 0.12);
-          gain.gain.setValueAtTime(0.09, now);
-          gain.gain.linearRampToValueAtTime(0.001, now + 0.12);
-          osc.start(now);
-          osc.stop(now + 0.12);
-          break;
+              toneOsc.start(now + offset);
+              toneOsc.stop(now + offset + dur);
+            });
+            break;
+          }
+          case 'conflict': {
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.type = 'sawtooth';
+            osc.frequency.setValueAtTime(140, now);
+            gain.gain.setValueAtTime(0.1, now);
+            gain.gain.exponentialRampToValueAtTime(AUDIO_SILENCE_FLOOR, now + 0.15);
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+            osc.start(now);
+            osc.stop(now + 0.15);
+            break;
+          }
+          case 'alert': {
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.type = 'square';
+            osc.frequency.setValueAtTime(220, now);
+            gain.gain.setValueAtTime(0.08, now);
+            gain.gain.exponentialRampToValueAtTime(AUDIO_SILENCE_FLOOR, now + 0.2);
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+            osc.start(now);
+            osc.stop(now + 0.2);
+            break;
+          }
+          case 'hint': {
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(1200, now);
+            gain.gain.setValueAtTime(0.05, now);
+            gain.gain.exponentialRampToValueAtTime(AUDIO_SILENCE_FLOOR, now + 0.1);
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+            osc.start(now);
+            osc.stop(now + 0.1);
+            break;
+          }
+        }
+      } catch {}
+    },
+    [ensureAudioReady]
+  );
 
-        case 'conflict':
-          osc.type = 'sawtooth';
-          osc.frequency.setValueAtTime(160, now);
-          osc.frequency.linearRampToValueAtTime(110, now + 0.18);
-          gain.gain.setValueAtTime(0.12, now);
-          gain.gain.linearRampToValueAtTime(0.001, now + 0.18);
-          osc.start(now);
-          osc.stop(now + 0.18);
-          break;
+  // 5. 雙通道零重繪 Live Region 排程引擎 (DOM Direct Mutation + Queue Flush)
+  const politeRegionRef = useRef<HTMLDivElement>(null);
+  const assertiveRegionRef = useRef<HTMLDivElement>(null);
 
-        case 'alert':
-          osc.type = 'square';
-          osc.frequency.setValueAtTime(440, now);
-          osc.frequency.setValueAtTime(330, now + 0.08);
-          gain.gain.setValueAtTime(0.15, now);
-          gain.gain.linearRampToValueAtTime(0.001, now + 0.22);
-          osc.start(now);
-          osc.stop(now + 0.22);
-          break;
-
-        case 'success':
-          [523.25, 659.25, 783.99, 1046.50].forEach((f, idx) => {
-            const toneOsc = ctx.createOscillator();
-            const toneGain = ctx.createGain();
-            toneOsc.type = 'sine';
-            toneOsc.frequency.setValueAtTime(f, now + idx * 0.06);
-            toneGain.gain.setValueAtTime(0.08, now + idx * 0.06);
-            toneGain.gain.linearRampToValueAtTime(0.001, now + idx * 0.06 + 0.2);
-            toneOsc.connect(toneGain);
-            toneGain.connect(ctx.destination);
-            toneOsc.start(now + idx * 0.06);
-            toneOsc.stop(now + idx * 0.06 + 0.2);
-          });
-          break;
-      }
-    } catch {}
-  }, []);
-
-  // 8. 雙獨立通道 ARIA Live Region 佇列架構
   const politeQueueRef = useRef<string[]>([]);
   const assertiveQueueRef = useRef<string[]>([]);
-  const isPoliteBusyRef = useRef<boolean>(false);
-  const isAssertiveBusyRef = useRef<boolean>(false);
+
+  const isPoliteFlushingRef = useRef(false);
+  const isAssertiveFlushingRef = useRef(false);
 
   const politeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const assertiveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const politeRafRef = useRef<number | null>(null);
+  const assertiveRafRef = useRef<number | null>(null);
 
-  const processPoliteQueue = useCallback(() => {
-    if (isPoliteBusyRef.current || politeQueueRef.current.length === 0) return;
+  const flushPoliteQueue = useCallback(() => {
+    // Assertive 優先：若當前有緊急插播正在播放，Polite 佇列嚴格暫停推進
+    if (isAssertiveFlushingRef.current) return;
 
-    isPoliteBusyRef.current = true;
-    const msg = politeQueueRef.current.shift()!;
-    const el = document.getElementById(LIVE_POLITE_ID);
+    if (politeQueueRef.current.length === 0) {
+      isPoliteFlushingRef.current = false;
+      return;
+    }
 
-    if (el) {
-      el.textContent = '';
-      if (politeTimerRef.current) clearTimeout(politeTimerRef.current);
+    const region = politeRegionRef.current;
+    if (!region) {
+      isPoliteFlushingRef.current = false;
+      return;
+    }
+
+    const nextMsg = politeQueueRef.current.shift();
+    if (!nextMsg) {
+      isPoliteFlushingRef.current = false;
+      return;
+    }
+
+    isPoliteFlushingRef.current = true;
+    region.textContent = '';
+
+    if (politeRafRef.current) cancelAnimationFrame(politeRafRef.current);
+    politeRafRef.current = requestAnimationFrame(() => {
+      if (politeRegionRef.current) {
+        politeRegionRef.current.textContent = nextMsg;
+      }
       politeTimerRef.current = setTimeout(() => {
-        el.textContent = msg;
-        politeTimerRef.current = setTimeout(() => {
-          isPoliteBusyRef.current = false;
-          processPoliteQueue();
-        }, 200);
-      }, 50);
-    } else {
-      isPoliteBusyRef.current = false;
-    }
+        isPoliteFlushingRef.current = false;
+        flushPoliteQueue();
+      }, ANNOUNCE_INTERVAL_MS);
+    });
   }, []);
 
-  const processAssertiveQueue = useCallback(() => {
-    if (isAssertiveBusyRef.current || assertiveQueueRef.current.length === 0) return;
-
-    isAssertiveBusyRef.current = true;
-    const msg = assertiveQueueRef.current.shift()!;
-    const el = document.getElementById(LIVE_ASSERTIVE_ID);
-
-    // 插播中斷：清空 DOM 並銷毀 Polite 佇列掛起的計時排程
-    const politeEl = document.getElementById(LIVE_POLITE_ID);
-    if (politeEl) politeEl.textContent = '';
-    if (politeTimerRef.current) {
-      clearTimeout(politeTimerRef.current);
-      politeTimerRef.current = null;
+  const flushAssertiveQueue = useCallback(() => {
+    if (assertiveQueueRef.current.length === 0) {
+      isAssertiveFlushingRef.current = false;
+      // Assertive 佇列完全清空後，自動喚醒並接續推進積蓄的 Polite 佇列
+      if (politeQueueRef.current.length > 0 && !isPoliteFlushingRef.current) {
+        flushPoliteQueue();
+      }
+      return;
     }
-    isPoliteBusyRef.current = false;
 
-    if (el) {
-      el.textContent = '';
-      if (assertiveTimerRef.current) clearTimeout(assertiveTimerRef.current);
+    const region = assertiveRegionRef.current;
+    if (!region) {
+      isAssertiveFlushingRef.current = false;
+      return;
+    }
+
+    const nextMsg = assertiveQueueRef.current.shift();
+    if (!nextMsg) {
+      isAssertiveFlushingRef.current = false;
+      return;
+    }
+
+    isAssertiveFlushingRef.current = true;
+    region.textContent = '';
+
+    if (assertiveRafRef.current) cancelAnimationFrame(assertiveRafRef.current);
+    assertiveRafRef.current = requestAnimationFrame(() => {
+      if (assertiveRegionRef.current) {
+        assertiveRegionRef.current.textContent = nextMsg;
+      }
       assertiveTimerRef.current = setTimeout(() => {
-        el.textContent = msg;
-        assertiveTimerRef.current = setTimeout(() => {
-          isAssertiveBusyRef.current = false;
-          processAssertiveQueue();
-        }, 150);
-      }, 30);
-    } else {
-      isAssertiveBusyRef.current = false;
-    }
-  }, []);
+        isAssertiveFlushingRef.current = false;
+        flushAssertiveQueue();
+      }, ANNOUNCE_INTERVAL_MS);
+    });
+  }, [flushPoliteQueue]);
 
   const announce = useCallback(
     (message: string, priority: 'polite' | 'assertive' = 'polite') => {
-      if (priority === 'polite' && !settingsRef.current.screenReaderOptimized) return;
       const clean = message.trim();
       if (!clean) return;
 
       if (priority === 'assertive') {
+        // Assertive 真搶佔：清空視覺、徹底拔除 Polite 掛起的 Timer 與 RAF，重置旗標
+        if (politeRegionRef.current) {
+          politeRegionRef.current.textContent = '';
+        }
+        if (politeTimerRef.current) {
+          clearTimeout(politeTimerRef.current);
+          politeTimerRef.current = null;
+        }
+        if (politeRafRef.current) {
+          cancelAnimationFrame(politeRafRef.current);
+          politeRafRef.current = null;
+        }
+        isPoliteFlushingRef.current = false;
+
+        // 排入緊急佇列並立即推進
         if (assertiveQueueRef.current.length >= MAX_QUEUE_SIZE) {
           assertiveQueueRef.current.shift();
         }
         assertiveQueueRef.current.push(clean);
-        processAssertiveQueue();
+        if (!isAssertiveFlushingRef.current) {
+          flushAssertiveQueue();
+        }
       } else {
+        // Polite 訊息嚴格受控於 screenReaderOptimized
+        if (!settingsRef.current.screenReaderOptimized) return;
+
         if (politeQueueRef.current.length >= MAX_QUEUE_SIZE) {
           politeQueueRef.current.shift();
         }
         politeQueueRef.current.push(clean);
-        processPoliteQueue();
+        if (!isPoliteFlushingRef.current) {
+          flushPoliteQueue();
+        }
       }
     },
-    [processPoliteQueue, processAssertiveQueue]
+    [flushPoliteQueue, flushAssertiveQueue]
   );
 
-  // 9. 狀態切換方法（純函數模式：外層計算並派發日誌，Updater 保持絕對無副作用）
-  const toggleHighContrast = useCallback(() => {
-    userOverrodeContrastRef.current = true;
-    const prev = settingsRef.current;
-    const next = { ...prev, highContrast: !prev.highContrast };
-    settingsRef.current = next;
-    logA11yEvent('user', 'highContrast', prev.highContrast, next.highContrast);
-    setSettings(next);
-  }, [logA11yEvent]);
+  // 清理所有排程資源
+  useEffect(() => {
+    return () => {
+      if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+      if (politeTimerRef.current) clearTimeout(politeTimerRef.current);
+      if (assertiveTimerRef.current) clearTimeout(assertiveTimerRef.current);
+      if (politeRafRef.current) cancelAnimationFrame(politeRafRef.current);
+      if (assertiveRafRef.current) cancelAnimationFrame(assertiveRafRef.current);
+    };
+  }, []);
 
-  const toggleReducedMotion = useCallback(() => {
-    userOverrodeMotionRef.current = true;
-    const prev = settingsRef.current;
-    const next = { ...prev, reducedMotion: !prev.reducedMotion };
-    settingsRef.current = next;
-    logA11yEvent('user', 'reducedMotion', prev.reducedMotion, next.reducedMotion);
-    setSettings(next);
-  }, [logA11yEvent]);
-
-  const clearMotionOverride = useCallback(() => {
-    userOverrodeMotionRef.current = false;
-    const systemPrefers = Boolean(
-      typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
-    );
-    const prev = settingsRef.current;
-    const next = { ...prev, reducedMotion: systemPrefers };
-    settingsRef.current = next;
-    logA11yEvent('user', 'motionOverride', true, false);
-    setSettings(next);
-
-    // 立即原子持久化，重新整理絕對不復發
-    try {
-      const stateToPersist: PersistedState = {
-        version: 6,
-        settings: next,
-        overrides: {
-          motion: false,
-          contrast: userOverrodeContrastRef.current,
-        },
-      };
-      localStorage.setItem(ATOMIC_STORAGE_KEY, JSON.stringify(stateToPersist));
-    } catch {}
-  }, [logA11yEvent]);
-
-  const clearContrastOverride = useCallback(() => {
-    userOverrodeContrastRef.current = false;
-    const systemPrefers = Boolean(
-      typeof window !== 'undefined' && window.matchMedia?.('(prefers-contrast: more)').matches
-    );
-    const prev = settingsRef.current;
-    const next = { ...prev, highContrast: systemPrefers };
-    settingsRef.current = next;
-    logA11yEvent('user', 'contrastOverride', true, false);
-    setSettings(next);
-
-    // 立即原子持久化
-    try {
-      const stateToPersist: PersistedState = {
-        version: 6,
-        settings: next,
-        overrides: {
-          motion: userOverrodeMotionRef.current,
-          contrast: false,
-        },
-      };
-      localStorage.setItem(ATOMIC_STORAGE_KEY, JSON.stringify(stateToPersist));
-    } catch {}
-  }, [logA11yEvent]);
-
-  const setTextScale = useCallback(
-    (scale: TextScaleRatio) => {
-      const prev = settingsRef.current;
-      if (prev.textScale === scale) return;
-      const next = { ...prev, textScale: scale };
-      settingsRef.current = next;
-      logA11yEvent('user', 'textScale', prev.textScale, scale);
-      setSettings(next);
+  const updateSetting = useCallback(
+    <K extends keyof AccessibilitySettings>(key: K, value: AccessibilitySettings[K]) => {
+      // 任何呼叫均標記為使用者顯式介入意圖
+      userOverridesRef.current.add(key);
+      setSettings((prev) => {
+        if (prev[key] === value) return prev;
+        return { ...prev, [key]: value };
+      });
     },
-    [logA11yEvent]
+    []
   );
-
-  const cycleTextScale = useCallback(() => {
-    const prev = settingsRef.current;
-    const curIdx = TEXT_SCALE_STEPS.indexOf(prev.textScale);
-    const nextScale = TEXT_SCALE_STEPS[(curIdx + 1) % TEXT_SCALE_STEPS.length] ?? 100;
-    const next = { ...prev, textScale: nextScale };
-    settingsRef.current = next;
-    logA11yEvent('user', 'textScale', prev.textScale, nextScale);
-    setSettings(next);
-  }, [logA11yEvent]);
-
-  const setColorBlindMode = useCallback(
-    (mode: ColorBlindMode) => {
-      const prev = settingsRef.current;
-      if (prev.colorBlindMode === mode) return;
-      const next = { ...prev, colorBlindMode: mode };
-      settingsRef.current = next;
-      logA11yEvent('user', 'colorBlindMode', prev.colorBlindMode, mode);
-      setSettings(next);
-    },
-    [logA11yEvent]
-  );
-
-  const toggleSoundFeedback = useCallback(() => {
-    const prev = settingsRef.current;
-    const next = { ...prev, soundFeedback: !prev.soundFeedback };
-    settingsRef.current = next;
-    logA11yEvent('user', 'soundFeedback', prev.soundFeedback, next.soundFeedback);
-    setSettings(next);
-  }, [logA11yEvent]);
-
-  const toggleHapticFeedback = useCallback(() => {
-    const prev = settingsRef.current;
-    const next = { ...prev, hapticFeedback: !prev.hapticFeedback };
-    settingsRef.current = next;
-    logA11yEvent('user', 'hapticFeedback', prev.hapticFeedback, next.hapticFeedback);
-    setSettings(next);
-  }, [logA11yEvent]);
-
-  const toggleScreenReaderOptimized = useCallback(() => {
-    const prev = settingsRef.current;
-    const next = { ...prev, screenReaderOptimized: !prev.screenReaderOptimized };
-    settingsRef.current = next;
-    logA11yEvent('user', 'screenReaderOptimized', prev.screenReaderOptimized, next.screenReaderOptimized);
-    setSettings(next);
-  }, [logA11yEvent]);
 
   const resetSettings = useCallback(() => {
-    userOverrodeMotionRef.current = false;
-    userOverrodeContrastRef.current = false;
-    settingsRef.current = DEFAULT_SETTINGS;
-    logA11yEvent('reset', 'highContrast', 'custom', 'default');
+    userOverridesRef.current.clear();
     setSettings(DEFAULT_SETTINGS);
-
+    // 即時持久化：杜絕 250ms 防抖時間差導致刷新後舊覆寫復活
     try {
-      const resetPayload: PersistedState = {
-        version: 6,
-        settings: DEFAULT_SETTINGS,
-        overrides: { motion: false, contrast: false },
-      };
-      localStorage.setItem(ATOMIC_STORAGE_KEY, JSON.stringify(resetPayload));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(DEFAULT_SETTINGS));
+      localStorage.setItem(STORAGE_USER_OVERRIDES_KEY, '[]');
     } catch {}
-
-    politeQueueRef.current = [];
-    assertiveQueueRef.current = [];
-    isPoliteBusyRef.current = false;
-    isAssertiveBusyRef.current = false;
-    if (politeTimerRef.current) clearTimeout(politeTimerRef.current);
-    if (assertiveTimerRef.current) clearTimeout(assertiveTimerRef.current);
-
-    const pEl = document.getElementById(LIVE_POLITE_ID);
-    const aEl = document.getElementById(LIVE_ASSERTIVE_ID);
-    if (pEl) pEl.textContent = '';
-    if (aEl) aEl.textContent = '';
-  }, [logA11yEvent]);
-
-  // 10. 本地審計日誌檢視與清除（隱私保證）
-  const getAuditLog = useCallback((): readonly A11yAuditRecord[] => {
-    return Object.freeze([...auditLogRef.current]);
   }, []);
 
-  const clearAuditLog = useCallback(() => {
-    auditLogRef.current = [];
-  }, []);
-
-  const actionsValue = useMemo<AccessibilityActions>(
+  const actions = useMemo<AccessibilityActions>(
     () => ({
-      toggleHighContrast,
-      toggleReducedMotion,
-      setTextScale,
-      cycleTextScale,
-      setColorBlindMode,
-      toggleSoundFeedback,
-      toggleHapticFeedback,
-      toggleScreenReaderOptimized,
+      updateSetting,
       resetSettings,
-      clearMotionOverride,
-      clearContrastOverride,
       playSound,
       announce,
-      getAuditLog,
-      clearAuditLog,
     }),
-    [
-      toggleHighContrast,
-      toggleReducedMotion,
-      setTextScale,
-      cycleTextScale,
-      setColorBlindMode,
-      toggleSoundFeedback,
-      toggleHapticFeedback,
-      toggleScreenReaderOptimized,
-      resetSettings,
-      clearMotionOverride,
-      clearContrastOverride,
-      playSound,
-      announce,
-      getAuditLog,
-      clearAuditLog,
-    ]
+    [updateSetting, resetSettings, playSound, announce]
   );
 
   return (
-    <AccessibilityActionsContext.Provider value={actionsValue}>
-      <AccessibilitySettingsContext.Provider value={settings}>
+    <SettingsContext.Provider value={settings}>
+      <ActionsContext.Provider value={actions}>
         {children}
-      </AccessibilitySettingsContext.Provider>
-    </AccessibilityActionsContext.Provider>
+        {/* 全域無障礙 Live Regions：純 DOM Ref 驅動，零重渲染 */}
+        <div
+          ref={politeRegionRef}
+          role="status"
+          aria-atomic="true"
+          className="sr-only"
+        />
+        <div
+          ref={assertiveRegionRef}
+          role="alert"
+          className="sr-only"
+        />
+      </ActionsContext.Provider>
+    </SettingsContext.Provider>
   );
 };
 
 export const useAccessibilitySettings = (): AccessibilitySettings => {
-  const context = useContext(AccessibilitySettingsContext);
-  if (!context) throw new Error('useAccessibilitySettings must be used within AccessibilityProvider');
-  return context;
+  const ctx = useContext(SettingsContext);
+  if (!ctx) {
+    throw new Error('useAccessibilitySettings must be used within an AccessibilityProvider');
+  }
+  return ctx;
 };
 
 export const useAccessibilityActions = (): AccessibilityActions => {
-  const context = useContext(AccessibilityActionsContext);
-  if (!context) throw new Error('useAccessibilityActions must be used within AccessibilityProvider');
-  return context;
-};
-
-/**
- * 完整相容 Hook (適合設定面板等同時需要狀態與修改方法的 UI)
- * ⚠️ 效能警告：若在高頻解題畫布中只需呼叫 playSound 或 announce，請優先使用 useAccessibilityActions()，杜絕不必要的畫布重新渲染。
- */
-export const useAccessibility = () => {
-  const settings = useAccessibilitySettings();
-  const actions = useAccessibilityActions();
-  return { settings, ...actions };
-};
-
-export const useColorBlindOptions = (): ColorBlindOptionMeta[] => {
-  const { lang } = useLanguage();
-  const isEn = lang === 'en';
-
-  return useMemo<ColorBlindOptionMeta[]>(
-    () => [
-      {
-        key: 'none',
-        label: isEn ? 'Standard (Full Spectrum)' : '標準全彩 (無輔助)',
-        description: isEn ? 'Default balanced RGB gamut' : '標準全色域光譜',
-      },
-      {
-        key: 'protanopia',
-        label: isEn ? 'Protanopia Compensatory' : '紅色弱/盲 強化補償',
-        description: isEn
-          ? 'Blue/Amber palette mapping with geometric hashing'
-          : '採用藍-琥珀補償色票，以幾何紋理補足長波混淆',
-      },
-      {
-        key: 'deuteranopia',
-        label: isEn ? 'Deuteranopia Compensatory' : '綠色弱/盲 強化補償',
-        description: isEn
-          ? 'Violet/Yellow spectrum separation with dotted patterns'
-          : '採用紫羅蘭-亮黃高對比色階，強化中波段分辨',
-      },
-      {
-        key: 'tritanopia',
-        label: isEn ? 'Tritanopia Compensatory' : '藍黃色弱/盲 強化補償',
-        description: isEn
-          ? 'Crimson/Cyan distinct luminance pairs'
-          : '採用深紅-青綠雙色對比，消除短波色調誤判',
-      },
-      {
-        key: 'achromatopsia',
-        label: isEn ? 'High-Luminance Monochromacy' : '極致全色盲/純明度紋理',
-        description: isEn
-          ? 'Strict luminance ratios with dual-stroke tactile shapes'
-          : '嚴格純灰階明度梯度，全面啟用幾何符號雙通道',
-      },
-    ],
-    [isEn]
-  );
+  const ctx = useContext(ActionsContext);
+  if (!ctx) {
+    throw new Error('useAccessibilityActions must be used within an AccessibilityProvider');
+  }
+  return ctx;
 };
