@@ -1,19 +1,27 @@
 // web-frontend/src/hooks/useLearnerProfile.ts
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { SecureStorage } from '../utils/secureStorage';
 import { useLanguage } from '../contexts/LanguageContext';
 import { ItemBankCalibrator } from '../utils/itemBankCalibrator';
 
-// 完整相容 6 階難度體系
 export type TierKey = 'kids' | 'intermediate' | 'expert' | 'master' | 'legendary' | 'ultimate';
 export type ExtendedTierKey = TierKey;
 export type CognitiveDimension = 'spatial' | 'numeric' | 'workingMemory' | 'inhibition' | 'processingSpeed';
+
+const VALID_TIERS: readonly TierKey[] = ['kids', 'intermediate', 'expert', 'master', 'legendary', 'ultimate'];
+const isValidTier = (v: unknown): v is TierKey =>
+  typeof v === 'string' && (VALID_TIERS as readonly string[]).includes(v);
 
 export interface HintDistributionTrend {
   t1Count: number; // 0~30s
   t2Count: number; // 30~60s
   t3Count: number; // 60s+
   totalCalls: number;
+}
+
+export interface PBAchievements {
+  fastestTime?: boolean;
+  longestStreak?: boolean;
 }
 
 export interface AttemptPayload {
@@ -38,6 +46,8 @@ export interface AttemptPayload {
   hintLogs?: { secFromStart: number; level: number }[];
   irtDifficulty?: number;
   timestamp?: string;
+  isNewPB?: boolean;
+  pbAchievements?: PBAchievements;
 }
 
 export type AttemptRecord = AttemptPayload;
@@ -62,7 +72,7 @@ export interface BookmarkRecord {
   puzzleId: string;
   engineType: string;
   tier: TierKey;
-  boardState: any;
+  boardState: unknown;
   elapsedSec: number;
   bookmarkedAt: string;
 }
@@ -84,7 +94,8 @@ export interface LearnerProfileState {
   userAge: number;
   techniqueStats: Record<string, TechniqueStats>;
   recentRecords: AttemptPayload[];
-  history: AttemptPayload[];
+  /** @deprecated 歷史過渡欄位，內部存取已完全遷移至 recentRecords */
+  history?: AttemptPayload[];
   bookmarks: Record<string, BookmarkRecord>;
   hintTrend: HintDistributionTrend;
   cognitiveDimensions: Record<CognitiveDimension, number>;
@@ -103,6 +114,8 @@ export interface AgeStratifiedNorm {
   cohortSd: number;
   ageAdjustedZ: number;
   agePercentile: number;
+  isCalibrated: boolean;
+  dataSource: string;
 }
 
 export interface PsychometricReliability {
@@ -119,6 +132,7 @@ export interface CompositeCognitiveIndex {
   ci95IQ: [number, number];
   ageNorm: AgeStratifiedNorm;
   reliability: PsychometricReliability;
+  scientificDisclaimer: string;
 }
 
 export interface BenchmarkMetrics {
@@ -151,7 +165,6 @@ const DEFAULT_PROFILE: LearnerProfileState = {
   },
   techniqueStats: {},
   recentRecords: [],
-  history: [],
   bookmarks: {},
   hintTrend: { t1Count: 0, t2Count: 0, t3Count: 0, totalCalls: 0 },
   cognitiveDimensions: {
@@ -177,6 +190,10 @@ const AGE_NORM_COHORTS = [
   { maxAge: 54, label: '45-54', mean: 96, sd: 15.6 },
   { maxAge: 120, label: '55+', mean: 93, sd: 16.2 },
 ];
+
+const MASYU_ALIASES = new Set(['masyu', 'pearl']);
+const NURIKABE_ALIASES = new Set(['nurikabe']);
+const LIGHTUP_ALIASES = new Set(['lightup', 'akari']);
 
 function computeAdaptiveBootstrapCI(values: number[], nIterations = 1000): MetricCI {
   const n = values.length;
@@ -210,11 +227,10 @@ function computeAdaptiveBootstrapCI(values: number[], nIterations = 1000): Metri
       let low = 0, high = n - 1;
       while (low < high) {
         const mid = (low + high) >> 1;
-        if (cdf[mid] >= rand) high = mid;
+        if ((cdf[mid] ?? 0) >= rand) high = mid;
         else low = mid + 1;
       }
-      const safeIndex = Math.max(0, Math.min(n - 1, low));
-      sum += values[safeIndex] ?? 0;
+      sum += values[low] ?? 0;
     }
     resampledMeans[i] = sum / n;
   }
@@ -241,6 +257,146 @@ function normalCDF(z: number): number {
   return Math.max(0.0001, Math.min(0.9999, p));
 }
 
+/**
+ * P0 安全防御：白名單欄位校驗 + 嚴格 Tier 枚舉驗證，根治原型污染與髒數據
+ */
+function sanitizeBookmark(raw: unknown): BookmarkRecord | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const r = raw as Record<string, unknown>;
+  if (typeof r.puzzleId !== 'string' || !r.puzzleId.trim()) return null;
+  if (typeof r.engineType !== 'string' || !r.engineType.trim()) return null;
+  if (!isValidTier(r.tier)) return null;
+  if (typeof r.elapsedSec !== 'number' || isNaN(r.elapsedSec)) return null;
+  if (typeof r.bookmarkedAt !== 'string' || !r.bookmarkedAt.trim()) return null;
+
+  return {
+    puzzleId: r.puzzleId,
+    engineType: r.engineType,
+    tier: r.tier,
+    boardState: r.boardState,
+    elapsedSec: r.elapsedSec,
+    bookmarkedAt: r.bookmarkedAt,
+  };
+}
+
+/**
+ * 100% 純狀態演繹器
+ */
+function computeNextProfileState(
+  prev: LearnerProfileState,
+  recordWithTime: AttemptPayload
+): LearnerProfileState {
+  const tech = recordWithTime.technique || 'General';
+  const prevStat: TechniqueStats = prev.techniqueStats[tech] || {
+    attempts: 0,
+    avgTimeSec: recordWithTime.timeSpentSec,
+    accuracy: 1.0,
+    times: [],
+    conflicts: [],
+  };
+
+  const newAttempts = prevStat.attempts + 1;
+  const newTimes = [...(prevStat.times || []), recordWithTime.timeSpentSec].slice(-50);
+  const newConflicts = [...(prevStat.conflicts || []), recordWithTime.conflictsCount].slice(-50);
+
+  const effectiveAccuracy = recordWithTime.isSuccess
+    ? recordWithTime.conflictsCount === 0 ? 1 : 0.85
+    : (recordWithTime.partialCompletionRatio || recordWithTime.partialCredit || 0) * 0.7;
+
+  const newAvgTime = Math.round(newTimes.reduce((a, b) => a + b, 0) / newTimes.length);
+  const newAccuracy = Number(
+    ((prevStat.accuracy * prevStat.attempts + effectiveAccuracy) / newAttempts).toFixed(2)
+  );
+
+  let pbAchievements: PBAchievements | undefined;
+  let isPB = false;
+  const pb = { ...prev.personalBest };
+  if (recordWithTime.isSuccess && recordWithTime.timeSpentSec < pb.fastestTime) {
+    pb.fastestTime = recordWithTime.timeSpentSec;
+    pbAchievements = { ...(pbAchievements || {}), fastestTime: true };
+    isPB = true;
+  }
+  const newStreak = recordWithTime.isSuccess ? prev.currentStreak + 1 : 0;
+  if (newStreak > pb.longestStreak) {
+    pb.longestStreak = newStreak;
+    pbAchievements = { ...(pbAchievements || {}), longestStreak: true };
+    isPB = true;
+  }
+  if (isPB) pb.updatedAt = new Date().toISOString();
+
+  let newPureStreak = prev.pureStreak;
+  if (recordWithTime.isPureClear) {
+    newPureStreak = prev.pureStreak + 1;
+  } else if (recordWithTime.isPureModeAttempt && !recordWithTime.isSuccess) {
+    newPureStreak = 0;
+  }
+
+  let updatedTrend = { ...prev.hintTrend };
+  if (recordWithTime.hintLogs && recordWithTime.hintLogs.length > 0) {
+    let t1 = updatedTrend.t1Count;
+    let t2 = updatedTrend.t2Count;
+    let t3 = updatedTrend.t3Count;
+    recordWithTime.hintLogs.forEach((log) => {
+      if (log.secFromStart <= 30) t1++;
+      else if (log.secFromStart <= 60) t2++;
+      else t3++;
+    });
+    updatedTrend = {
+      t1Count: t1,
+      t2Count: t2,
+      t3Count: t3,
+      totalCalls: t1 + t2 + t3,
+    };
+  }
+
+  const shouldSnapshot = (prev.totalAttempts + 1) % 10 === 0;
+  const prevSnapshot = shouldSnapshot ? { ...prev.cognitiveDimensions } : prev.previousCognitiveDimensions;
+
+  const irtDifficulty = recordWithTime.irtDifficulty ?? 1.5;
+  const irtFactor = Math.max(0.08, Math.min(0.25, 0.12 + (irtDifficulty / 4.5) * 0.10));
+  const speedScore = Math.max(0.2, Math.min(0.98, 120 / (recordWithTime.timeSpentSec || 120)));
+  const accuracyScore = recordWithTime.conflictsCount === 0 ? 0.95 : Math.max(0.25, 0.92 - recordWithTime.conflictsCount * 0.1);
+
+  const updatedDims: Record<CognitiveDimension, number> = {
+    spatial: Number((prev.cognitiveDimensions.spatial * (1 - irtFactor) + (recordWithTime.cognitiveLoad.spatial || 0.6) * irtFactor).toFixed(2)),
+    numeric: Number((prev.cognitiveDimensions.numeric * (1 - irtFactor) + (recordWithTime.cognitiveLoad.numeric || 0.6) * irtFactor).toFixed(2)),
+    workingMemory: Number((prev.cognitiveDimensions.workingMemory * (1 - irtFactor) + (recordWithTime.cognitiveLoad.workingMemory || 0.6) * irtFactor).toFixed(2)),
+    inhibition: Number((prev.cognitiveDimensions.inhibition * (1 - irtFactor) + accuracyScore * irtFactor).toFixed(2)),
+    processingSpeed: Number((prev.cognitiveDimensions.processingSpeed * (1 - irtFactor) + speedScore * irtFactor).toFixed(2)),
+  };
+
+  const finalRecord: AttemptPayload = {
+    ...recordWithTime,
+    isNewPB: isPB,
+    ...(pbAchievements && { pbAchievements }),
+  };
+
+  const records = [finalRecord, ...(prev.recentRecords || [])].slice(0, 120);
+
+  return {
+    totalAttempts: prev.totalAttempts + 1,
+    currentStreak: newStreak,
+    pureStreak: newPureStreak,
+    personalBest: pb,
+    userAge: prev.userAge,
+    techniqueStats: {
+      ...prev.techniqueStats,
+      [tech]: {
+        attempts: newAttempts,
+        avgTimeSec: newAvgTime,
+        accuracy: newAccuracy,
+        times: newTimes,
+        conflicts: newConflicts,
+      },
+    },
+    recentRecords: records,
+    bookmarks: prev.bookmarks,
+    hintTrend: updatedTrend,
+    cognitiveDimensions: updatedDims,
+    previousCognitiveDimensions: prevSnapshot,
+  };
+}
+
 export const useLearnerProfile = () => {
   const { lang } = useLanguage();
   const isEn = lang === 'en';
@@ -259,170 +415,123 @@ export const useLearnerProfile = () => {
           bookmarks: actual.bookmarks || {},
           hintTrend: actual.hintTrend || DEFAULT_PROFILE.hintTrend,
           recentRecords: records,
-          history: records,
         };
       }
     } catch {}
     return DEFAULT_PROFILE;
   });
 
+  const writeQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const persistProfile = useCallback((stateToPersist: LearnerProfileState) => {
+    writeQueueRef.current = writeQueueRef.current
+      .then(() => SecureStorage.setItemSafe('logicore_learner_profile', stateToPersist))
+      .catch((err) => console.warn('[useLearnerProfile] Persistence queue error:', err));
+  }, []);
+
+  // P1 墓碑機制（Tombstone Reference）：追蹤在 Hydration 窗口內被用戶明確刪除的題目 ID
+  const pendingDeletionsRef = useRef<Set<string>>(new Set());
+
+  // P1 核心修復：合併策略 + 墓碑過濾 + 顯式 pickLocal 治理
   useEffect(() => {
     SecureStorage.getItemSafe('logicore_learner_profile', DEFAULT_PROFILE).then((verified) => {
-      setProfile((prev) => ({
-        ...prev,
-        ...verified,
-        pureStreak: verified.pureStreak || 0,
-        bookmarks: verified.bookmarks || {},
-        hintTrend: verified.hintTrend || DEFAULT_PROFILE.hintTrend,
-        recentRecords: verified.recentRecords || verified.history || [],
-        history: verified.recentRecords || verified.history || [],
-      }));
+      setProfile((prev) => {
+        const existingIds = new Set(prev.recentRecords.map((r) => `${r.puzzleId}_${r.timestamp}`));
+        const verifiedRecords = verified.recentRecords || verified.history || [];
+        const mergedRecords = [
+          ...prev.recentRecords,
+          ...verifiedRecords.filter((r) => !existingIds.has(`${r.puzzleId}_${r.timestamp}`)),
+        ].slice(0, 120);
+
+        // 合併書籤並套用墓碑：防止存儲的舊書籤覆蓋用戶在水合空隙中的刪除操作
+        const mergedBookmarks = {
+          ...(verified.bookmarks || {}),
+          ...prev.bookmarks,
+        };
+        for (const deletedId of pendingDeletionsRef.current) {
+          delete mergedBookmarks[deletedId];
+        }
+
+        const isLocalActive = prev.totalAttempts > 0;
+        const pickLocal = <T>(local: T, remote: T): T => (isLocalActive ? local : remote);
+
+        return {
+          ...verified,
+          ...prev,
+          userAge: pickLocal(prev.userAge, verified.userAge),
+          totalAttempts: pickLocal(prev.totalAttempts, verified.totalAttempts),
+          currentStreak: pickLocal(prev.currentStreak, verified.currentStreak),
+          pureStreak: pickLocal(prev.pureStreak, verified.pureStreak),
+          personalBest: pickLocal(prev.personalBest, verified.personalBest),
+          bookmarks: mergedBookmarks,
+          recentRecords: mergedRecords,
+          hintTrend: pickLocal(prev.hintTrend, verified.hintTrend || DEFAULT_PROFILE.hintTrend),
+          cognitiveDimensions: pickLocal(prev.cognitiveDimensions, verified.cognitiveDimensions),
+          previousCognitiveDimensions: pickLocal(prev.previousCognitiveDimensions, verified.previousCognitiveDimensions),
+        };
+      });
     });
   }, []);
 
+  // 持久化副作用由 useEffect 嚴格接管
+  const lastPersistedStateRef = useRef<LearnerProfileState | null>(null);
+  useEffect(() => {
+    if (profile.totalAttempts === 0 && Object.keys(profile.bookmarks).length === 0) return;
+    if (lastPersistedStateRef.current === profile) return;
+    lastPersistedStateRef.current = profile;
+    persistProfile(profile);
+  }, [profile, persistProfile]);
+
+  // 最新指標引用保持，校準器僅依賴最新紀錄時間戳原語
+  const profileRef = useRef(profile);
+  useEffect(() => {
+    profileRef.current = profile;
+  });
+
+  const latestTimestamp = profile.recentRecords[0]?.timestamp;
+  const lastCalibratedTimestampRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!latestTimestamp || latestTimestamp === lastCalibratedTimestampRef.current) return;
+    lastCalibratedTimestampRef.current = latestTimestamp;
+
+    const currentProfile = profileRef.current;
+    const latest = currentProfile.recentRecords[0];
+    if (!latest) return;
+
+    try {
+      const partialCredit = latest.isSuccess
+        ? 1.0
+        : (latest.partialCompletionRatio ?? latest.partialCredit ?? 0.0);
+      const dims = currentProfile.cognitiveDimensions;
+      const approxTheta = ((dims.spatial + dims.numeric + dims.workingMemory) / 3) * 4 - 2;
+      ItemBankCalibrator.updateEmpiricalDifficulty(latest.puzzleId, approxTheta, partialCredit);
+    } catch (e) {
+      console.warn('[ItemBankCalibrator] Empirical update skipped:', e);
+    }
+  }, [latestTimestamp]);
+
   const recordAttempt = useCallback((payload: AttemptPayload) => {
-    // 確保每筆記錄具備明確的時間戳記
     const recordWithTime: AttemptPayload = {
       ...payload,
       timestamp: payload.timestamp || new Date().toISOString(),
     };
-
-    setProfile((prev) => {
-      const tech = recordWithTime.technique || 'General';
-      const prevStat: TechniqueStats = prev.techniqueStats[tech] || {
-        attempts: 0,
-        avgTimeSec: recordWithTime.timeSpentSec,
-        accuracy: 1.0,
-        times: [],
-        conflicts: [],
-      };
-
-      const newAttempts = prevStat.attempts + 1;
-      const newTimes = [...(prevStat.times || []), recordWithTime.timeSpentSec].slice(-50);
-      const newConflicts = [...(prevStat.conflicts || []), recordWithTime.conflictsCount].slice(-50);
-
-      const effectiveAccuracy = recordWithTime.isSuccess
-        ? recordWithTime.conflictsCount === 0 ? 1 : 0.85
-        : (recordWithTime.partialCompletionRatio || recordWithTime.partialCredit || 0) * 0.7;
-
-      const newAvgTime = Math.round(newTimes.reduce((a, b) => a + b, 0) / newTimes.length);
-      const newAccuracy = Number(
-        ((prevStat.accuracy * prevStat.attempts + effectiveAccuracy) / newAttempts).toFixed(2)
-      );
-
-      let isPB = false;
-      const pb = { ...prev.personalBest };
-      if (recordWithTime.isSuccess && recordWithTime.timeSpentSec < pb.fastestTime) {
-        pb.fastestTime = recordWithTime.timeSpentSec;
-        isPB = true;
-      }
-      const newStreak = recordWithTime.isSuccess ? prev.currentStreak + 1 : 0;
-      if (newStreak > pb.longestStreak) {
-        pb.longestStreak = newStreak;
-        isPB = true;
-      }
-      if (isPB) pb.updatedAt = new Date().toISOString();
-
-      let newPureStreak = prev.pureStreak;
-      if (recordWithTime.isPureClear) {
-        newPureStreak = prev.pureStreak + 1;
-      } else if (recordWithTime.isPureModeAttempt && !recordWithTime.isSuccess) {
-        newPureStreak = 0;
-      }
-
-      let updatedTrend = { ...prev.hintTrend };
-      if (recordWithTime.hintLogs && recordWithTime.hintLogs.length > 0) {
-        let t1 = updatedTrend.t1Count;
-        let t2 = updatedTrend.t2Count;
-        let t3 = updatedTrend.t3Count;
-        recordWithTime.hintLogs.forEach((log) => {
-          if (log.secFromStart <= 30) t1++;
-          else if (log.secFromStart <= 60) t2++;
-          else t3++;
-        });
-        updatedTrend = {
-          t1Count: t1,
-          t2Count: t2,
-          t3Count: t3,
-          totalCalls: t1 + t2 + t3,
-        };
-      }
-
-      const shouldSnapshot = (prev.totalAttempts + 1) % 10 === 0;
-      const prevSnapshot = shouldSnapshot ? { ...prev.cognitiveDimensions } : prev.previousCognitiveDimensions;
-
-      // 自適應學習率與項目難度加權
-      const irtDifficulty = recordWithTime.irtDifficulty ?? 1.5;
-      const irtFactor = Math.max(0.08, Math.min(0.25, 0.12 + (irtDifficulty / 4.5) * 0.10));
-      const speedScore = Math.max(0.2, Math.min(0.98, 120 / (recordWithTime.timeSpentSec || 120)));
-      const accuracyScore = recordWithTime.conflictsCount === 0 ? 0.95 : Math.max(0.25, 0.92 - recordWithTime.conflictsCount * 0.1);
-
-      const updatedDims: Record<CognitiveDimension, number> = {
-        spatial: Number((prev.cognitiveDimensions.spatial * (1 - irtFactor) + (recordWithTime.cognitiveLoad.spatial || 0.6) * irtFactor).toFixed(2)),
-        numeric: Number((prev.cognitiveDimensions.numeric * (1 - irtFactor) + (recordWithTime.cognitiveLoad.numeric || 0.6) * irtFactor).toFixed(2)),
-        workingMemory: Number((prev.cognitiveDimensions.workingMemory * (1 - irtFactor) + (recordWithTime.cognitiveLoad.workingMemory || 0.6) * irtFactor).toFixed(2)),
-        inhibition: Number((prev.cognitiveDimensions.inhibition * (1 - irtFactor) + accuracyScore * irtFactor).toFixed(2)),
-        processingSpeed: Number((prev.cognitiveDimensions.processingSpeed * (1 - irtFactor) + speedScore * irtFactor).toFixed(2)),
-      };
-
-      // 擴充保留最近 120 筆完整作答歷程，支援更長期的心理計量學縱向分析
-      const records = [recordWithTime, ...(prev.recentRecords || prev.history || [])].slice(0, 120);
-
-      const updated: LearnerProfileState = {
-        totalAttempts: prev.totalAttempts + 1,
-        currentStreak: newStreak,
-        pureStreak: newPureStreak,
-        personalBest: pb,
-        userAge: prev.userAge,
-        techniqueStats: {
-          ...prev.techniqueStats,
-          [tech]: {
-            attempts: newAttempts,
-            avgTimeSec: newAvgTime,
-            accuracy: newAccuracy,
-            times: newTimes,
-            conflicts: newConflicts,
-          },
-        },
-        recentRecords: records,
-        history: records,
-        bookmarks: prev.bookmarks,
-        hintTrend: updatedTrend,
-        cognitiveDimensions: updatedDims,
-        previousCognitiveDimensions: prevSnapshot,
-      };
-
-      SecureStorage.setItemSafe('logicore_learner_profile', updated);
-
-      // 雙向回饋：通知經驗題庫校準器更新該題難度位置參數
-      try {
-        const partialCredit = recordWithTime.isSuccess
-          ? 1.0
-          : (recordWithTime.partialCompletionRatio ?? recordWithTime.partialCredit ?? 0.0);
-        const approxTheta = (updatedDims.spatial + updatedDims.numeric + updatedDims.workingMemory) / 3 * 4 - 2;
-        ItemBankCalibrator.updateEmpiricalDifficulty(recordWithTime.puzzleId, approxTheta, partialCredit);
-      } catch {}
-
-      return updated;
-    });
+    setProfile((prev) => computeNextProfileState(prev, recordWithTime));
   }, []);
 
   const saveBookmark = useCallback((record: BookmarkRecord) => {
-    setProfile((prev) => {
-      const updatedBookmarks = { ...prev.bookmarks, [record.puzzleId]: record };
-      const updated = { ...prev, bookmarks: updatedBookmarks };
-      SecureStorage.setItemSafe('logicore_learner_profile', updated);
-      return updated;
-    });
+    pendingDeletionsRef.current.delete(record.puzzleId);
+    setProfile((prev) => ({
+      ...prev,
+      bookmarks: { ...prev.bookmarks, [record.puzzleId]: record },
+    }));
   }, []);
 
   const removeBookmark = useCallback((puzzleId: string) => {
+    pendingDeletionsRef.current.add(puzzleId);
     setProfile((prev) => {
       const updatedBookmarks = { ...prev.bookmarks };
       delete updatedBookmarks[puzzleId];
-      const updated = { ...prev, bookmarks: updatedBookmarks };
-      SecureStorage.setItemSafe('logicore_learner_profile', updated);
-      return updated;
+      return { ...prev, bookmarks: updatedBookmarks };
     });
   }, []);
 
@@ -430,14 +539,22 @@ export const useLearnerProfile = () => {
     try {
       const parsed = JSON.parse(bundleJson);
       const incoming = parsed.bookmarks || parsed.bookmarkedPuzzlesVault || parsed;
-      if (typeof incoming !== 'object') return false;
+      if (typeof incoming !== 'object' || incoming === null) return false;
 
-      setProfile((prev) => {
-        const merged = { ...prev.bookmarks, ...incoming };
-        const updated = { ...prev, bookmarks: merged };
-        SecureStorage.setItemSafe('logicore_learner_profile', updated);
-        return updated;
-      });
+      const sanitized: Record<string, BookmarkRecord> = {};
+      for (const [key, value] of Object.entries(incoming)) {
+        if (key === '__proto__' || key === 'constructor' || key === 'prototype') continue;
+        const cleaned = sanitizeBookmark(value);
+        if (cleaned) {
+          pendingDeletionsRef.current.delete(cleaned.puzzleId);
+          sanitized[key] = cleaned;
+        }
+      }
+
+      setProfile((prev) => ({
+        ...prev,
+        bookmarks: { ...prev.bookmarks, ...sanitized },
+      }));
       return true;
     } catch {
       return false;
@@ -472,11 +589,11 @@ export const useLearnerProfile = () => {
     ];
 
     const age = profile.userAge || 35;
-    const cohort = AGE_NORM_COHORTS.find((c) => age <= c.maxAge) || AGE_NORM_COHORTS[2];
+    const cohort = AGE_NORM_COHORTS.find((c) => age <= c.maxAge) || AGE_NORM_COHORTS[2]!;
     const ageAdjustedZ = Number(((standardIQ - cohort.mean) / cohort.sd).toFixed(2));
     const agePercentile = Number((normalCDF(ageAdjustedZ) * 100).toFixed(1));
 
-    const records = profile.recentRecords || [];
+    const records = profile.recentRecords;
     let cronbachAlpha = 0.88;
     let splitHalfReliability = 0.85;
 
@@ -502,9 +619,11 @@ export const useLearnerProfile = () => {
         const m1 = oddNormalized.slice(0, minLen).reduce((a, b) => a + b, 0) / minLen;
         const m2 = evenNormalized.slice(0, minLen).reduce((a, b) => a + b, 0) / minLen;
         for (let i = 0; i < minLen; i++) {
-          num += (oddNormalized[i] - m1) * (evenNormalized[i] - m2);
-          den1 += Math.pow(oddNormalized[i] - m1, 2);
-          den2 += Math.pow(evenNormalized[i] - m2, 2);
+          const diff1 = (oddNormalized[i] ?? 0) - m1;
+          const diff2 = (evenNormalized[i] ?? 0) - m2;
+          num += diff1 * diff2;
+          den1 += Math.pow(diff1, 2);
+          den2 += Math.pow(diff2, 2);
         }
         const denominator = Math.sqrt(den1 * den2);
         const rHalf = denominator > 0.0001 ? Math.max(-0.99, Math.min(0.99, num / denominator)) : 0.75;
@@ -525,34 +644,40 @@ export const useLearnerProfile = () => {
         cohortSd: cohort.sd,
         ageAdjustedZ,
         agePercentile,
+        isCalibrated: false,
+        dataSource: 'internal-heuristic-norm-v1',
       },
       reliability: {
         cronbachAlpha,
         splitHalfReliability,
         csem,
       },
+      scientificDisclaimer: isEn
+        ? 'Notice: Estimated Standard IQ is derived from empirical IRT performance and internal CHC cognitive weights for longitudinal self-tracking. It is an exploratory heuristic index and not an officially certified clinical or Wechsler psychometric assessment.'
+        : '聲明：估計標準 IQ 係根據實證 IRT 作答表現與內部 CHC 認知權重計算之探索性常模指標，僅供個人縱向趨勢自我追蹤，非屬臨床或官方標準化 Wechsler 心理測量衡鑑。',
     };
-  }, [profile]);
+  }, [profile, isEn]);
 
   const getSpatialCompositeIndex = useCallback((): SpatialCompositeIndex => {
-    const history = profile.recentRecords || profile.history || [];
-    const masyuRecords = history.filter((a) => a.engineType === 'masyu' && a.isSuccess);
-    const nurikabeRecords = history.filter((a) => a.engineType === 'nurikabe' && a.isSuccess);
-    const lightupRecords = history.filter((a) => a.engineType === 'lightup' && a.isSuccess);
+    // P2-3: 語意清理，直接使用 records 指向 recentRecords
+    const records = profile.recentRecords;
+    const masyuRecords = records.filter((a) => MASYU_ALIASES.has(a.engineType) && a.isSuccess);
+    const nurikabeRecords = records.filter((a) => NURIKABE_ALIASES.has(a.engineType) && a.isSuccess);
+    const lightupRecords = records.filter((a) => LIGHTUP_ALIASES.has(a.engineType) && a.isSuccess);
 
-    const calcControl = (records: AttemptPayload[], _baseWeight: number) => {
-      if (records.length === 0) return 72;
-      const avgScore = records.reduce((acc, cur) => {
+    const calcControl = (targetRecords: AttemptPayload[]) => {
+      if (targetRecords.length === 0) return 72;
+      const avgScore = targetRecords.reduce((acc, cur) => {
         const pureBonus = cur.isPureClear ? 100 : 80;
         const penalty = Math.min(30, (cur.conflictsCount || 0) * 5);
         return acc + pureBonus - penalty;
-      }, 0) / records.length;
+      }, 0) / targetRecords.length;
       return Math.min(100, Math.max(30, Math.round(avgScore)));
     };
 
-    const eulerianLoopControl = calcControl(masyuRecords, 0.35);
-    const planarPartitioning = calcControl(nurikabeRecords, 0.35);
-    const rayTracingControl = calcControl(lightupRecords, 0.30);
+    const eulerianLoopControl = calcControl(masyuRecords);
+    const planarPartitioning = calcControl(nurikabeRecords);
+    const rayTracingControl = calcControl(lightupRecords);
 
     const weightedScore = Math.round(
       eulerianLoopControl * 0.35 +
@@ -607,9 +732,11 @@ export const useLearnerProfile = () => {
         processingSpeed: { game: 'maze', altGame: 'skyscraper', zh: '反應速度可進一步激發，建議速通「空間迷宮」', en: 'Processing speed could be boosted; sprint through Maze.' },
       };
 
-      const weakestDim = dimEntries[0][0];
+      const weakestDim = dimEntries[0]?.[0] ?? 'spatial';
       const conf = candidateMap[weakestDim] || candidateMap.spatial;
       const targetGame = (currentEngineType && conf.game === currentEngineType) ? conf.altGame : conf.game;
+
+      const isNewPB = Boolean(profile.recentRecords[0]?.isNewPB);
 
       if (!stat || stat.attempts < 4 || !stat.times || stat.times.length < 4) {
         return {
@@ -619,7 +746,7 @@ export const useLearnerProfile = () => {
           conflictCI: { mean: 0.5, sem: 0.2, ci95: [0, 2] },
           percentileRank: 65.0,
           isBootstrap: false,
-          isNewPB: false,
+          isNewPB,
           recommendedFocus: {
             dimension: weakestDim,
             targetGame,
@@ -640,7 +767,7 @@ export const useLearnerProfile = () => {
         conflictCI,
         percentileRank,
         isBootstrap: true,
-        isNewPB: (profile.recentRecords[0]?.timeSpentSec || 999) <= profile.personalBest.fastestTime,
+        isNewPB,
         recommendedFocus: {
           dimension: weakestDim,
           targetGame,
@@ -665,14 +792,14 @@ export const useLearnerProfile = () => {
     const dataDictionaryMd = isEn ? `# LogiCore Cognitive Assessment Dataset — Data Dictionary (v2.8.0)
 
 ## 1. Global Psychometrics
-- **estimatedStandardIQ**: Wechsler Standardized Scale IQ (μ=100, σ=15).
+- **estimatedStandardIQ**: Internal Standardized Scale IQ (μ=100, σ=15). Exploratory estimation.
 - **pureStreak**: Current consecutive pure mode clear streak.
 - **hintTrend**: Longitudinal hint call distribution (T1: 0~30s, T2: 30~60s, T3: 60s+).
 - **compositeGf**: Raw fluid intelligence estimation (0.000 ~ 1.000).
 - **spatialCompositeIndex**: Spatial topology & ray casting composite scale (Scaled 1~19, PR 1~99).
 - **csem**: Conditional Standard Error of Measurement.
 - **confidenceInterval95**: [Integer, Integer]. 95% Confidence Interval.
-- **ageNorm**: Age-stratified norm comparison.
+- **ageNorm**: Age-stratified norm comparison (Internal Heuristic Norm v1).
 - **cronbachAlpha**: Internal consistency coefficient.
 - **splitHalfReliability**: Spearman-Brown split-half reliability.
 
@@ -685,14 +812,14 @@ export const useLearnerProfile = () => {
 ` : `# LogiCore 認知評估數據集 — 數據字典 (Data Dictionary v2.8.0)
 
 ## 1. 全域指標 (Global Psychometrics)
-- **estimatedStandardIQ**: Wechsler 標準量尺 IQ (μ=100, σ=15)。
+- **estimatedStandardIQ**: 平台內部標準量尺 IQ (μ=100, σ=15)，屬探索性常模估計。
 - **pureStreak**: 當前純挑戰 (Pure Mode) 連續通關場次。
 - **hintTrend**: 長期提示調用分佈 (T1: 0~30s, T2: 30~60s, T3: 60s+)。
 - **compositeGf**: 原始流體智力估計值 (0.000 ~ 1.000)。
 - **spatialCompositeIndex**: 空間拓撲與射線投射能力綜合量尺 (Scaled 1~19, PR 1~99)。
 - **csem**: 條件測量標準誤。
 - **confidenceInterval95**: [整數, 整數]。95% 信賴區間。
-- **ageNorm**: 年齡分層常模對照。
+- **ageNorm**: 年齡分層常模對照 (內部啟發式常模 v1)。
 - **cronbachAlpha**: 內部一致性係數。
 - **splitHalfReliability**: Spearman-Brown 分半信度。
 
@@ -734,13 +861,15 @@ export const useLearnerProfile = () => {
       longitudinalRecords: profile.recentRecords,
     };
 
-    const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(exportBundle, null, 2));
+    const blob = new Blob([JSON.stringify(exportBundle, null, 2)], { type: 'application/json' });
+    const downloadUrl = URL.createObjectURL(blob);
     const downloadAnchor = document.createElement('a');
-    downloadAnchor.setAttribute('href', dataStr);
+    downloadAnchor.setAttribute('href', downloadUrl);
     downloadAnchor.setAttribute('download', `LogiCore_Psychometrics_Dataset_v2.8_${Date.now()}.json`);
     document.body.appendChild(downloadAnchor);
     downloadAnchor.click();
     downloadAnchor.remove();
+    URL.revokeObjectURL(downloadUrl);
   }, [profile, getCompositeCognitiveIndex, getSpatialCompositeIndex, isEn]);
 
   return {
