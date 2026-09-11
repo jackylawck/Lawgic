@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback, memo } from 'react';
 import { ErrorBoundary } from 'react-error-boundary';
-import { LanguageProvider } from './contexts/LanguageContext';
+import { LanguageProvider, useLanguage } from './contexts/LanguageContext';
 import { AccessibilityProvider, useAccessibility } from './contexts/AccessibilityContext';
 import { PuzzleRenderer, CognitiveDashboard } from './registry/RendererRegistry';
 import { PuzzleEntity } from './generated';
@@ -103,6 +103,9 @@ PuzzleTimer.displayName = 'PuzzleTimer';
 
 const MainDashboard: React.FC = () => {
   const t = useT();
+  const { lang } = useLanguage();
+  const isEn = lang === 'en'; // 修復 TS2367：依據語言上下文狀態判斷，而非拿翻譯文字比對
+
   const { playSound } = useAccessibility();
   const { profile, getCompositeCognitiveIndex } = useLearnerProfile();
   const { getRecommendedSchedulePuzzle } = useLongTermScheduler(profile, PUZZLE_CATALOG);
@@ -132,9 +135,9 @@ const MainDashboard: React.FC = () => {
     setSelectedType(imported.engine_type);
     setCurrentLevel(imported.tier as ExtendedTierKey);
     const gameMeta = ALL_GAMES.find((g) => g.id === imported.engine_type);
-    const name = gameMeta ? (t.tiers.kids === 'Kids' ? gameMeta.nameEn : gameMeta.nameZh) : 'Puzzle';
+    const name = gameMeta ? (isEn ? gameMeta.nameEn : gameMeta.nameZh) : 'Puzzle';
     showToast(t.toast.challengeLoaded(name, imported.metrics?.irt_logit_difficulty || '1.0'), 3000);
-  }, [t, showToast]);
+  }, [t, isEn, showToast]);
 
   const {
     activeList,
@@ -189,11 +192,10 @@ const MainDashboard: React.FC = () => {
 
   useEffect(() => {
     const activeGame = ALL_GAMES.find((g) => g.id === selectedType);
-    const isEn = t.tiers.kids === 'Kids';
     const gameName = activeGame ? (isEn ? activeGame.nameEn : activeGame.nameZh) : 'Cognitive Arena';
     const tierName = t.tiers[currentLevel];
     document.title = `${gameName} [${tierName}] | ${t.status.titleSuffix}`;
-  }, [selectedType, currentLevel, t]);
+  }, [selectedType, currentLevel, isEn, t]);
 
   const handleTierJump = useCallback(
     (steps: number) => {
@@ -260,7 +262,6 @@ const MainDashboard: React.FC = () => {
   }, []);
 
   const cci = getCompositeCognitiveIndex();
-  const isEn = t.tiers.kids === 'Kids';
 
   return (
     <main className="min-h-screen bg-[#070a0f] text-slate-200 flex flex-col items-center py-2 px-2 font-mono selection:bg-indigo-600">
