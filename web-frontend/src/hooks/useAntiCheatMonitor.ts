@@ -9,8 +9,8 @@ import {
 export type { ExtendedSecurityAuditTrail };
 
 /**
- * 賽事防作弊監控 Hook（輕量相容適配層）
- * 底層接入全域單例 AntiCheatContext，杜絕重複事件註冊與畫布無謂重繪
+ * 舊版相容適配層
+ * ⚠️ 效能指引：高頻解題元件請優先直接使用 `useAntiCheatActions()`，避免告警觸發造成畫布重繪。
  */
 export const useAntiCheatMonitor = (isActive: boolean) => {
   const {
@@ -21,7 +21,7 @@ export const useAntiCheatMonitor = (isActive: boolean) => {
     setMonitoringActive,
   } = useAntiCheatActions();
 
-  const { violationAlert } = useAntiCheatAlert();
+  const { violationAlert, violationCode } = useAntiCheatAlert();
 
   useEffect(() => {
     setMonitoringActive(isActive);
@@ -31,9 +31,9 @@ export const useAntiCheatMonitor = (isActive: boolean) => {
   }, [isActive, setMonitoringActive]);
 
   return {
-    // 提供同步快照取值，維持與原呼叫端介面相容
     auditTrail: getAuditSnapshotSync(),
     violationAlert,
+    violationCode,
     verifyTrustedInput,
     getAuditSnapshot,
     resetAudit,
