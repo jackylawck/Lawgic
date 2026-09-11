@@ -4,6 +4,10 @@ import App from './App';
 import './index.css';
 import { EventBus } from './events/bus';
 
+// 確保 TypeScript 編譯器 (tsc) 能 100% 識別 Vite define 注入的全域變數
+declare const __BUILD_HASH__: string;
+declare const __BUILD_TIME__: string;
+
 interface ErrorBoundaryState {
   hasError: boolean;
   error: Error | null;
@@ -90,8 +94,8 @@ class GlobalErrorBoundary extends React.Component<
     const report = {
       timestamp: new Date().toISOString(),
       build: {
-        hash: __BUILD_HASH__,
-        time: __BUILD_TIME__,
+        hash: typeof __BUILD_HASH__ !== 'undefined' ? __BUILD_HASH__ : 'local-dev',
+        time: typeof __BUILD_TIME__ !== 'undefined' ? __BUILD_TIME__ : 'unknown',
       },
       url: window.location.href,
       hash: window.location.hash,
@@ -220,7 +224,7 @@ if ('serviceWorker' in navigator && import.meta.env.PROD) {
               ) {
                 console.info('[PWA] New engine build installed and waiting.');
                 EventBus.emit('update-available', {
-                  version: __BUILD_HASH__,
+                  version: typeof __BUILD_HASH__ !== 'undefined' ? __BUILD_HASH__ : 'latest',
                 });
               }
             });
