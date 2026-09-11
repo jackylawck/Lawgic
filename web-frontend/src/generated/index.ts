@@ -28,6 +28,26 @@ export interface CognitiveLoad {
   inhibition: number;
 }
 
+/**
+ * 引擎題目規格介面（唯一事實來源）
+ * 供 RendererRegistry 與各 Board 元件共用，杜絕型別循環依賴
+ */
+export interface PuzzleSpec {
+  rows?: number;
+  cols?: number;
+  height?: number;
+  width?: number;
+  size?: number;
+  clues?: unknown;
+  grid?: unknown;
+  solution?: unknown;
+  pureDeductionRate?: number;
+  seed?: number;
+  tier?: string;
+  difficulty?: string;
+  [key: string]: unknown;
+}
+
 export interface PuzzleMetrics {
   estimated_time_sec?: number;
   irt_logit_difficulty: number;
@@ -36,6 +56,7 @@ export interface PuzzleMetrics {
   propagation_steps?: number;
   difficulty_tier?: string;
   seed?: number;
+  [key: string]: unknown;
 }
 
 export interface PuzzleEntity {
@@ -44,19 +65,11 @@ export interface PuzzleEntity {
   engine_type: string;
   tier: TierKey;
   checksum: string;
-  puzzle: {
-    rows: number;
-    cols: number;
-    grid?: any;
-    clues?: any;
-    solution?: any;
-    pureDeductionRate?: number;
-    seed?: number;
-    [key: string]: any;
-  };
-  solution: any;
+  puzzle: PuzzleSpec;
+  solution: unknown;
   cognitiveLoad: CognitiveLoad;
   metrics: PuzzleMetrics;
+  [key: string]: unknown;
 }
 
 // 認知負荷預設權重表 (涵蓋全部 18 款遊戲)
@@ -82,10 +95,27 @@ const DEFAULT_COGNITIVE_LOADS: Record<string, CognitiveLoad> = {
 };
 
 /**
- * 題目規格正規化處理器：
- * 自動相容舊結構、扁平陣列結構與嵌套規格
+ * 32-bit FNV-1a 確定性雜湊：
+ * 杜絕 Math.random() 產生的 ID 漂移，確保純前端離線運行時題目 ID 的可重現性
  */
-function normalizePuzzle(raw: any, defaultEngine: string, defaultTier: TierKey): PuzzleEntity | null {
+function fastHash(str: string): string {
+  let hash = 2166136261;
+  for (let i = 0; i < str.length; i++) {
+    hash ^= str.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36);
+}
+
+/**
+ * 題目規格正規化處理器
+ */
+function normalizePuzzle(
+  raw: any,
+  defaultEngine: string,
+  defaultTier: TierKey,
+  fallbackIndex = 0
+): PuzzleEntity | null {
   if (!raw) return null;
 
   const engineType = raw.engine_type || defaultEngine;
@@ -94,12 +124,18 @@ function normalizePuzzle(raw: any, defaultEngine: string, defaultTier: TierKey):
   const rawPuzzle = raw.puzzle || {};
   const isPuzzleArray = Array.isArray(rawPuzzle);
 
-  const rows = Number(rawPuzzle.rows || rawPuzzle.height || rawPuzzle.size || raw.rows || (isPuzzleArray ? rawPuzzle.length : 6));
-  const cols = Number(rawPuzzle.cols || rawPuzzle.width || rawPuzzle.size || raw.cols || (isPuzzleArray && rawPuzzle[0] ? rawPuzzle[0].length : rows));
+  const rows = Number(
+    rawPuzzle.rows || rawPuzzle.height || rawPuzzle.size || raw.rows || (isPuzzleArray ? rawPuzzle.length : 6)
+  );
+  const cols = Number(
+    rawPuzzle.cols || rawPuzzle.width || rawPuzzle.size || raw.cols || (isPuzzleArray && rawPuzzle[0] ? rawPuzzle[0].length : rows)
+  );
 
-  const gridData = !isPuzzleArray ? (rawPuzzle.grid || rawPuzzle.clues) : rawPuzzle;
-  const cluesData = !isPuzzleArray ? (rawPuzzle.clues || rawPuzzle.grid) : rawPuzzle;
-  const solutionData = raw.solution || rawPuzzle.solution || null;
+  const gridData = !isPuzzleArray ? (rawPuzzle.grid ?? rawPuzzle.clues) : rawPuzzle;
+  const cluesData = !isPuzzleArray ? (rawPuzzle.clues ?? rawPuzzle.grid) : rawPuzzle;
+  const solutionData = raw.solution ?? rawPuzzle.solution ?? null;
+
+  const seed = raw.metrics?.seed ?? raw.seed ?? rawPuzzle.seed;
 
   const fallbackIrt: Record<TierKey, number> = {
     kids: 0.65,
@@ -112,33 +148,44 @@ function normalizePuzzle(raw: any, defaultEngine: string, defaultTier: TierKey):
 
   const irt = Number(raw.metrics?.irt_logit_difficulty || fallbackIrt[tier] || 1.5);
 
+  // 確定性特徵雜湊（杜絕 Math.random()）
+  const signature = `${engineType}_${tier}_${seed ?? fallbackIndex}_${rows}x${cols}`;
+  const stableHash = fastHash(signature);
+
   return {
-    id: raw.id || `${engineType}_${tier}_${Math.random().toString(36).slice(2, 7)}`,
-    category: raw.category || (engineType === 'sudoku' || engineType === 'kakuro' ? 'numeric_logic' : 'spatial_logic'),
+    id: raw.id || `${engineType}_${tier}_${stableHash}`,
+    category:
+      raw.category ||
+      (engineType === 'sudoku' || engineType === 'kakuro' ? 'numeric_logic' : 'spatial_logic'),
     engine_type: engineType,
     tier,
-    checksum: raw.checksum || `VERIFIED_${Math.random().toString(36).slice(2, 8)}`,
+    checksum: raw.checksum || `VERIFIED_${stableHash}`,
     puzzle: {
+      ...rawPuzzle,
       rows,
       cols,
       grid: gridData,
       clues: cluesData,
       solution: solutionData,
       pureDeductionRate: rawPuzzle.pureDeductionRate ?? 1.0,
-      seed: rawPuzzle.seed,
+      seed,
     },
     solution: solutionData,
-    cognitiveLoad: raw.cognitiveLoad || DEFAULT_COGNITIVE_LOADS[engineType] || {
-      spatial: 0.7,
-      numeric: 0.7,
-      workingMemory: 0.7,
-      inhibition: 0.7,
-    },
+    cognitiveLoad:
+      raw.cognitiveLoad ||
+      DEFAULT_COGNITIVE_LOADS[engineType] || {
+        spatial: 0.7,
+        numeric: 0.7,
+        workingMemory: 0.7,
+        inhibition: 0.7,
+      },
     metrics: {
       estimated_time_sec: raw.metrics?.estimated_time_sec || rows * cols * 2.5,
       irt_logit_difficulty: irt,
       decision_depth: raw.metrics?.decision_depth || 0,
       propagation_steps: raw.metrics?.propagation_steps || 100,
+      difficulty_tier: tier,
+      seed, // 補齊 seed，對齊 RendererRegistry
     },
   };
 }
@@ -151,23 +198,21 @@ function ingestRawSource(source: any, defaultEngine: string): PuzzleEntity[] {
   const results: PuzzleEntity[] = [];
 
   if (Array.isArray(source)) {
-    source.forEach((item) => {
-      const parsed = normalizePuzzle(item, defaultEngine, 'intermediate');
+    source.forEach((item, index) => {
+      const parsed = normalizePuzzle(item, defaultEngine, 'intermediate', index);
       if (parsed) results.push(parsed);
     });
   } else if (typeof source === 'object') {
-    // 支援按難度劃分的物件結構 { kids: [...], expert: [...] }
     const validTiers: TierKey[] = ['kids', 'intermediate', 'expert', 'master', 'legendary', 'ultimate'];
     Object.entries(source).forEach(([key, val]) => {
       if (validTiers.includes(key as TierKey) && Array.isArray(val)) {
-        val.forEach((item) => {
-          const parsed = normalizePuzzle(item, defaultEngine, key as TierKey);
+        val.forEach((item, index) => {
+          const parsed = normalizePuzzle(item, defaultEngine, key as TierKey, index);
           if (parsed) results.push(parsed);
         });
       } else if (Array.isArray(val)) {
-        // 支援按題型劃分的物件結構 { sudoku: [...] }
-        val.forEach((item) => {
-          const parsed = normalizePuzzle(item, key, 'intermediate');
+        val.forEach((item, index) => {
+          const parsed = normalizePuzzle(item, key, 'intermediate', index);
           if (parsed) results.push(parsed);
         });
       }
@@ -205,18 +250,24 @@ ingestRawSource(mazeRaw, 'maze').forEach((p) => baseCatalog.maze.push(p));
 ingestRawSource(hashiRaw, 'hashi').forEach((p) => baseCatalog.hashi.push(p));
 ingestRawSource(skyscraperRaw, 'skyscraper').forEach((p) => baseCatalog.skyscraper.push(p));
 
+// 使用 Set 實現 O(1) 去重字典
+const seenIds = new Set<string>();
+Object.values(baseCatalog).forEach((list) => {
+  list.forEach((p) => seenIds.add(p.id));
+});
+
 // 注入綜合題庫 puzzle_library.json
 if (puzzleLibraryRaw && typeof puzzleLibraryRaw === 'object') {
   Object.entries(puzzleLibraryRaw).forEach(([engineKey, puzzleList]) => {
     if (Array.isArray(puzzleList)) {
-      puzzleList.forEach((raw) => {
-        const item = normalizePuzzle(raw, engineKey, 'intermediate');
+      puzzleList.forEach((raw, idx) => {
+        const item = normalizePuzzle(raw, engineKey, 'intermediate', idx);
         if (item) {
           if (!baseCatalog[item.engine_type]) {
             baseCatalog[item.engine_type] = [];
           }
-          // 去重避免同 ID 重複加入
-          if (!baseCatalog[item.engine_type].some((existing) => existing.id === item.id)) {
+          if (!seenIds.has(item.id)) {
+            seenIds.add(item.id);
             baseCatalog[item.engine_type].push(item);
           }
         }
