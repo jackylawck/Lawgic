@@ -1,15 +1,21 @@
 import { ExtendedTierKey } from '../hooks/useLearnerProfile';
 
+// U1: 提升為常數型別，供 vite-env.d.ts 映射
+export const EVENT_PREFIX = 'logicore:' as const;
+export type EventPrefix = typeof EVENT_PREFIX;
+
 export interface EventMap {
   'joystick-move': { dx: number; dy: number };
   'joystick-look': { x: number; y: number };
   'joystick-action': void;
   'navigate-game': { gameId?: string; tier?: ExtendedTierKey };
   'update-available': { version?: string };
+  // U2: 消除游離事件，統一納入型別契約
+  'lang-changed': { lang: 'zh' | 'en' };
+  'vault-updated': void;
 }
 
 type EventKey = keyof EventMap;
-const EVENT_PREFIX = 'logicore:';
 
 export const EventBus = {
   emit<K extends EventKey>(
