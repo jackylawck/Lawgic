@@ -1,13 +1,16 @@
 // web-frontend/src/generated/index.ts
 
-// 導入靜態題庫 JSON
 import puzzleLibraryRaw from './puzzle_library.json';
 import sudokuRaw from './sudoku.json';
 import mazeRaw from './maze.json';
 import hashiRaw from './hashi.json';
 import skyscraperRaw from './skyscraper.json';
 
-export type TierKey = 'kids' | 'intermediate' | 'expert' | 'master' | 'legendary' | 'ultimate';
+// P0 修復：從領域唯一事實來源引入 TierKey
+import { TierKey } from '../types/cognitive';
+import { normalizeEngineType } from '../registry/engineMetadata';
+
+export type { TierKey };
 
 export type PuzzleCategory =
   | 'spatial'
@@ -28,10 +31,6 @@ export interface CognitiveLoad {
   inhibition: number;
 }
 
-/**
- * 引擎題目規格介面（唯一事實來源）
- * 使用交集型別相容具體 Spec (FutoshikiSpec, SudokuSpec, MazeSpec 等)，杜絕 TS2322 缺少索引簽名錯誤
- */
 export type PuzzleSpec = {
   rows?: number;
   cols?: number;
@@ -71,7 +70,6 @@ export interface PuzzleEntity {
   [key: string]: unknown;
 }
 
-// 認知負荷預設權重表 (涵蓋全部 18 款遊戲)
 const DEFAULT_COGNITIVE_LOADS: Record<string, CognitiveLoad> = {
   maze: { spatial: 0.95, numeric: 0.2, workingMemory: 0.7, inhibition: 0.8 },
   sudoku: { spatial: 0.3, numeric: 0.95, workingMemory: 0.85, inhibition: 0.7 },
@@ -93,10 +91,6 @@ const DEFAULT_COGNITIVE_LOADS: Record<string, CognitiveLoad> = {
   shikaku: { spatial: 0.92, numeric: 0.9, workingMemory: 0.8, inhibition: 0.85 },
 };
 
-/**
- * 32-bit FNV-1a 確定性雜湊：
- * 杜絕 Math.random() 產生的 ID 漂移，確保純前端離線運行時題目 ID 的可重現性
- */
 function fastHash(str: string): string {
   let hash = 2166136261;
   for (let i = 0; i < str.length; i++) {
@@ -106,9 +100,6 @@ function fastHash(str: string): string {
   return (hash >>> 0).toString(36);
 }
 
-/**
- * 題目規格正規化處理器
- */
 function normalizePuzzle(
   raw: any,
   defaultEngine: string,
@@ -117,7 +108,8 @@ function normalizePuzzle(
 ): PuzzleEntity | null {
   if (!raw) return null;
 
-  const engineType = raw.engine_type || defaultEngine;
+  // P1 修復：將傳入的 engine_type 先行規範化，防止別名漏抓 DEFAULT_COGNITIVE_LOADS
+  const engineType = normalizeEngineType(raw.engine_type || defaultEngine);
   const tier: TierKey = (raw.tier || raw.metrics?.difficulty_tier || defaultTier) as TierKey;
 
   const rawPuzzle = raw.puzzle || {};
@@ -146,8 +138,6 @@ function normalizePuzzle(
   };
 
   const irt = Number(raw.metrics?.irt_logit_difficulty || fallbackIrt[tier] || 1.5);
-
-  // 確定性特徵雜湊（杜絕 Math.random()）
   const signature = `${engineType}_${tier}_${seed ?? fallbackIndex}_${rows}x${cols}`;
   const stableHash = fastHash(signature);
 
@@ -189,9 +179,6 @@ function normalizePuzzle(
   };
 }
 
-/**
- * 載入 JSON 資料源並壓平成題庫陣列
- */
 function ingestRawSource(source: any, defaultEngine: string): PuzzleEntity[] {
   if (!source) return [];
   const results: PuzzleEntity[] = [];
@@ -221,7 +208,6 @@ function ingestRawSource(source: any, defaultEngine: string): PuzzleEntity[] {
   return results;
 }
 
-// 建立 18 款遊戲的題庫骨幹
 const baseCatalog: Record<string, PuzzleEntity[]> = {
   maze: [],
   sudoku: [],
@@ -243,19 +229,16 @@ const baseCatalog: Record<string, PuzzleEntity[]> = {
   shikaku: [],
 };
 
-// 注入各 JSON 資料源
 ingestRawSource(sudokuRaw, 'sudoku').forEach((p) => baseCatalog.sudoku.push(p));
 ingestRawSource(mazeRaw, 'maze').forEach((p) => baseCatalog.maze.push(p));
 ingestRawSource(hashiRaw, 'hashi').forEach((p) => baseCatalog.hashi.push(p));
 ingestRawSource(skyscraperRaw, 'skyscraper').forEach((p) => baseCatalog.skyscraper.push(p));
 
-// 使用 Set 實現 O(1) 去重字典
 const seenIds = new Set<string>();
 Object.values(baseCatalog).forEach((list) => {
   list.forEach((p) => seenIds.add(p.id));
 });
 
-// 注入綜合題庫 puzzle_library.json
 if (puzzleLibraryRaw && typeof puzzleLibraryRaw === 'object') {
   Object.entries(puzzleLibraryRaw).forEach(([engineKey, puzzleList]) => {
     if (Array.isArray(puzzleList)) {
