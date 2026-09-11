@@ -1,6 +1,45 @@
 import { useLanguage } from '../contexts/LanguageContext';
 
-export const TRANSLATIONS = {
+export interface TranslationSchema {
+  actions: {
+    prev: string;
+    next: string;
+    generate: string;
+    tierStepDown: string;
+    tierStepUp: string;
+    smartDrill: string;
+    mark: string;
+    close: string;
+  };
+  status: {
+    synthesizing: string;
+    loading: string;
+    tournamentOn: string;
+    tournamentOff: string;
+    zeroTrustVerified: string;
+    complianceNotice: string;
+    vaultCard: string;
+    puzzleProgress: string;
+    titleSuffix: string;
+  };
+  toast: {
+    dynamicSynthesized: string;
+    badgeCopied: string;
+    clipboardDenied: string;
+    clipboardUnsupported: string;
+    challengeLoaded: (name: string, irt: string | number) => string;
+  };
+  tiers: {
+    kids: string;
+    intermediate: string;
+    expert: string;
+    master: string;
+    legendary: string;
+    ultimate: string;
+  };
+}
+
+export const TRANSLATIONS: Record<'zh' | 'en', TranslationSchema> = {
   zh: {
     actions: {
       prev: '◀ 上一題',
@@ -79,11 +118,11 @@ export const TRANSLATIONS = {
       ultimate: 'Ultimate',
     },
   },
-} as const;
+};
 
-export type TranslationKeys = typeof TRANSLATIONS.zh;
+export type TranslationKeys = TranslationSchema;
 
-export function useT(): TranslationKeys {
+export function useT(): TranslationSchema {
   const { lang } = useLanguage();
   return TRANSLATIONS[lang === 'en' ? 'en' : 'zh'];
 }
