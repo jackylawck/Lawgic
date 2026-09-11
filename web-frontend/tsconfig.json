@@ -14,8 +14,8 @@
     "noEmit": true,
     "jsx": "react-jsx",
 
-    /* 關鍵型別庫注入 */
-    "types": ["node", "vite/client"],
+    /* 關鍵型別庫注入：嚴格僅限於前端瀏覽器環境 */
+    "types": ["vite/client"],
 
     /* 路徑別名映射 */
     "baseUrl": ".",
@@ -25,19 +25,13 @@
 
     /* 嚴格型別守衛 */
     "strict": true,
-    "strictNullChecks": true,
-    "strictFunctionTypes": true,
-    "strictBindCallApply": true,
-    "strictPropertyInitialization": true,
-    "noImplicitThis": true,
-    "alwaysStrict": true,
+    "noFallthroughCasesInSwitch": true,
+    "forceConsistentCasingInFileNames": true,
 
-    /* 🌟 關鍵調整：暫時關閉 unused 阻斷，避免 CI 因個別過渡變數掛掉 */
+    /* ⚠️ 過渡期設定：追蹤 Issue #1，待 18 款引擎重構完成後開啟 */
     "noUnusedLocals": false,
     "noUnusedParameters": false,
-    "noFallthroughCasesInSwitch": true,
-    "noUncheckedIndexedAccess": false,
-    "forceConsistentCasingInFileNames": true
+    "noUncheckedIndexedAccess": false
   },
   "include": ["src"],
   "exclude": ["node_modules", "dist"]
