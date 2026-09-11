@@ -307,11 +307,11 @@ export const CognitiveRadarChart: React.FC<CognitiveRadarChartProps> = ({
     });
   }, [dimensions, previousDimensions, isEn]);
 
-  // 5. 層級 2：結合調色盤派發顏色與無障礙文字
+  // 5. 層級 2：結合調色盤派發顏色與無障礙文字（明確標註 string 消除 TS2322）
   const growthRates = useMemo(() => {
     return growthValues.map((item) => {
       let textColor = palette.neutralText;
-      let ariaGrowthText = t.noChange;
+      let ariaGrowthText: string = t.noChange;
 
       if (item.rate === null) {
         ariaGrowthText = t.noBaseline;
