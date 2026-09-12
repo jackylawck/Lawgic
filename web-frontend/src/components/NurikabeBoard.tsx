@@ -1,9 +1,15 @@
+// web-frontend/src/components/NurikabeBoard.tsx
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { PuzzleEntity, TierKey } from '../generated';
 import { useLearnerProfile } from '../hooks/useLearnerProfile';
 import { useLanguage } from '../contexts/LanguageContext';
 import { TournamentSubmissionModal } from './TournamentSubmissionModal';
-import { getEnvironmentFingerprint, calculateInfractionScore } from '../utils/tournamentSecurity';
+import {
+  TournamentProctoringSession,
+  getEnvironmentFingerprint,
+  calculateInfractionScore,
+} from '../utils/tournamentSecurity';
+import { VaultManager, VaultItem } from '../utils/vaultStorage';
 import {
   NurikabeAxiomaticEngine,
   NurikabeCellState,
@@ -40,8 +46,8 @@ export const NurikabeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
   }
 
   const spec = (actualPuzzle as any)?.puzzle;
-  const rows = spec?.rows || 6;
-  const cols = spec?.cols || 6;
+  const rows: number = spec?.rows || 6;
+  const cols: number = spec?.cols || 6;
   const grid = useMemo(() => (spec?.grid || []) as (number | null)[][], [spec]);
   const currentTier = (actualPuzzle.tier as TierKey) || 'kids';
 
@@ -72,6 +78,9 @@ export const NurikabeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
 
   const [isCompleted, setIsCompleted] = useState<boolean>(false);
   const [showSubmitModal, setShowSubmitModal] = useState<boolean>(false);
+  const [isFavorited, setIsFavorited] = useState<boolean>(() =>
+    VaultManager.isFavorited(actualPuzzle.id)
+  );
 
   // 雙軌計時器
   const startTimeRef = useRef<number>(Date.now());
@@ -80,6 +89,17 @@ export const NurikabeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
   const movesCountRef = useRef<number>(0);
   const lifetimeViolationsRef = useRef<number>(0);
   const hasRecordedRef = useRef<boolean>(false);
+
+  // 實體防作弊稽核 Session
+  const proctoringRef = useRef<TournamentProctoringSession | null>(null);
+
+  useEffect(() => {
+    proctoringRef.current = new TournamentProctoringSession();
+    return () => {
+      proctoringRef.current?.destroy();
+      proctoringRef.current = null;
+    };
+  }, [actualPuzzle.id]);
 
   useEffect(() => {
     const blank = Array.from({ length: rows }, () => Array(cols).fill(0));
@@ -99,9 +119,10 @@ export const NurikabeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
     movesCountRef.current = 0;
     lifetimeViolationsRef.current = 0;
     hasRecordedRef.current = false;
+    setIsFavorited(VaultManager.isFavorited(actualPuzzle.id));
   }, [actualPuzzle.id, rows, cols]);
 
-  // HUD 異常偵測
+  // HUD 拓撲異常偵測
   const hudTopologyAnalysis = useMemo(() => {
     const pools = new Set<string>();
     const overflowingCells = new Set<string>();
@@ -137,7 +158,7 @@ export const NurikabeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
           while (queue.length > 0) {
             const [cr, cc] = queue.shift()!;
             comp.push([cr, cc]);
-            if (grid[cr][cc] !== null) {
+            if (grid[cr]?.[cc] !== null && grid[cr]?.[cc] !== undefined) {
               clue = grid[cr][cc];
               clueCount++;
             }
@@ -217,7 +238,8 @@ export const NurikabeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
 
   const prevViolationsRef = useRef<number>(0);
   useEffect(() => {
-    const cur = hudTopologyAnalysis.activePoolsCount +
+    const cur =
+      hudTopologyAnalysis.activePoolsCount +
       (hudTopologyAnalysis.overflowingCells.size > 0 ? 1 : 0) +
       (hudTopologyAnalysis.strandedSeaCells.size > 0 ? 1 : 0);
     if (cur > prevViolationsRef.current) {
@@ -275,7 +297,19 @@ export const NurikabeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
       setTimeline(updatedTimeline);
       setTimelineIndex(updatedTimeline.length - 1);
     },
-    [isCompleted, isReplaying, grid, board, noGuessMode, timeline, timelineIndex, hudTopologyAnalysis.hasViolations, rows, cols, isEn]
+    [
+      isCompleted,
+      isReplaying,
+      grid,
+      board,
+      noGuessMode,
+      timeline,
+      timelineIndex,
+      hudTopologyAnalysis.hasViolations,
+      rows,
+      cols,
+      isEn,
+    ]
   );
 
   const jumpToTimelineStep = (idx: number) => {
@@ -306,11 +340,7 @@ export const NurikabeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
   const handleCellInteraction = (r: number, c: number, e: React.MouseEvent) => {
     e.preventDefault();
     if (grid[r]?.[c] !== null) return;
-    if (e.shiftKey) {
-      mutateCell(r, c, board[r][c] === 2 ? 0 : 2);
-    } else if (e.ctrlKey || e.metaKey) {
-      mutateCell(r, c, board[r][c] === 1 ? 0 : 1);
-    } else if (e.button === 2) {
+    if (e.shiftKey || e.button === 2) {
       mutateCell(r, c, board[r][c] === 2 ? 0 : 2);
     } else {
       mutateCell(r, c, board[r][c] === 1 ? 0 : 1);
@@ -341,7 +371,7 @@ export const NurikabeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
     let totalClues = 0;
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
-        if (grid[r][c] !== null) totalClues++;
+        if (grid[r]?.[c] !== null && grid[r]?.[c] !== undefined) totalClues++;
       }
     }
 
@@ -349,9 +379,16 @@ export const NurikabeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
       row.map((val, c) => (grid[r]?.[c] !== null ? (2 as NurikabeCellState) : val))
     );
 
-    const isSeaValid = !NurikabeAxiomaticEngine.has2x2Sea(rows, cols, effective) &&
+    const isSeaValid =
+      !NurikabeAxiomaticEngine.has2x2Sea(rows, cols, effective) &&
       NurikabeAxiomaticEngine.isSeaConnected(rows, cols, effective);
-    const isIslandsValid = NurikabeAxiomaticEngine.verifyAllIslands(rows, cols, grid, effective, totalClues);
+    const isIslandsValid = NurikabeAxiomaticEngine.verifyAllIslands(
+      rows,
+      cols,
+      grid,
+      effective,
+      totalClues
+    );
 
     if (isSeaValid && isIslandsValid) {
       setIsCompleted(true);
@@ -378,7 +415,33 @@ export const NurikabeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
         });
       }
     }
-  }, [board, grid, hudTopologyAnalysis.hasViolations, isCompleted, isReplaying, actualPuzzle, rows, cols, currentTier, recordAttempt]);
+  }, [
+    board,
+    grid,
+    hudTopologyAnalysis.hasViolations,
+    isCompleted,
+    isReplaying,
+    actualPuzzle,
+    rows,
+    cols,
+    currentTier,
+    recordAttempt,
+  ]);
+
+  const handleToggleFavorite = () => {
+    const vaultItem: VaultItem = {
+      id: actualPuzzle.id,
+      engine: 'nurikabe',
+      tier: currentTier,
+      seed: typeof actualPuzzle.seed === 'number' ? actualPuzzle.seed : 1001,
+      steps: movesCountRef.current,
+      timeSpentSec: Math.round(elapsedMs / 1000),
+      iqScore: cci.standardIQ,
+      date: new Date().toISOString(),
+    };
+    const res = VaultManager.toggleFavorite(vaultItem);
+    setIsFavorited(res.isFav);
+  };
 
   const handleStartReplay = () => {
     const snapshot = board.map((row) => [...row]);
@@ -399,7 +462,6 @@ export const NurikabeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
     setReplayStepsList(steps);
     setReplayStepIndex(0);
     setIsReplaying(true);
-    setBoard(snapshot);
   };
 
   const handleTakeOverReplay = () => {
@@ -439,9 +501,8 @@ export const NurikabeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
   const cci = useMemo(() => getCompositeCognitiveIndex(), [getCompositeCognitiveIndex, isCompleted]);
   const currentReplayStep = replayStepsList[replayStepIndex - 1];
 
-  const thoughtDensity = elapsedMs > 0
-    ? Math.min(1.0, activeContemplationMs / elapsedMs)
-    : 1.0;
+  const thoughtDensity =
+    elapsedMs > 0 ? Math.min(1.0, activeContemplationMs / elapsedMs) : 1.0;
 
   return (
     <div className="flex flex-col items-center justify-center p-2 select-none font-mono text-neutral-300">
@@ -468,6 +529,17 @@ export const NurikabeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
         </div>
 
         <div className="flex items-center gap-1.5 text-[9px]">
+          <button
+            onClick={handleToggleFavorite}
+            className={`px-1.5 py-0.5 rounded border transition cursor-pointer ${
+              isFavorited
+                ? 'border-amber-500/80 bg-amber-950/60 text-amber-300'
+                : 'border-neutral-800 text-neutral-500 hover:text-neutral-300'
+            }`}
+            title="Toggle Favorite"
+          >
+            {isFavorited ? '★' : '☆'}
+          </button>
           <button
             onClick={() => setNoGuessMode((prev) => !prev)}
             disabled={tournamentMode}
@@ -499,10 +571,16 @@ export const NurikabeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
       {isReplaying && (
         <div className="w-full max-w-[360px] mb-2 p-1.5 border border-cyan-800/80 bg-neutral-950 rounded text-[9px] text-cyan-400">
           <div className="flex justify-between items-center mb-1">
-            <span className="truncate max-w-[180px]">
+            <span className="truncate max-w-[170px]">
               [{replayStepIndex}/{replayStepsList.length}] {currentReplayStep?.techniqueName.en || 'Deduction'}
             </span>
             <div className="flex items-center gap-1">
+              <button
+                onClick={() => setReplaySpeed((s) => (s === 1 ? 2 : s === 2 ? 4 : 1))}
+                className="px-1 py-0.2 bg-neutral-900 border border-neutral-700 text-neutral-300 rounded cursor-pointer"
+              >
+                {replaySpeed}x
+              </button>
               <button
                 onClick={handleTakeOverReplay}
                 className="px-1.5 py-0.2 bg-emerald-950 border border-emerald-500 text-emerald-300 font-bold rounded hover:bg-emerald-900 cursor-pointer"
@@ -599,7 +677,9 @@ export const NurikabeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
       <div className="w-full max-w-[360px] flex flex-col gap-1 mt-2.5 px-0.5">
         <div className="flex items-center justify-between text-[8px] text-neutral-500">
           <div className="flex items-center gap-1">
-            <span>STEP: {timelineIndex} / {timeline.length - 1}</span>
+            <span>
+              STEP: {timelineIndex} / {timeline.length - 1}
+            </span>
             <button
               onClick={() => jumpToViolation('prev')}
               className="px-1 py-0.2 bg-neutral-900 hover:bg-neutral-800 text-neutral-400 rounded text-[7px]"
@@ -652,7 +732,9 @@ export const NurikabeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
         <div className="mt-3 w-full max-w-[360px] p-3 bg-neutral-950 border border-neutral-800 rounded-lg text-left shadow-2xl font-mono animate-fade-in">
           <div className="flex justify-between items-center border-b border-neutral-800 pb-2 mb-2">
             <div>
-              <div className="text-[8px] text-neutral-500 uppercase tracking-wider">AXIOMATIC CALIPER RESOLUTION</div>
+              <div className="text-[8px] text-neutral-500 uppercase tracking-wider">
+                AXIOMATIC CALIPER RESOLUTION
+              </div>
               <div className="text-xs font-bold text-neutral-200">MANIFOLD PERFECTLY CLOSED</div>
             </div>
             <div className="text-right">
@@ -712,12 +794,9 @@ export const NurikabeBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentM
             tier: currentTier,
             timeSpentSec: Math.round(elapsedMs / 1000),
             conflictsCount: lifetimeViolationsRef.current,
-            infractionScore: calculateInfractionScore({
-              tabSwitches: 0,
-              blurEvents: 0,
-              clipboardEvents: 0,
-              untrustedEvents: 0,
-            }),
+            infractionScore: proctoringRef.current
+              ? calculateInfractionScore(proctoringRef.current.getSnapshot())
+              : 0,
             environment: getEnvironmentFingerprint(),
             timestamp: new Date().toISOString(),
           }}
