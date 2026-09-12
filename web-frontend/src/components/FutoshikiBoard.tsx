@@ -9,6 +9,13 @@ import {
   WebFutoshikiGenerator,
   SYMBOLIC_SETS,
 } from '../engines/futoshikiGenerator';
+import { VaultManager, VaultItem } from '../utils/vaultStorage';
+import {
+  TournamentProctoringSession,
+  getEnvironmentFingerprint,
+  calculateInfractionScore,
+} from '../utils/tournamentSecurity';
+import { TournamentSubmissionModal } from './TournamentSubmissionModal';
 
 interface Props {
   puzzle?: PuzzleEntity;
@@ -20,7 +27,7 @@ export const FutoshikiBoard: React.FC<Props> = ({ puzzle, puzzleData, tournament
   const actualPuzzle = puzzleData || puzzle;
   const { lang } = useLanguage();
   const isEn = lang === 'en';
-  const { recordAttempt, getCompositeCognitiveIndex } = useLearnerProfile();
+  const { recordAttempt, profile, getCompositeCognitiveIndex } = useLearnerProfile();
 
   const spec = (actualPuzzle?.puzzle || actualPuzzle) as unknown as FutoshikiSpec;
   const size = spec?.size || 4;
@@ -45,6 +52,10 @@ export const FutoshikiBoard: React.FC<Props> = ({ puzzle, puzzleData, tournament
   const [selectedCell, setSelectedCell] = useState<[number, number]>([0, 0]);
   const [isCompleted, setIsCompleted] = useState<boolean>(false);
   const [isTimeOut, setIsTimeOut] = useState<boolean>(false);
+  const [isFav, setIsFav] = useState<boolean>(() =>
+    actualPuzzle?.id ? VaultManager.isFavorited(actualPuzzle.id) : false
+  );
+  const [showSubmitModal, setShowSubmitModal] = useState<boolean>(false);
 
   const [cruxBreakthrough, setCruxBreakthrough] = useState<boolean>(false);
   const [seedCopied, setSeedCopied] = useState<boolean>(false);
@@ -56,13 +67,27 @@ export const FutoshikiBoard: React.FC<Props> = ({ puzzle, puzzleData, tournament
   const lastActiveTimestamp = useRef<number>(performance.now());
   const lastWheelTimestamp = useRef<number>(0);
   const isSuspended = useRef<boolean>(false);
+  const hasRecordedRef = useRef<boolean>(false);
 
   const [hintLevel, setHintLevel] = useState<number>(0);
   const [activeHint, setActiveHint] = useState<FutoshikiHintStep | null>(null);
 
+  // 實體防作弊稽核 Session
+  const proctoringRef = useRef<TournamentProctoringSession | null>(null);
+
+  useEffect(() => {
+    proctoringRef.current = new TournamentProctoringSession();
+    return () => {
+      proctoringRef.current?.destroy();
+      proctoringRef.current = null;
+    };
+  }, [actualPuzzle?.id]);
+
   const initialMask = useMemo(() => {
     return initialGrid.map((row) => row.map((val) => val !== 0));
   }, [initialGrid]);
+
+  const cci = useMemo(() => getCompositeCognitiveIndex(), [getCompositeCognitiveIndex, isCompleted]);
 
   const renderValue = useCallback(
     (val: number) => {
@@ -81,6 +106,7 @@ export const FutoshikiBoard: React.FC<Props> = ({ puzzle, puzzleData, tournament
     setIsTimeOut(false);
     setCruxBreakthrough(false);
     setSeedCopied(false);
+    setIsFav(VaultManager.isFavorited(actualPuzzle?.id || ''));
     setRemainingSec(timeLimit);
     setAccumulatedMs(0);
     setHintsTriggeredCount(0);
@@ -88,6 +114,7 @@ export const FutoshikiBoard: React.FC<Props> = ({ puzzle, puzzleData, tournament
     lastActiveTimestamp.current = performance.now();
     setHintLevel(0);
     setActiveHint(null);
+    hasRecordedRef.current = false;
 
     requestAnimationFrame(() => {
       boardContainerRef.current?.focus();
@@ -204,7 +231,9 @@ export const FutoshikiBoard: React.FC<Props> = ({ puzzle, puzzleData, tournament
           setTimeout(() => setCruxBreakthrough(false), 1500);
         }
 
-        if (checkVictory(next)) {
+        // P2 修復：加入 hasRecordedRef 防禦重複結算
+        if (!hasRecordedRef.current && checkVictory(next)) {
+          hasRecordedRef.current = true;
           setIsCompleted(true);
           const timeSpent = Math.max(1, Math.round(accumulatedMs / 1000));
           const isPure = hintsTriggeredCount === 0;
@@ -248,7 +277,6 @@ export const FutoshikiBoard: React.FC<Props> = ({ puzzle, puzzleData, tournament
     ]
   );
 
-  // 點擊格子處理（整合數字鎖定注入）
   const handleCellClick = useCallback(
     (r: number, c: number) => {
       setSelectedCell([r, c]);
@@ -263,6 +291,22 @@ export const FutoshikiBoard: React.FC<Props> = ({ puzzle, puzzleData, tournament
     navigator.clipboard.writeText(`FUTO-S${seed}-T${actualPuzzle?.tier || 'kids'}`);
     setSeedCopied(true);
     setTimeout(() => setSeedCopied(false), 2000);
+  };
+
+  // P0 修復：標準化金庫收藏對接
+  const handleToggleFavorite = () => {
+    if (!actualPuzzle) return;
+    const vaultItem: VaultItem = {
+      id: actualPuzzle.id,
+      engine: 'futoshiki',
+      tier: String(actualPuzzle.tier || 'kids'),
+      seed: Number(seed),
+      steps: size * size,
+      timeSpentSec: Math.round(accumulatedMs / 1000),
+      date: new Date().toISOString(),
+    };
+    const res = VaultManager.toggleFavorite(vaultItem);
+    setIsFav(res.isFav);
   };
 
   const handleWheel = useCallback(
@@ -381,7 +425,6 @@ export const FutoshikiBoard: React.FC<Props> = ({ puzzle, puzzleData, tournament
   }, [inequalities]);
 
   const cellSize = Math.min(240 / size, 42);
-  const cci = useMemo(() => getCompositeCognitiveIndex(), [getCompositeCognitiveIndex, isCompleted]);
 
   return (
     <div
@@ -406,7 +449,7 @@ export const FutoshikiBoard: React.FC<Props> = ({ puzzle, puzzleData, tournament
                 prev === 'numeric' ? 'symbolic_dots' : prev === 'symbolic_dots' ? 'symbolic_flora' : 'numeric'
               )
             }
-            className="px-2 py-1 bg-slate-900 border border-slate-700 hover:border-cyan-400 rounded text-cyan-300 font-bold"
+            className="px-2 py-1 bg-slate-900 border border-slate-700 hover:border-cyan-400 rounded text-cyan-300 font-bold cursor-pointer"
           >
             {displayMode === 'numeric' && (isEn ? '🔢 Numeric' : '🔢 數字')}
             {displayMode === 'symbolic_dots' && (isEn ? '⚪ Dots' : '⚪ 點陣')}
@@ -414,7 +457,7 @@ export const FutoshikiBoard: React.FC<Props> = ({ puzzle, puzzleData, tournament
           </button>
           <button
             onClick={() => setEnableOffload((prev) => !prev)}
-            className={`px-2 py-1 rounded border font-bold ${
+            className={`px-2 py-1 rounded border font-bold cursor-pointer transition ${
               enableOffload
                 ? 'bg-purple-950 border-purple-500 text-purple-300'
                 : 'bg-slate-900 border-slate-700 text-slate-400'
@@ -422,10 +465,9 @@ export const FutoshikiBoard: React.FC<Props> = ({ puzzle, puzzleData, tournament
           >
             🧠 {isEn ? 'Offload' : '卸載'}: {enableOffload ? (isEn ? 'ON' : '開啟') : (isEn ? 'OFF' : '關閉')}
           </button>
-          {/* 指令 3：競速渦輪模式切換 */}
           <button
             onClick={() => setTurboMode((prev) => !prev)}
-            className={`px-1.5 py-1 rounded border font-black ${
+            className={`px-1.5 py-1 rounded border font-black cursor-pointer transition ${
               turboMode
                 ? 'bg-rose-950 border-rose-500 text-rose-300'
                 : 'bg-slate-900 border-slate-700 text-slate-500 hover:text-slate-300'
@@ -441,6 +483,15 @@ export const FutoshikiBoard: React.FC<Props> = ({ puzzle, puzzleData, tournament
               🔄 {isEn ? '180° Sym' : '180° 對稱'}
             </span>
           )}
+          <button
+            onClick={handleToggleFavorite}
+            className={`px-1.5 py-0.5 rounded border transition cursor-pointer ${
+              isFav ? 'border-amber-500 text-amber-300 bg-amber-950' : 'border-slate-700 text-slate-500'
+            }`}
+            title={isFav ? (isEn ? 'In Vault' : '已在傳奇庫') : (isEn ? 'Save to Vault' : '收藏')}
+          >
+            {isFav ? '★' : '☆'}
+          </button>
           <span className="text-slate-600">|</span>
           <span className="text-purple-300 font-bold">
             {isEn ? 'Chain' : '鏈深'}: {chainDepth}
@@ -448,7 +499,7 @@ export const FutoshikiBoard: React.FC<Props> = ({ puzzle, puzzleData, tournament
           <span className="text-slate-600">|</span>
           <button
             onClick={handleCopySeed}
-            className="text-slate-500 hover:text-slate-300 font-mono underline"
+            className="text-slate-500 hover:text-slate-300 font-mono underline cursor-pointer"
           >
             {seedCopied ? (isEn ? 'Copied' : '已複製') : `S:${String(seed).slice(-4)}`}
           </button>
@@ -488,7 +539,6 @@ export const FutoshikiBoard: React.FC<Props> = ({ puzzle, puzzleData, tournament
                 const val = grid[r][c];
                 const isInitial = initialMask[r]?.[c];
                 const isSelected = selectedCell[0] === r && selectedCell[1] === c;
-                // 指令 2：永久十字瞄準線 (Permanent Crosshair)
                 const isInCrosshair = selectedCell[0] === r || selectedCell[1] === c;
                 const isConflict = conflicts.has(`${r},${c}`);
                 const isHintTarget = activeHint?.r === r && activeHint?.c === c && hintLevel === 3;
@@ -501,7 +551,6 @@ export const FutoshikiBoard: React.FC<Props> = ({ puzzle, puzzleData, tournament
                   ? 'bg-slate-900 text-amber-300 font-black border border-slate-700 shadow-inner'
                   : 'bg-slate-950 text-cyan-300 hover:bg-slate-900/80 border border-slate-800';
 
-                // 十字瞄準線底色加持
                 if (!isInitial && isInCrosshair && !isSelected) {
                   bgClass += ' bg-cyan-950/20';
                 }
@@ -519,7 +568,6 @@ export const FutoshikiBoard: React.FC<Props> = ({ puzzle, puzzleData, tournament
                     : ' ring-2 ring-amber-400 bg-amber-500/30 animate-pulse';
                 }
 
-                // 渦輪模式下禁用 scale 與 transition
                 const selectRingClass = turboMode
                   ? 'border-2 border-cyan-400 z-10'
                   : 'ring-2 ring-cyan-400 z-10 scale-[1.04] shadow-[0_0_8px_rgba(34,211,238,0.7)] transition';
@@ -576,7 +624,7 @@ export const FutoshikiBoard: React.FC<Props> = ({ puzzle, puzzleData, tournament
         ))}
       </div>
 
-      {/* 指令 1：數字鍵盤（支援雙擊鎖定注入模式） */}
+      {/* 數字鍵盤（支援雙擊鎖定注入模式） */}
       <div className="w-full mt-2.5">
         <div className="grid grid-cols-3 gap-1 max-w-[280px] mx-auto">
           {Array.from({ length: size }, (_, i) => i + 1).map((num) => {
@@ -707,12 +755,43 @@ export const FutoshikiBoard: React.FC<Props> = ({ puzzle, puzzleData, tournament
               ? `Time: ${(accumulatedMs / 1000).toFixed(2)}s | Chain Depth: ${chainDepth} | Gf Index: IQ ${cci.standardIQ}`
               : `耗時: ${(accumulatedMs / 1000).toFixed(2)}s | 鏈深: ${chainDepth} 階 | Gf 指標: IQ ${cci.standardIQ}`}
           </div>
-          <div className="text-[8px] text-cyan-400 font-bold">
+          <div className="text-[8px] text-cyan-400 font-bold mb-2">
             {isEn
               ? `✨ Seed: ${seed} · Partial Order Chain Fully Converged`
               : `✨ Seed: ${seed} · 偏序鏈完全收斂`}
           </div>
+
+          <button
+            onClick={() => setShowSubmitModal(true)}
+            className="w-full py-1.5 bg-neutral-200 hover:bg-white text-black text-[8px] font-bold rounded-lg cursor-pointer transition shadow"
+          >
+            {isEn ? 'SUBMIT TO LEADERBOARD' : '提交成績至排行榜'}
+          </button>
         </div>
+      )}
+
+      {/* 賽事提交 Modal */}
+      {showSubmitModal && actualPuzzle && (
+        <TournamentSubmissionModal
+          payload={{
+            submissionId: `SUB-${actualPuzzle.id}-${Date.now().toString(36)}`,
+            tournamentId: tournamentMode ? 'WPF_FUTOSHIKI_2026' : 'GLOBAL_INEQUALITY_STAGE',
+            playerId: profile.personalBest.updatedAt ? 'CONTENDER_VERIFIED' : 'LOCAL_PLAYER_1',
+            division: 'open',
+            puzzleId: actualPuzzle.id,
+            engineType: 'futoshiki',
+            tier: (actualPuzzle.tier as string) || 'kids',
+            timeSpentSec: Math.round(accumulatedMs / 1000),
+            conflictsCount: conflicts.size,
+            infractionScore: proctoringRef.current
+              ? calculateInfractionScore(proctoringRef.current.getSnapshot())
+              : 0,
+            environment: getEnvironmentFingerprint(),
+            timestamp: new Date().toISOString(),
+          }}
+          onClose={() => setShowSubmitModal(false)}
+          isEn={isEn}
+        />
       )}
     </div>
   );
