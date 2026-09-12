@@ -7,7 +7,12 @@ import { useSkyscraperGame, QWERTY_NUMBER_MAP } from '../hooks/useSkyscraperGame
 import { MetricErrorBar } from './MetricErrorBar';
 import { CognitiveRadarChart } from './CognitiveRadarChart';
 import { TournamentSubmissionModal } from './TournamentSubmissionModal';
-import { calculateInfractionScore, getEnvironmentFingerprint } from '../utils/tournamentSecurity';
+import {
+  TournamentProctoringSession,
+  calculateInfractionScore,
+  getEnvironmentFingerprint,
+} from '../utils/tournamentSecurity';
+import { VaultManager, VaultItem } from '../utils/vaultStorage';
 
 interface Props {
   puzzleData?: PuzzleEntity;
@@ -21,6 +26,27 @@ export const SkyscraperBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamen
   const isEn = lang === 'en';
   const { profile, getCompositeCognitiveIndex, exportLongitudinalDataset } = useLearnerProfile();
   const boardRef = useRef<HTMLDivElement>(null);
+
+  const seed = (actualPuzzle?.metrics as any)?.seed || (actualPuzzle?.puzzle as any)?.seed || 12345;
+
+  const [isFav, setIsFav] = useState<boolean>(() =>
+    actualPuzzle?.id ? VaultManager.isFavorited(actualPuzzle.id) : false
+  );
+
+  // 實體防作弊稽核 Session (P0 修復)
+  const proctoringRef = useRef<TournamentProctoringSession | null>(null);
+
+  useEffect(() => {
+    proctoringRef.current = new TournamentProctoringSession();
+    return () => {
+      proctoringRef.current?.destroy();
+      proctoringRef.current = null;
+    };
+  }, [actualPuzzle?.id]);
+
+  useEffect(() => {
+    setIsFav(VaultManager.isFavorited(actualPuzzle?.id || ''));
+  }, [actualPuzzle?.id]);
 
   if (!actualPuzzle) {
     return (
@@ -76,7 +102,25 @@ export const SkyscraperBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamen
 
   useEffect(() => {
     boardRef.current?.focus();
-  }, []);
+    keyPressTimestampsRef.current.clear();
+  }, [actualPuzzle?.id]);
+
+  // P1 修復：標準化金庫收藏對接
+  const handleToggleFavorite = () => {
+    if (!actualPuzzle) return;
+    const vaultItem: VaultItem = {
+      id: actualPuzzle.id,
+      engine: 'skyscraper',
+      tier: String(actualPuzzle.tier || 'kids'),
+      seed: Number(seed),
+      steps: size * size,
+      timeSpentSec: elapsedSec,
+      date: new Date().toISOString(),
+    };
+    const res = VaultManager.toggleFavorite(vaultItem);
+    setIsFav(res.isFav);
+    handleBookmarkPuzzle();
+  };
 
   // 無模態鍵盤時間判定與全主鍵區映射 (Vim / QWERTY Home-row)
   const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
@@ -113,7 +157,7 @@ export const SkyscraperBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamen
       return;
     }
 
-    // 預測性虛擬沙盤透視 (當前按住數字鍵未放開時產生透視預覽)
+    // 預測性虛擬沙盤透視
     const previewNum = parseInt(key, 10) || QWERTY_NUMBER_MAP[key];
     if (previewNum && previewNum >= 1 && previewNum <= size && selected) {
       const impact = computePreflightRayImpact(selected[0], selected[1], previewNum);
@@ -132,7 +176,6 @@ export const SkyscraperBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamen
     const num = parseInt(key, 10) || QWERTY_NUMBER_MAP[key];
     if (num && num >= 1 && num <= size) {
       e.preventDefault();
-      // 無模態判定：按壓時間 >= 200ms 或附帶 Shift 視為鉛筆候選標記；短促敲擊 (<200ms) 視為確信落子
       const isPencilIntent = e.shiftKey || duration >= 200 || isPencilMode;
       handleNumberInput(num, isPencilIntent);
     } else if (e.key === 'Backspace' || e.key === 'Delete' || e.key === '0') {
@@ -171,7 +214,7 @@ export const SkyscraperBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamen
         </div>
       )}
 
-      {/* 頂部三幕式認知節奏光條 (Real-Time Pacing Metronome) */}
+      {/* 頂部三幕式認知節奏光條 */}
       <div className="w-[min(92vw,48vh)] mb-1 px-1 flex flex-col gap-0.5">
         <div className="flex items-center justify-between text-[7px] text-slate-400">
           <span className="flex items-center gap-1">
@@ -195,7 +238,7 @@ export const SkyscraperBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamen
         </div>
       </div>
 
-      {/* 精簡控制列 */}
+      {/* 控制列 */}
       <div className="w-[min(92vw,48vh)] flex items-center justify-between text-[8px] text-slate-400 mb-1 px-1">
         <div className="flex items-center gap-1.5">
           <button
@@ -239,7 +282,15 @@ export const SkyscraperBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamen
             <span>💡</span>
             <span>{hintTierLevel === 0 ? (isEn ? 'Hint' : '提示') : `L${hintTierLevel}`}</span>
           </button>
-          <button onClick={handleBookmarkPuzzle} className="px-1.5 py-0.5 bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-400 text-[7.5px] rounded cursor-pointer" title="Save">📌</button>
+          <button
+            onClick={handleToggleFavorite}
+            className={`px-1.5 py-0.5 rounded border transition cursor-pointer text-[7.5px] ${
+              isFav ? 'border-amber-500 text-amber-300 bg-amber-950/60' : 'bg-slate-900 border-slate-700 text-slate-400 hover:text-white'
+            }`}
+            title={isFav ? (isEn ? 'In Vault' : '已在傳奇庫') : (isEn ? 'Save to Vault' : '收藏')}
+          >
+            {isFav ? '★' : '☆'}
+          </button>
           <button onClick={handleGracefulResign} className="px-1.5 py-0.5 bg-slate-900 hover:bg-rose-950/60 border border-slate-700 text-slate-400 hover:text-rose-300 text-[7.5px] rounded cursor-pointer" title="Resign">🕊️</button>
         </div>
       </div>
@@ -453,7 +504,7 @@ export const SkyscraperBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamen
         </div>
       )}
 
-      {/* 結算面板 (覆盤破局點與三段式計時) */}
+      {/* 結算面板 */}
       {(isCompleted || isResigned) && (
         <div className="mt-3 p-3 bg-slate-950/95 border border-indigo-500/60 rounded-xl text-center w-[min(92vw,48vh)] shadow-2xl animate-fade-in font-mono">
           <div className="flex items-center justify-between border-b border-slate-800 pb-1.5 mb-2">
@@ -517,10 +568,10 @@ export const SkyscraperBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamen
           </div>
 
           <div className="flex gap-1.5">
-            <button onClick={exportLongitudinalDataset} className="flex-1 py-1.5 bg-slate-900 hover:bg-slate-800 border border-cyan-600/50 text-cyan-300 text-[8px] font-bold rounded-lg transition">
+            <button onClick={exportLongitudinalDataset} className="flex-1 py-1.5 bg-slate-900 hover:bg-slate-800 border border-cyan-600/50 text-cyan-300 text-[8px] font-bold rounded-lg transition cursor-pointer">
               📊 {isEn ? 'Export Data' : '匯出數據'}
             </button>
-            <button onClick={() => setShowSubmitModal(true)} className="flex-1 py-1.5 bg-gradient-to-r from-amber-600 to-amber-500 text-slate-950 text-[8px] font-black rounded-lg transition">
+            <button onClick={() => setShowSubmitModal(true)} className="flex-1 py-1.5 bg-gradient-to-r from-amber-600 to-amber-500 text-slate-950 text-[8px] font-black rounded-lg transition cursor-pointer">
               📤 {isEn ? 'Submit' : '賽事提交'}
             </button>
           </div>
@@ -533,6 +584,7 @@ export const SkyscraperBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamen
         </div>
       )}
 
+      {/* 賽事提交 Modal (P0 修復：動態掛接真實稽核快照) */}
       {showSubmitModal && (
         <TournamentSubmissionModal
           payload={{
@@ -544,8 +596,10 @@ export const SkyscraperBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamen
             engineType: 'skyscraper',
             tier: actualPuzzle.tier as TierKey,
             timeSpentSec: elapsedSec,
-            conflictsCount: 0,
-            infractionScore: calculateInfractionScore({ tabSwitches: 0, blurEvents: 0, clipboardEvents: 0, untrustedEvents: 0 }),
+            conflictsCount: duplicateConflictSet.size,
+            infractionScore: proctoringRef.current
+              ? calculateInfractionScore(proctoringRef.current.getSnapshot())
+              : 0,
             environment: getEnvironmentFingerprint(),
             timestamp: new Date().toISOString(),
           }}
