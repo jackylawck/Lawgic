@@ -1,96 +1,230 @@
 // web-frontend/src/utils/secureStorage.ts
 
+export interface StorageResult<T = void> {
+  readonly success: boolean;
+  readonly data?: T;
+  readonly error?: string;
+}
+
+export interface SecureStorageLogger {
+  warn(message: string, context?: unknown): void;
+  info?(message: string, context?: unknown): void;
+}
+
+const MASTER_KEY_SEED_STORAGE_KEY = 'LOGICORE_KEY_VAULT_V3';
+const FALLBACK_SEED_STORAGE_KEY = 'LOGICORE_FALLBACK_SEED_V3';
+const MAX_MASTER_KEY_ATTEMPTS = 3;
+const DEFAULT_LOGGER: SecureStorageLogger = console;
+
+// 預計算十六進位查表
+const HEX_TABLE: readonly string[] = Object.freeze(
+  Array.from({ length: 256 }, (_, i) => i.toString(16).padStart(2, '0'))
+);
+
+const HEX_REGEX = /^[0-9a-fA-F]+$/;
+
 /**
- * 臨床與賽事級安全儲存管理器
- * - AES-GCM 256-bit 認證加密 (AEAD)
- * - 內建設備持久化隔離密鑰 (Web Crypto API)
- * - 防篡改、防明文洩漏、防重放回滾 (Replay Defense)
- * - 規範化確定性序列化 (Canonical JSON)
+ * 混淆與完整性校驗儲存管理器 (Obfuscated & Integrity-Verified Storage - Production Grade)
+ * 
+ * ⚠️ 架構設計與已知邊界保證 (Security & Reliability Statement)：
+ * 1. 本機混淆本質：金鑰種子與密文同源存放於 LocalStorage。防禦本機肉眼瀏覽與欄位竄改，
+ *    在密碼學意義上不防禦擁有 XSS、惡意擴充套件或 DevTools 讀取權限之攻擊者。
+ * 2. 失敗優先原則：若持久化種子無法落盤，拒絕寫入不可驗證之資料，杜絕「寫入成功但下次丟失」。
+ * 3. 規範化落盤：V2 信封落盤資料與簽章計算嚴格基於同一 canonical 規格，杜絕 Symbol 等序列化裂痕。
+ * 4. 熔斷機制：金鑰初始化失敗累積達 3 次自動熔斷，避免重複引發無效計算與 Log 泛濫。
  */
 export class SecureStorage {
-  private static readonly APP_STORAGE_KEY = 'LOGICORE_KEY_VAULT_V3';
   private static cachedCryptoKey: CryptoKey | null = null;
+  private static masterKeyPromise: Promise<CryptoKey | null> | null = null;
+  private static masterKeyAttempts = 0;
   private static cachedRawFallbackKey: string | null = null;
+  private static logger: SecureStorageLogger = DEFAULT_LOGGER;
 
-  /**
-   * 取得或派生本機專屬高熵密鑰 (AES-GCM 256-bit)
-   */
-  private static async getOrCreateMasterKey(): Promise<CryptoKey | null> {
-    if (this.cachedCryptoKey) return this.cachedCryptoKey;
-    if (typeof window === 'undefined' || !window.crypto || !window.crypto.subtle) {
-      return null;
+  private static upgradeAttempted = new Set<string>();
+
+  public static setLogger(customLogger: SecureStorageLogger): void {
+    this.logger = customLogger;
+  }
+
+  public static bytesToHex(bytes: Uint8Array): string {
+    let result = '';
+    for (let i = 0; i < bytes.length; i++) {
+      result += HEX_TABLE[bytes[i]];
     }
-
-    try {
-      // 嘗試從本機憑證隔離區載入持久化金鑰種子
-      let rawSeed = localStorage.getItem(this.APP_STORAGE_KEY);
-      if (!rawSeed) {
-        const randomBytes = new Uint8Array(32);
-        window.crypto.getRandomValues(randomBytes);
-        rawSeed = Array.from(randomBytes).map((b) => b.toString(16).padStart(2, '0')).join('');
-        localStorage.setItem(this.APP_STORAGE_KEY, rawSeed);
-      }
-
-      const keyBuffer = new Uint8Array(
-        rawSeed.match(/.{1,2}/g)?.map((byte) => parseInt(byte, 16)) || []
-      );
-
-      const cryptoKey = await window.crypto.subtle.importKey(
-        'raw',
-        keyBuffer,
-        { name: 'AES-GCM' },
-        false,
-        ['encrypt', 'decrypt']
-      );
-
-      this.cachedCryptoKey = cryptoKey;
-      return cryptoKey;
-    } catch {
-      return null;
-    }
+    return result;
   }
 
   /**
-   * 輕量純 JS 混淆備援（當環境不支援 Web Crypto 時使用）
+   * P3-1 修復：明確拒絕空字串，嚴格校驗有效十六進位字元
    */
-  private static getFallbackKey(): string {
-    if (this.cachedRawFallbackKey) return this.cachedRawFallbackKey;
-    let seed = localStorage.getItem('LOGICORE_FALLBACK_SEED_V3');
-    if (!seed) {
-      seed = Math.random().toString(36).substring(2) + Date.now().toString(36);
-      localStorage.setItem('LOGICORE_FALLBACK_SEED_V3', seed);
+  public static hexToBytes(hex: string): Uint8Array | null {
+    if (!hex || hex.length % 2 !== 0 || !HEX_REGEX.test(hex)) {
+      return null;
     }
+    const len = hex.length / 2;
+    const bytes = new Uint8Array(len);
+    for (let i = 0; i < len; i++) {
+      bytes[i] = parseInt(hex.substring(i * 2, i * 2 + 2), 16);
+    }
+    return bytes;
+  }
+
+  /**
+   * 取得或派生本機主混淆金鑰（P2-1 修復：含最大重試次數熔斷）
+   */
+  private static getOrCreateMasterKey(): Promise<CryptoKey | null> {
+    if (this.cachedCryptoKey) {
+      return Promise.resolve(this.cachedCryptoKey);
+    }
+    if (this.masterKeyPromise) {
+      return this.masterKeyPromise;
+    }
+    if (this.masterKeyAttempts >= MAX_MASTER_KEY_ATTEMPTS) {
+      return Promise.resolve(null);
+    }
+
+    this.masterKeyPromise = (async () => {
+      if (typeof window === 'undefined' || !window.crypto || !window.crypto.subtle) {
+        return null;
+      }
+
+      this.masterKeyAttempts++;
+
+      try {
+        let rawSeed = localStorage.getItem(MASTER_KEY_SEED_STORAGE_KEY);
+        if (!rawSeed) {
+          const randomBytes = new Uint8Array(32);
+          window.crypto.getRandomValues(randomBytes);
+          rawSeed = this.bytesToHex(randomBytes);
+          localStorage.setItem(MASTER_KEY_SEED_STORAGE_KEY, rawSeed);
+        }
+
+        const keyBuffer = this.hexToBytes(rawSeed);
+        if (!keyBuffer || keyBuffer.length !== 32) {
+          throw new Error('Corrupted master key seed in storage');
+        }
+
+        const cryptoKey = await window.crypto.subtle.importKey(
+          'raw',
+          keyBuffer,
+          { name: 'AES-GCM' },
+          false,
+          ['encrypt', 'decrypt']
+        );
+
+        this.cachedCryptoKey = cryptoKey;
+        return cryptoKey;
+      } catch (err) {
+        this.logger.warn(`[SecureStorage] Master key init failed (attempt ${this.masterKeyAttempts})`, err);
+        this.masterKeyPromise = null;
+        return null;
+      }
+    })();
+
+    return this.masterKeyPromise;
+  }
+
+  /**
+   * P1 修復：Fallback 種子無法落盤時回傳 null，杜絕記憶體孤兒種子引發的靜默資料蒸發
+   */
+  private static getFallbackKey(): string | null {
+    if (this.cachedRawFallbackKey) return this.cachedRawFallbackKey;
+
+    let seed = localStorage.getItem(FALLBACK_SEED_STORAGE_KEY);
+    if (!seed) {
+      if (typeof window !== 'undefined' && window.crypto?.getRandomValues) {
+        const buf = new Uint8Array(16);
+        window.crypto.getRandomValues(buf);
+        seed = this.bytesToHex(buf);
+      } else {
+        seed = `${Date.now().toString(36)}_${Math.random().toString(36).substring(2)}`;
+      }
+      try {
+        localStorage.setItem(FALLBACK_SEED_STORAGE_KEY, seed);
+      } catch (e) {
+        this.logger.warn('[SecureStorage] Failed to persist fallback seed; refusing unverified write', e);
+        return null;
+      }
+    }
+
     this.cachedRawFallbackKey = seed;
     return seed;
   }
 
   /**
-   * 遞迴排序物件鍵，確保序列化字串具備絕對確定性 (Deterministic Canonical JSON)
+   * 規範化確定性 JSON 序列化
    */
-  private static canonicalStringify(obj: any): string {
-    if (obj === null || typeof obj !== 'object') {
+  public static canonicalStringify(obj: unknown, seen = new WeakSet<object>()): string {
+    if (obj === null) return 'null';
+    if (typeof obj === 'undefined') return 'null';
+    if (typeof obj === 'number' || typeof obj === 'boolean') {
+      return Number.isFinite(obj as number) ? JSON.stringify(obj) : 'null';
+    }
+    if (typeof obj === 'string') {
       return JSON.stringify(obj);
     }
-    if (Array.isArray(obj)) {
-      return '[' + obj.map((item) => (item === undefined ? 'null' : this.canonicalStringify(item))).join(',') + ']';
+    if (typeof obj === 'bigint') {
+      throw new TypeError('[SecureStorage] BigInt serialization is not supported');
     }
-    const keys = Object.keys(obj)
-      .filter((k) => obj[k] !== undefined && typeof obj[k] !== 'function')
-      .sort();
-    const entries = keys.map((k) => `"${k}":${this.canonicalStringify(obj[k])}`);
-    return '{' + entries.join(',') + '}';
+    if (typeof obj === 'function' || typeof obj === 'symbol') {
+      return 'null';
+    }
+    // P2-2 修復：無效 Date 拋出精確 TypeError
+    if (obj instanceof Date) {
+      if (Number.isNaN(obj.getTime())) {
+        throw new TypeError('[SecureStorage] Invalid Date object cannot be serialized');
+      }
+      return JSON.stringify(obj.toISOString());
+    }
+
+    if (Array.isArray(obj)) {
+      if (seen.has(obj)) {
+        throw new TypeError('[SecureStorage] Circular reference detected in array payload');
+      }
+      seen.add(obj);
+      const items = obj.map((item) => this.canonicalStringify(item, seen));
+      seen.delete(obj);
+      return '[' + items.join(',') + ']';
+    }
+
+    if (typeof obj === 'object') {
+      const tag = Object.prototype.toString.call(obj);
+      if (tag !== '[object Object]') {
+        throw new TypeError(`[SecureStorage] Unsupported object type for serialization: ${tag}`);
+      }
+
+      if (seen.has(obj)) {
+        throw new TypeError('[SecureStorage] Circular reference detected in object payload');
+      }
+      seen.add(obj);
+
+      const record = obj as Record<string, unknown>;
+      const keys = Object.keys(record)
+        .filter((k) => record[k] !== undefined && typeof record[k] !== 'function')
+        .sort();
+
+      const entries = keys.map((k) => `${JSON.stringify(k)}:${this.canonicalStringify(record[k], seen)}`);
+      seen.delete(obj);
+      return '{' + entries.join(',') + '}';
+    }
+
+    return 'null';
   }
 
   /**
-   * 安全寫入本地儲存 (AES-GCM 加密 + 初始化向量 IV + 防重放時間戳)
+   * 安全寫入本地儲存
    */
-  static async setItemSafe(key: string, value: any): Promise<void> {
+  public static async setItemSafe(key: string, value: unknown): Promise<StorageResult> {
+    if (!key || typeof key !== 'string' || key.trim().length === 0) {
+      return { success: false, error: 'InvalidKey' };
+    }
+
     try {
       const canonicalPayload = this.canonicalStringify(value);
       const masterKey = await this.getOrCreateMasterKey();
 
-      if (masterKey && window.crypto && window.crypto.subtle) {
-        const iv = new Uint8Array(12); // 96-bit 標準 AES-GCM IV
+      if (masterKey && typeof window !== 'undefined' && window.crypto?.subtle) {
+        const iv = new Uint8Array(12); // 96-bit AES-GCM IV
         window.crypto.getRandomValues(iv);
 
         const encoder = new TextEncoder();
@@ -100,60 +234,75 @@ export class SecureStorage {
           encoder.encode(canonicalPayload)
         );
 
-        const ivHex = Array.from(iv).map((b) => b.toString(16).padStart(2, '0')).join('');
-        const cipherHex = Array.from(new Uint8Array(encryptedBuf))
-          .map((b) => b.toString(16).padStart(2, '0'))
-          .join('');
-
         const envelope = {
           v: 3,
           t: Date.now(),
-          iv: ivHex,
-          d: cipherHex,
+          iv: this.bytesToHex(iv),
+          d: this.bytesToHex(new Uint8Array(encryptedBuf)),
         };
 
         localStorage.setItem(key, JSON.stringify(envelope));
       } else {
-        // Fallback: 帶鹽雜湊信封
+        // P1 修復：若無法取得已落盤之種子，堅決拒絕寫入
         const fallbackSalt = this.getFallbackKey();
+        if (!fallbackSalt) {
+          return { success: false, error: 'FallbackKeyUnavailable' };
+        }
+
         const signature = this.quickHash(`${canonicalPayload}::${fallbackSalt}`);
+        // P2 修復：存入規範化反序列化物件，消弭 Symbol 欄位等序列化差異
         const envelope = {
           v: 2,
           t: Date.now(),
-          payload: value,
+          payload: JSON.parse(canonicalPayload),
           signature,
         };
         localStorage.setItem(key, JSON.stringify(envelope));
       }
+
+      return { success: true };
     } catch (err) {
-      console.warn('[SecureStorage] Write failed:', err);
+      this.logger.warn(`[SecureStorage] Write failed for key "${key}"`, err);
+      return {
+        success: false,
+        error: err instanceof Error ? err.message : 'UnknownWriteError',
+      };
     }
   }
 
   /**
-   * 安全讀取本地儲存 (具備解密驗證、防篡改校驗與安全降級防護)
+   * 安全讀取本地儲存
    */
-  static async getItemSafe<T>(key: string, defaultValue: T): Promise<T> {
+  public static async getItemSafe<T>(key: string, defaultValue: T): Promise<T> {
+    if (!key || typeof key !== 'string') return defaultValue;
+
+    let raw: string | null = null;
     try {
-      const raw = localStorage.getItem(key);
+      raw = localStorage.getItem(key);
       if (!raw) return defaultValue;
 
       const envelope = JSON.parse(raw);
-      if (!envelope || typeof envelope !== 'object') return defaultValue;
+      if (!envelope || typeof envelope !== 'object') {
+        this.archiveCorruptedData(key, raw);
+        return defaultValue;
+      }
 
       // 1. 處理 AES-GCM V3 加密信封
-      if (envelope.v === 3 && envelope.iv && envelope.d) {
+      if (envelope.v === 3 && typeof envelope.iv === 'string' && typeof envelope.d === 'string') {
         const masterKey = await this.getOrCreateMasterKey();
-        if (!masterKey || !window.crypto.subtle) return defaultValue;
+        if (!masterKey || !window.crypto?.subtle) {
+          this.logger.warn(`[SecureStorage] WebCrypto unavailable to decrypt key "${key}"`);
+          return defaultValue;
+        }
 
-        const iv = new Uint8Array(
-          envelope.iv.match(/.{1,2}/g)?.map((byte: string) => parseInt(byte, 16)) || []
-        );
-        const cipherBytes = new Uint8Array(
-          envelope.d.match(/.{1,2}/g)?.map((byte: string) => parseInt(byte, 16)) || []
-        );
+        const iv = this.hexToBytes(envelope.iv);
+        const cipherBytes = this.hexToBytes(envelope.d);
 
-        // 解密：AES-GCM 若被改動任 1 個 bit，此處會自動拋出 OperationError
+        if (!iv || !cipherBytes) {
+          this.archiveCorruptedData(key, raw);
+          return defaultValue;
+        }
+
         const decryptedBuf = await window.crypto.subtle.decrypt(
           { name: 'AES-GCM', iv },
           masterKey,
@@ -162,39 +311,73 @@ export class SecureStorage {
 
         const decoder = new TextDecoder();
         const jsonStr = decoder.decode(decryptedBuf);
-        return JSON.parse(jsonStr) as T;
+        try {
+          return JSON.parse(jsonStr) as T;
+        } catch (jsonErr) {
+          // P3-5: 解密成功但 JSON 解析失敗之明確可觀測性
+          this.logger.warn(`[SecureStorage] Decryption succeeded but JSON parsing failed for "${key}"`, jsonErr);
+          this.archiveCorruptedData(key, raw);
+          return defaultValue;
+        }
       }
 
-      // 2. 處理 V2 雜湊驗證信封 (過渡相容)
-      if (envelope.v === 2 && envelope.payload && envelope.signature) {
+      // 2. 處理 V2 降級明文校驗信封
+      if (envelope.v === 2 && envelope.payload !== undefined && typeof envelope.signature === 'string') {
         const canonical = this.canonicalStringify(envelope.payload);
         const fallbackSalt = this.getFallbackKey();
-        const recomputed = this.quickHash(`${canonical}::${fallbackSalt}`);
-
-        if (recomputed !== envelope.signature) {
-          console.warn(`[Security Alert] Data tampering detected for key "${key}". Resetting to defaults.`);
-          localStorage.removeItem(key);
+        if (!fallbackSalt) {
           return defaultValue;
         }
 
-        // 讀取成功後自動升級至 V3 AES-GCM
-        this.setItemSafe(key, envelope.payload);
+        const recomputed = this.quickHash(`${canonical}::${fallbackSalt}`);
+        if (recomputed !== envelope.signature) {
+          this.logger.warn(`[SecureStorage] Tamper detected for fallback key "${key}"`);
+          this.archiveCorruptedData(key, raw);
+          return defaultValue;
+        }
+
+        if (!this.upgradeAttempted.has(key)) {
+          this.upgradeAttempted.add(key);
+          this.setItemSafe(key, envelope.payload).catch(() => {});
+        }
         return envelope.payload as T;
       }
 
-      // 3. 拒絕不合規格的野數據
-      localStorage.removeItem(key);
+      this.archiveCorruptedData(key, raw);
       return defaultValue;
-    } catch {
-      // 驗證失敗或遭篡改直接返回預設值並清除被污染的快取
-      localStorage.removeItem(key);
+    } catch (err) {
+      this.logger.warn(`[SecureStorage] Read/Decrypt failed for key "${key}", archiving payload`, err);
+      if (raw) {
+        this.archiveCorruptedData(key, raw);
+      }
       return defaultValue;
     }
   }
 
   /**
-   * 64-bit 快速雙質數雜湊 (Fallback 專用)
+   * P3-4 修復：防止已歸檔鍵堆疊 __corrupted_latest 後綴
    */
+  private static archiveCorruptedData(key: string, rawPayload: string): void {
+    if (key.endsWith('__corrupted_latest')) {
+      try {
+        localStorage.removeItem(key);
+      } catch {}
+      return;
+    }
+
+    try {
+      const archiveKey = `${key}__corrupted_latest`;
+      localStorage.setItem(archiveKey, rawPayload);
+      localStorage.removeItem(key);
+      this.logger.warn(`[SecureStorage] Corrupted data for "${key}" moved to "${archiveKey}"`);
+    } catch (e) {
+      this.logger.warn(`[SecureStorage] Failed to archive corrupted data for "${key}"`, e);
+      try {
+        localStorage.removeItem(key);
+      } catch {}
+    }
+  }
+
   private static quickHash(str: string): string {
     let h1 = 0xdeadbeef;
     let h2 = 0x41c6ce57;
@@ -206,5 +389,31 @@ export class SecureStorage {
     h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
     h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
     return `FALL_${(h1 >>> 0).toString(16)}${(h2 >>> 0).toString(16)}`.toUpperCase();
+  }
+
+  public static dispose(): void {
+    this.cachedCryptoKey = null;
+    this.masterKeyPromise = null;
+    this.masterKeyAttempts = 0;
+    this.cachedRawFallbackKey = null;
+    this.upgradeAttempted.clear();
+  }
+
+  public static resetForTesting(): void {
+    this.dispose();
+    this.logger = DEFAULT_LOGGER;
+
+    if (typeof window !== 'undefined' && window.localStorage) {
+      try {
+        const toRemove: string[] = [];
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          if (k && (k === MASTER_KEY_SEED_STORAGE_KEY || k === FALLBACK_SEED_STORAGE_KEY || k.endsWith('__corrupted_latest'))) {
+            toRemove.push(k);
+          }
+        }
+        toRemove.forEach((k) => localStorage.removeItem(k));
+      } catch {}
+    }
   }
 }
