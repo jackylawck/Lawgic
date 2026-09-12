@@ -16,7 +16,6 @@ describe('Masyu Worker Comprehensive Test Suite', () => {
   beforeEach(async () => {
     postMessageSpy = vi.fn();
 
-    // 模擬 Worker 環境的 self API
     vi.stubGlobal('self', {
       postMessage: postMessageSpy,
       addEventListener: (_type: string, handler: (e: MessageEvent) => void) => {
@@ -26,7 +25,6 @@ describe('Masyu Worker Comprehensive Test Suite', () => {
       },
     });
 
-    // 動態載入 worker 模組以註冊事件監聽
     await import('./masyu.worker');
   });
 
@@ -45,10 +43,7 @@ describe('Masyu Worker Comprehensive Test Suite', () => {
       expect(Number.isNaN(nanSeed)).toBe(false);
       expect(nanSeed).toBeGreaterThanOrEqual(0);
 
-      // -1 >>> 0 必須正規化為 4294967295
       expect(resolveSeed(-1)).toBe(4294967295);
-
-      // 超出 32 位元有符號整數上限 (0x7fffffff + 1) 應轉為 2147483648
       expect(resolveSeed(0x80000000)).toBe(2147483648);
     });
 
@@ -68,8 +63,8 @@ describe('Masyu Worker Comprehensive Test Suite', () => {
   // 2. 白名單完備性驗證 (Contract Coverage)
   // ==========================================
   describe('VALID_TIERS', () => {
-    it('必須包含所有 TierKey 合法階層', () => {
-      const expectedTiers: TierKey[] = ['kids', 'intermediate', 'master', 'legendary', 'ultimate'];
+    it('必須包含所有 TierKey 合法階層 (含 expert)', () => {
+      const expectedTiers: TierKey[] = ['kids', 'intermediate', 'expert', 'master', 'legendary', 'ultimate'];
       expect(VALID_TIERS.size).toBe(expectedTiers.length);
       expectedTiers.forEach((tier) => {
         expect(VALID_TIERS.has(tier)).toBe(true);
@@ -82,7 +77,6 @@ describe('Masyu Worker Comprehensive Test Suite', () => {
   // ==========================================
   describe('Worker Protocol & Error Handling', () => {
     it('情境 1: 缺少或非法 requestId 應直接回報 error 且終止執行', () => {
-      // 空白 requestId
       dispatchWorkerMessage({
         requestId: '   ',
         action: 'produce_single',
@@ -96,7 +90,6 @@ describe('Masyu Worker Comprehensive Test Suite', () => {
         })
       );
 
-      // 超長 requestId (超過 MAX_REQUEST_ID_LENGTH)
       const longId = 'a'.repeat(MAX_REQUEST_ID_LENGTH + 1);
       dispatchWorkerMessage({
         requestId: longId,
@@ -181,12 +174,10 @@ describe('Masyu Worker Comprehensive Test Suite', () => {
       expect(res.requestId).toBe('req-batch-ok');
       expect(res.puzzles).toHaveLength(3);
 
-      // 驗證質數 7919 遞增序列
       expect(generatedSeeds).toEqual([1000, 1000 + 7919, 1000 + 7919 * 2]);
     });
 
     it('情境 6: batchSize 邊界校驗 (<= 0 或 > MAX_BATCH_SIZE 應報錯)', () => {
-      // 測試 <= 0
       dispatchWorkerMessage({
         requestId: 'req-batch-zero',
         action: 'produce_batch',
@@ -202,7 +193,6 @@ describe('Masyu Worker Comprehensive Test Suite', () => {
         })
       );
 
-      // 測試超出上限 (MAX_BATCH_SIZE + 1)
       dispatchWorkerMessage({
         requestId: 'req-batch-over',
         action: 'produce_batch',
