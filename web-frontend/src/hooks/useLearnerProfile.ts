@@ -193,7 +193,6 @@ const AGE_NORM_COHORTS = [
   { maxAge: 120, label: '55+', mean: 93, sd: 16.2 },
 ];
 
-// P1 行為契約：直接使用 engineMetadata 派生的高階比對函式
 const isMasyu = createEngineMatcher('masyu');
 const isNurikabe = createEngineMatcher('nurikabe');
 const isLightUp = createEngineMatcher('lightup');
@@ -420,8 +419,14 @@ export const useLearnerProfile = () => {
 
   const writeQueueRef = useRef<Promise<void>>(Promise.resolve());
   const persistProfile = useCallback((stateToPersist: LearnerProfileState) => {
+    // 嚴格對齊 Promise<void> 契約，避免 StorageResult 污染回傳鏈
     writeQueueRef.current = writeQueueRef.current
-      .then(() => SecureStorage.setItemSafe('logicore_learner_profile', stateToPersist))
+      .then(async () => {
+        const res = await SecureStorage.setItemSafe('logicore_learner_profile', stateToPersist);
+        if (!res.success) {
+          console.warn('[useLearnerProfile] Failed to persist profile:', res.error);
+        }
+      })
       .catch((err) => console.warn('[useLearnerProfile] Persistence queue error:', err));
   }, []);
 
@@ -652,7 +657,6 @@ export const useLearnerProfile = () => {
 
   const getSpatialCompositeIndex = useCallback((): SpatialCompositeIndex => {
     const records = profile.recentRecords;
-    // 使用防禦性 matcher 判斷引擎類型
     const masyuRecords = records.filter((a) => isMasyu(a.engineType) && a.isSuccess);
     const nurikabeRecords = records.filter((a) => isNurikabe(a.engineType) && a.isSuccess);
     const lightupRecords = records.filter((a) => isLightUp(a.engineType) && a.isSuccess);
