@@ -2,7 +2,11 @@
 import React, { useState, useRef, useEffect, useCallback, memo } from 'react';
 import { ErrorBoundary } from 'react-error-boundary';
 import { LanguageProvider, useLanguage } from './contexts/LanguageContext';
-import { AccessibilityProvider, useAccessibility } from './contexts/AccessibilityContext';
+import {
+  AccessibilityProvider,
+  useAccessibilitySettings,
+  useAccessibilityActions,
+} from './contexts/AccessibilityContext';
 import { PuzzleRenderer, CognitiveDashboard } from './registry/RendererRegistry';
 import { PuzzleEntity } from './generated';
 import { LangSwitcher } from './components/LangSwitcher';
@@ -21,14 +25,26 @@ import { ALL_GAMES, PuzzleMeta } from './registry/engineMetadata';
 export type { PuzzleMeta };
 export const LEVEL_KEYS: ExtendedTierKey[] = VALID_TIERS;
 
-const EngineFallbackUI: React.FC<{ resetErrorBoundary: () => void; error?: Error }> = ({ resetErrorBoundary, error }) => {
+const MODAL_FOCUSABLE_SELECTOR =
+  'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+const EngineFallbackUI: React.FC<{ resetErrorBoundary: () => void; error?: Error }> = ({
+  resetErrorBoundary,
+  error,
+}) => {
   const isChunkError =
     error?.message?.includes('Failed to fetch dynamically imported module') ||
     error?.message?.includes('Loading chunk');
 
-  const handleReload = () => {
+  // 時間維度修復 1：等待 caches.delete 完成後再 reload，杜絕 SW 快取清理競爭
+  const handleReload = async () => {
     if ('caches' in window) {
-      caches.keys().then((keys) => keys.forEach((k) => caches.delete(k)));
+      try {
+        const keys = await caches.keys();
+        await Promise.all(keys.map((k) => caches.delete(k)));
+      } catch (err) {
+        console.warn('[Cache] Clear error before reload:', err);
+      }
     }
     window.location.reload();
   };
@@ -64,12 +80,38 @@ const PuzzleTimer: React.FC<{ activeId: string | undefined }> = memo(({ activeId
 
   useEffect(() => {
     setElapsed(0);
-    const interval = setInterval(() => setElapsed((prev) => prev + 1), 1000);
-    return () => clearInterval(interval);
+    let lastTick = performance.now();
+    let accumulated = 0;
+
+    const handleVisibility = () => {
+      const now = performance.now();
+      if (document.hidden) {
+        accumulated += (now - lastTick) / 1000;
+        setElapsed(Math.floor(accumulated));
+        lastTick = now;
+      } else {
+        lastTick = now;
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+
+    const interval = setInterval(() => {
+      const now = performance.now();
+      if (!document.hidden) {
+        accumulated += (now - lastTick) / 1000;
+        setElapsed(Math.floor(accumulated));
+      }
+      lastTick = now;
+    }, 1000);
+
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
   }, [activeId]);
 
   return (
-    <span>
+    <span aria-live="off">
       ⏱️ {String(Math.floor(elapsed / 60)).padStart(2, '0')}:{String(elapsed % 60).padStart(2, '0')}
     </span>
   );
@@ -81,7 +123,9 @@ const MainDashboard: React.FC = () => {
   const { lang } = useLanguage();
   const isEn = lang === 'en';
 
-  const { playSound } = useAccessibility();
+  const { hapticFeedback, reducedMotion } = useAccessibilitySettings();
+  const { playSound, announce } = useAccessibilityActions();
+
   const { profile, getCompositeCognitiveIndex } = useLearnerProfile();
   const { getRecommendedSchedulePuzzle } = useLongTermScheduler(profile, PUZZLE_CATALOG);
 
@@ -97,8 +141,24 @@ const MainDashboard: React.FC = () => {
   const fallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const boardContainerRef = useRef<HTMLDivElement>(null);
-  const lastMoveTimeRef = useRef<number>(0);
+  
+  // 時間維度修復 2：初始化為 -Infinity，杜絕載入首 150ms 內的操作吞咽
+  const lastMoveTimeRef = useRef<number>(-Infinity);
+  
   const toastTimeoutRef = useRef<ReturnType<typeof setTimeout>>();
+  const dashboardModalRef = useRef<HTMLDivElement>(null);
+  const previouslyFocusedElementRef = useRef<HTMLElement | null>(null);
+
+  const safeVibrate = useCallback(
+    (pattern: number | number[]) => {
+      if (!hapticFeedback || reducedMotion) return;
+      if (typeof navigator === 'undefined' || !navigator.vibrate) return;
+      try {
+        navigator.vibrate(pattern);
+      } catch {}
+    },
+    [hapticFeedback, reducedMotion]
+  );
 
   const showToast = useCallback((msg: string, duration = 2500) => {
     clearTimeout(toastTimeoutRef.current);
@@ -165,13 +225,19 @@ const MainDashboard: React.FC = () => {
     }
   }, [isUpdating]);
 
-  const handleChallengeLoaded = useCallback((imported: PuzzleEntity) => {
-    setSelectedType(imported.engine_type);
-    setCurrentLevel(imported.tier as ExtendedTierKey);
-    const gameMeta = ALL_GAMES.find((g) => g.id === imported.engine_type);
-    const name = gameMeta ? (isEn ? gameMeta.nameEn : gameMeta.nameZh) : 'Puzzle';
-    showToast(t.toast.challengeLoaded(name, imported.metrics?.irt_logit_difficulty || '1.0'), 3000);
-  }, [t, isEn, showToast]);
+  const handleChallengeLoaded = useCallback(
+    (imported: PuzzleEntity) => {
+      setSelectedType(imported.engine_type);
+      setCurrentLevel(imported.tier as ExtendedTierKey);
+      const gameMeta = ALL_GAMES.find((g) => g.id === imported.engine_type);
+      const name = gameMeta ? (isEn ? gameMeta.nameEn : gameMeta.nameZh) : 'Puzzle';
+      const irtDisplay = imported.metrics?.irt_logit_difficulty ?? '1.0';
+      const msg = t.toast.challengeLoaded(name, irtDisplay);
+      showToast(msg, 3000);
+      announce(msg, 'polite');
+    },
+    [t, isEn, showToast, announce]
+  );
 
   const {
     activeList,
@@ -185,33 +251,42 @@ const MainDashboard: React.FC = () => {
   const handlePrevPuzzle = useCallback(() => {
     if (activeList.length === 0) return;
     playSound('step');
-    if (navigator.vibrate) navigator.vibrate(8);
+    safeVibrate(8);
     setPuzzleIndex((prev) => (prev - 1 + activeList.length) % activeList.length);
     boardContainerRef.current?.focus();
-  }, [activeList.length, playSound, setPuzzleIndex]);
+  }, [activeList.length, playSound, safeVibrate, setPuzzleIndex]);
 
   const handleNextPuzzle = useCallback(() => {
     if (activeList.length === 0) return;
     playSound('step');
-    if (navigator.vibrate) navigator.vibrate(10);
+    safeVibrate(10);
     setPuzzleIndex((prev) => (prev + 1) % activeList.length);
     boardContainerRef.current?.focus();
-  }, [activeList.length, playSound, setPuzzleIndex]);
+  }, [activeList.length, playSound, safeVibrate, setPuzzleIndex]);
 
   const handleLiveGenerate = useCallback(async () => {
     if (tournamentMode) return;
     playSound('click');
-    if (navigator.vibrate) navigator.vibrate(20);
+    safeVibrate(20);
     const success = await triggerManualGenerate();
-    if (success) showToast(t.toast.dynamicSynthesized);
+    if (success) {
+      showToast(t.toast.dynamicSynthesized);
+      announce(t.toast.dynamicSynthesized, 'polite');
+    }
     boardContainerRef.current?.focus();
-  }, [tournamentMode, playSound, triggerManualGenerate, showToast, t]);
+  }, [tournamentMode, playSound, safeVibrate, triggerManualGenerate, showToast, announce, t]);
+
+  const handleToggleTournament = useCallback(() => {
+    playSound('alert');
+    safeVibrate(15);
+    setTournamentMode((prev) => !prev);
+  }, [playSound, safeVibrate]);
 
   useGlobalHotkeys({
     onPrev: handlePrevPuzzle,
     onNext: handleNextPuzzle,
     onGenerate: handleLiveGenerate,
-    onToggleTournament: () => setTournamentMode((prev) => !prev),
+    onToggleTournament: handleToggleTournament,
     disabled: showDashboardModal || showComplianceModal,
   });
 
@@ -224,17 +299,18 @@ const MainDashboard: React.FC = () => {
     });
   }, [setPuzzleIndex]);
 
+  // 時間維度修復 3：精確依賴拆解，防止每次渲染時頻繁呼叫 document.title
   useEffect(() => {
     const activeGame = ALL_GAMES.find((g) => g.id === selectedType);
     const gameName = activeGame ? (isEn ? activeGame.nameEn : activeGame.nameZh) : 'Cognitive Arena';
     const tierName = t.tiers[currentLevel];
     document.title = `${gameName} [${tierName}] | ${t.status.titleSuffix}`;
-  }, [selectedType, currentLevel, isEn, t]);
+  }, [selectedType, currentLevel, isEn, t.status.titleSuffix, t.tiers]);
 
   const handleTierJump = useCallback(
     (steps: number) => {
       playSound('hint');
-      if (navigator.vibrate) navigator.vibrate([20, 30, 20]);
+      safeVibrate([20, 30, 20]);
       const currentIdx = LEVEL_KEYS.indexOf(currentLevel);
       const targetIdx = Math.max(0, Math.min(LEVEL_KEYS.length - 1, currentIdx + steps));
       if (targetIdx !== currentIdx) {
@@ -242,43 +318,58 @@ const MainDashboard: React.FC = () => {
         setPuzzleIndex(0);
       }
     },
-    [currentLevel, playSound, setPuzzleIndex]
+    [currentLevel, playSound, safeVibrate, setPuzzleIndex]
   );
 
   const handleSmartDrill = useCallback(() => {
     const recommendation = getRecommendedSchedulePuzzle();
     if (recommendation) {
       playSound('hint');
+      safeVibrate(15);
       setSelectedType(recommendation.type);
       setCurrentLevel(recommendation.tier);
       setPuzzleIndex(0);
-      showToast(`🎯 ${recommendation.reason}`, 3500);
+      const msg = `🎯 ${recommendation.reason}`;
+      showToast(msg, 3500);
+      announce(msg, 'polite');
     }
-  }, [getRecommendedSchedulePuzzle, playSound, setPuzzleIndex, showToast]);
+  }, [getRecommendedSchedulePuzzle, playSound, safeVibrate, setPuzzleIndex, showToast, announce]);
 
   const handleShareVaultBadge = useCallback(() => {
     if (!activePuzzle) return;
     playSound('success');
+    safeVibrate(25);
+    const seedVal = activePuzzle.puzzle?.seed ?? 1000;
+    const irtVal = activePuzzle.metrics?.irt_logit_difficulty ?? 1.0;
+
     const badge = VaultManager.generateAsciiBadge({
       engine: activePuzzle.engine_type,
       tier: currentLevel,
-      seed: activePuzzle.puzzle?.seed || 1000,
-      steps: activePuzzle.metrics?.human_sim_steps || 24,
-      timeSpentSec: activePuzzle.metrics?.estimated_time_sec || 60,
-      iq: Math.round(100 + (activePuzzle.metrics?.irt_logit_difficulty || 1.0) * 15),
+      seed: seedVal,
+      steps: activePuzzle.metrics?.human_sim_steps ?? 24,
+      timeSpentSec: activePuzzle.metrics?.estimated_time_sec ?? 60,
+      iq: Math.round(100 + irtVal * 15),
     });
 
-    if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
-      navigator.clipboard.writeText(badge)
-        .then(() => showToast(t.toast.badgeCopied))
-        .catch(() => showToast(t.toast.clipboardDenied));
+    if (typeof navigator !== 'undefined' && navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+      navigator.clipboard
+        .writeText(badge)
+        .then(() => {
+          showToast(t.toast.badgeCopied);
+          announce(t.toast.badgeCopied, 'polite');
+        })
+        .catch(() => {
+          showToast(t.toast.clipboardDenied);
+          announce(t.toast.clipboardDenied, 'assertive');
+        });
     } else {
       showToast(t.toast.clipboardUnsupported);
+      announce(t.toast.clipboardUnsupported, 'assertive');
     }
-  }, [activePuzzle, currentLevel, playSound, showToast, t]);
+  }, [activePuzzle, currentLevel, playSound, safeVibrate, showToast, announce, t]);
 
   const handleJoystickMove = useCallback((x: number, y: number) => {
-    const now = Date.now();
+    const now = performance.now();
     if (now - lastMoveTimeRef.current < 150) return;
 
     const threshold = 0.45;
@@ -295,12 +386,56 @@ const MainDashboard: React.FC = () => {
     }
   }, []);
 
+  useEffect(() => {
+    if (showDashboardModal) {
+      previouslyFocusedElementRef.current =
+        document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      const focusable = dashboardModalRef.current?.querySelectorAll<HTMLElement>(MODAL_FOCUSABLE_SELECTOR);
+      if (focusable && focusable.length > 0) {
+        focusable[0].focus();
+      }
+    } else {
+      if (previouslyFocusedElementRef.current?.isConnected) {
+        previouslyFocusedElementRef.current.focus();
+      }
+    }
+  }, [showDashboardModal]);
+
+  const handleDashboardKeyDown = useCallback((e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key === 'Escape') {
+      e.stopPropagation();
+      setShowDashboardModal(false);
+      return;
+    }
+
+    if (e.key === 'Tab' && dashboardModalRef.current) {
+      const focusable = Array.from(
+        dashboardModalRef.current.querySelectorAll<HTMLElement>(MODAL_FOCUSABLE_SELECTOR)
+      );
+      if (focusable.length === 0) return;
+
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    }
+  }, []);
+
   const cci = getCompositeCognitiveIndex();
 
   return (
     <main className="min-h-screen bg-[#070a0f] text-slate-200 flex flex-col items-center py-2 px-2 font-mono selection:bg-indigo-600">
       {toastMsg && (
-        <div className="fixed top-2 z-50 px-3 py-1.5 bg-cyan-600 border border-cyan-400 text-white font-bold text-xs rounded-full shadow-2xl animate-fade-in pointer-events-none">
+        <div
+          aria-hidden="true"
+          className="fixed top-2 z-50 px-3 py-1.5 bg-cyan-600 border border-cyan-400 text-white font-bold text-xs rounded-full shadow-2xl animate-fade-in pointer-events-none"
+        >
           {toastMsg}
         </div>
       )}
@@ -321,18 +456,32 @@ const MainDashboard: React.FC = () => {
       )}
 
       {isGenerating && (
-        <div className="fixed top-1 left-1/2 -translate-x-1/2 z-50 flex items-center gap-1.5 px-3 py-1 bg-slate-900/95 border border-indigo-500/80 rounded-full text-indigo-300 text-[8px] font-mono shadow-2xl animate-pulse pointer-events-none">
+        <div
+          aria-hidden="true"
+          className="fixed top-1 left-1/2 -translate-x-1/2 z-50 flex items-center gap-1.5 px-3 py-1 bg-slate-900/95 border border-indigo-500/80 rounded-full text-indigo-300 text-[8px] font-mono shadow-2xl animate-pulse pointer-events-none"
+        >
           <div className="w-2 h-2 rounded-full border border-indigo-400 border-t-transparent animate-spin" />
           <span>🧠 {t.status.synthesizing}</span>
         </div>
       )}
 
       {showDashboardModal && (
-        <div className="fixed inset-0 z-50 bg-black/85 flex items-center justify-center p-2 sm:p-4 overflow-y-auto">
+        <div
+          ref={dashboardModalRef}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="dashboard-modal-title"
+          onKeyDown={handleDashboardKeyDown}
+          className="fixed inset-0 z-50 bg-black/85 flex items-center justify-center p-2 sm:p-4 overflow-y-auto"
+        >
+          <h2 id="dashboard-modal-title" className="sr-only">
+            {isEn ? 'Cognitive Dashboard' : '認知量表儀表板'}
+          </h2>
           <div className="relative w-full max-w-4xl bg-slate-950 border border-slate-800 rounded-2xl shadow-2xl overflow-hidden my-auto p-2 sm:p-4">
             <button
               onClick={() => setShowDashboardModal(false)}
-              className="absolute top-3 right-3 z-10 w-7 h-7 flex items-center justify-center bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-full font-bold text-xs transition cursor-pointer"
+              aria-label={isEn ? 'Close Dashboard' : '關閉認知儀表板'}
+              className="absolute top-3 right-3 z-10 w-7 h-7 flex items-center justify-center bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-full font-bold text-xs transition cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-indigo-400"
             >
               ✕
             </button>
@@ -345,7 +494,8 @@ const MainDashboard: React.FC = () => {
         <div className="flex items-center gap-1.5">
           <button
             onClick={() => setShowDashboardModal(true)}
-            className="flex items-center gap-1 hover:text-cyan-300 transition cursor-pointer"
+            aria-label={isEn ? `View IQ Score: ${cci.standardIQ}` : `檢視智商分數：${cci.standardIQ}`}
+            className="flex items-center gap-1 hover:text-cyan-300 transition cursor-pointer outline-none focus-visible:underline"
           >
             <span className="font-bold text-cyan-400">IQ {cci.standardIQ}</span>
             <span>(±{cci.semIQ})</span>
@@ -356,18 +506,15 @@ const MainDashboard: React.FC = () => {
           )}
           <button
             onClick={handleSmartDrill}
-            className="px-1.5 py-0.5 rounded bg-purple-950/60 border border-purple-700/60 text-purple-300 font-bold hover:bg-purple-900 transition cursor-pointer"
+            className="px-1.5 py-0.5 rounded bg-purple-950/60 border border-purple-700/60 text-purple-300 font-bold hover:bg-purple-900 transition cursor-pointer outline-none focus-visible:ring-1 focus-visible:ring-purple-400"
           >
             ⚡ {t.actions.smartDrill}
           </button>
         </div>
 
         <button
-          onClick={() => {
-            playSound('alert');
-            setTournamentMode((prev) => !prev);
-          }}
-          className={`px-1.5 py-0.5 rounded border transition text-[7px] font-bold cursor-pointer ${
+          onClick={handleToggleTournament}
+          className={`px-1.5 py-0.5 rounded border transition text-[7px] font-bold cursor-pointer outline-none focus-visible:ring-1 focus-visible:ring-amber-400 ${
             tournamentMode
               ? 'bg-amber-950 border-amber-500 text-amber-300 shadow-xs'
               : 'bg-slate-900 border-slate-800 text-slate-500 hover:text-slate-300'
@@ -388,6 +535,7 @@ const MainDashboard: React.FC = () => {
         <div className="flex items-center gap-1.5 flex-1 min-w-0">
           <select
             value={selectedType}
+            aria-label={isEn ? 'Select game type' : '選擇遊戲類型'}
             onChange={(e) => {
               setSelectedType(e.target.value);
               setPuzzleIndex(0);
@@ -403,6 +551,7 @@ const MainDashboard: React.FC = () => {
 
           <select
             value={currentLevel}
+            aria-label={isEn ? 'Select difficulty tier' : '選擇難度等級'}
             onChange={(e) => {
               setCurrentLevel(e.target.value as ExtendedTierKey);
               setPuzzleIndex(0);
@@ -429,14 +578,14 @@ const MainDashboard: React.FC = () => {
           <div className="mb-2 grid grid-cols-3 gap-1.5 w-full">
             <button
               onClick={handlePrevPuzzle}
-              className="py-2 bg-slate-900 hover:bg-slate-800 active:scale-95 text-slate-300 text-[10px] font-bold border border-slate-800 rounded-lg transition cursor-pointer shadow-sm"
+              className="py-2 bg-slate-900 hover:bg-slate-800 active:scale-95 text-slate-300 text-[10px] font-bold border border-slate-800 rounded-lg transition cursor-pointer shadow-sm outline-none focus-visible:ring-1 focus-visible:ring-slate-400"
             >
               {t.actions.prev}
             </button>
             <button
               onClick={handleLiveGenerate}
               disabled={tournamentMode}
-              className={`py-2 text-[10px] font-bold border rounded-lg shadow-sm transition flex items-center justify-center gap-1 ${
+              className={`py-2 text-[10px] font-bold border rounded-lg shadow-sm transition flex items-center justify-center gap-1 outline-none focus-visible:ring-1 focus-visible:ring-cyan-400 ${
                 tournamentMode
                   ? 'bg-slate-900/50 border-slate-800 text-slate-600 cursor-not-allowed'
                   : 'bg-cyan-950 hover:bg-cyan-900 active:scale-95 text-cyan-300 border-cyan-700/60 cursor-pointer'
@@ -447,7 +596,7 @@ const MainDashboard: React.FC = () => {
             </button>
             <button
               onClick={handleNextPuzzle}
-              className="py-2 bg-indigo-600 hover:bg-indigo-500 active:scale-95 text-white font-black text-[10px] border border-indigo-400 rounded-lg shadow-md transition cursor-pointer"
+              className="py-2 bg-indigo-600 hover:bg-indigo-500 active:scale-95 text-white font-black text-[10px] border border-indigo-400 rounded-lg shadow-md transition cursor-pointer outline-none focus-visible:ring-1 focus-visible:ring-indigo-300"
             >
               {t.actions.next}
             </button>
@@ -479,7 +628,7 @@ const MainDashboard: React.FC = () => {
             {currentLevel !== 'kids' && (
               <button
                 onClick={() => handleTierJump(-1)}
-                className="flex-1 py-1.5 bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-400 hover:text-slate-200 text-[10px] font-bold rounded-lg transition shadow flex items-center justify-center gap-1 cursor-pointer"
+                className="flex-1 py-1.5 bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-400 hover:text-slate-200 text-[10px] font-bold rounded-lg transition shadow flex items-center justify-center gap-1 cursor-pointer outline-none focus-visible:ring-1 focus-visible:ring-slate-400"
               >
                 <span>🔽</span>
                 <span>{t.actions.tierStepDown}</span>
@@ -488,7 +637,7 @@ const MainDashboard: React.FC = () => {
             {currentLevel !== 'ultimate' && (
               <button
                 onClick={() => handleTierJump(1)}
-                className="flex-1 py-1.5 bg-gradient-to-r from-indigo-950 via-purple-950 to-slate-900 hover:from-indigo-900 border border-indigo-700/60 text-indigo-300 text-[10px] font-bold rounded-lg transition shadow flex items-center justify-center gap-1 cursor-pointer"
+                className="flex-1 py-1.5 bg-gradient-to-r from-indigo-950 via-purple-950 to-slate-900 hover:from-indigo-900 border border-indigo-700/60 text-indigo-300 text-[10px] font-bold rounded-lg transition shadow flex items-center justify-center gap-1 cursor-pointer outline-none focus-visible:ring-1 focus-visible:ring-indigo-400"
               >
                 <span>🚀</span>
                 <span>{t.actions.tierStepUp}</span>
@@ -501,7 +650,7 @@ const MainDashboard: React.FC = () => {
             <div className="flex items-center gap-2">
               <button
                 onClick={handleShareVaultBadge}
-                className="hover:text-amber-400 transition cursor-pointer text-[8px] flex items-center gap-0.5"
+                className="hover:text-amber-400 transition cursor-pointer text-[8px] flex items-center gap-0.5 outline-none focus-visible:underline"
               >
                 <span>🏆</span>
                 <span className="underline">{t.status.vaultCard}</span>
@@ -529,9 +678,10 @@ const MainDashboard: React.FC = () => {
           <button
             onClick={() => {
               playSound('click');
+              safeVibrate(10);
               setShowComplianceModal(true);
             }}
-            className="text-slate-400 hover:text-indigo-300 underline transition cursor-pointer flex items-center gap-0.5"
+            className="text-slate-400 hover:text-indigo-300 underline transition cursor-pointer flex items-center gap-0.5 outline-none focus-visible:ring-1 focus-visible:ring-indigo-400"
           >
             <span>⚖️</span>
             <span>{t.status.complianceNotice}</span>
