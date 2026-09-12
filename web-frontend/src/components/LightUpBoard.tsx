@@ -13,7 +13,13 @@ import {
 } from '../engines/lightupGenerator';
 import { CognitiveRadarChart } from './CognitiveRadarChart';
 import { PBCelebrationModal } from './PBCelebrationModal';
-import { VaultManager } from '../utils/vaultStorage';
+import { VaultManager, VaultItem } from '../utils/vaultStorage';
+import {
+  TournamentProctoringSession,
+  getEnvironmentFingerprint,
+  calculateInfractionScore,
+} from '../utils/tournamentSecurity';
+import { TournamentSubmissionModal } from './TournamentSubmissionModal';
 
 interface Props {
   puzzle?: PuzzleEntity;
@@ -82,8 +88,11 @@ export const LightUpBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMo
   const [elapsedMs, setElapsedMs] = useState<number>(0);
   const [remainingSec, setRemainingSec] = useState<number>(actualPuzzle?.metrics?.estimated_time_sec || 90);
   const [showPBModal, setShowPBModal] = useState<boolean>(false);
+  const [showSubmitModal, setShowSubmitModal] = useState<boolean>(false);
   const [proofSignature, setProofSignature] = useState<string | null>(null);
-  const [isFav, setIsFav] = useState<boolean>(false);
+  const [isFav, setIsFav] = useState<boolean>(() =>
+    actualPuzzle?.id ? VaultManager.isFavorited(actualPuzzle.id) : false
+  );
   const [isFocusDarkness, setIsFocusDarkness] = useState<boolean>(false);
 
   const [activeHintStep, setActiveHintStep] = useState<LightUpStep | null>(null);
@@ -93,6 +102,17 @@ export const LightUpBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMo
   const startTimeRef = useRef<number>(Date.now());
   const hasRecordedRef = useRef<boolean>(false);
   const totalLifetimeAttemptsRef = useRef<number>(0);
+
+  // 實體賽事行為稽核 Session
+  const proctoringRef = useRef<TournamentProctoringSession | null>(null);
+
+  useEffect(() => {
+    proctoringRef.current = new TournamentProctoringSession();
+    return () => {
+      proctoringRef.current?.destroy();
+      proctoringRef.current = null;
+    };
+  }, [actualPuzzle?.id]);
 
   const timeLimitSec = actualPuzzle?.metrics?.estimated_time_sec || 90;
 
@@ -492,18 +512,20 @@ export const LightUpBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMo
     setHintLevel((prev) => Math.min(3, prev + 1));
   }, [isCompleted, tournamentMode, rows, cols, blackBlocks, board, playerTrace]);
 
+  // P0 修復：取用 res.isFav 防止型別衝突，且日期格式遵循 ISO 8601
   const handleToggleFavorite = () => {
     if (!actualPuzzle) return;
-    const nextFav = VaultManager.toggleFavorite({
+    const vaultItem: VaultItem = {
       id: actualPuzzle.id,
       engine: 'lightup',
       tier: String(tier),
       seed: 12345,
       steps: totalActions,
       timeSpentSec: Math.round(elapsedMs / 1000),
-      date: new Date().toLocaleDateString(),
-    });
-    setIsFav(nextFav);
+      date: new Date().toISOString(),
+    };
+    const res = VaultManager.toggleFavorite(vaultItem);
+    setIsFav(res.isFav);
   };
 
   const cci = useMemo(() => getCompositeCognitiveIndex(), [getCompositeCognitiveIndex, isCompleted]);
@@ -873,12 +895,20 @@ export const LightUpBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMo
             <CognitiveRadarChart dimensions={profile.cognitiveDimensions} size={130} />
           </div>
 
-          <button
-            onClick={exportLongitudinalDataset}
-            className="w-full py-1.5 bg-slate-900 hover:bg-slate-800 border border-cyan-600/50 text-cyan-300 text-[8px] font-bold rounded-lg transition cursor-pointer"
-          >
-            📊 {isEn ? 'Export Tournament Dossier' : '匯出個人競賽檔案'}
-          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={exportLongitudinalDataset}
+              className="flex-1 py-1.5 bg-slate-900 hover:bg-slate-800 border border-cyan-600/50 text-cyan-300 text-[8px] font-bold rounded-lg transition cursor-pointer"
+            >
+              📊 {isEn ? 'Export Dossier' : '匯出個人檔案'}
+            </button>
+            <button
+              onClick={() => setShowSubmitModal(true)}
+              className="flex-1 py-1.5 bg-neutral-200 hover:bg-white text-black text-[8px] font-bold rounded-lg transition cursor-pointer shadow"
+            >
+              📤 {isEn ? 'Submit' : '賽事提交'}
+            </button>
+          </div>
 
           {proofSignature && (
             <div className="mt-2 p-1.5 bg-slate-900 border border-slate-800 rounded text-left">
@@ -891,7 +921,30 @@ export const LightUpBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMo
       )}
 
       {showPBModal && (
-        <PBCelebrationModal pb={profile.personalBest} onClose={() => setShowPBModal(false)} isEn={isEn} />
+        <PBCelebrationModal pb={profile.personalBest} onClose={() => setShowPBModal(false)} forceLang={lang} />
+      )}
+
+      {showSubmitModal && actualPuzzle && (
+        <TournamentSubmissionModal
+          payload={{
+            submissionId: `SUB-${actualPuzzle.id}-${Date.now().toString(36)}`,
+            tournamentId: tournamentMode ? 'WPF_LIGHTUP_2026' : 'GLOBAL_RAYCAST_STAGE',
+            playerId: profile.personalBest.updatedAt ? 'CONTENDER_VERIFIED' : 'LOCAL_PLAYER_1',
+            division: 'open',
+            puzzleId: actualPuzzle.id,
+            engineType: 'lightup',
+            tier: String(tier),
+            timeSpentSec: Math.round(elapsedMs / 1000),
+            conflictsCount: corrections,
+            infractionScore: proctoringRef.current
+              ? calculateInfractionScore(proctoringRef.current.getSnapshot())
+              : 0,
+            environment: getEnvironmentFingerprint(),
+            timestamp: new Date().toISOString(),
+          }}
+          onClose={() => setShowSubmitModal(false)}
+          isEn={isEn}
+        />
       )}
     </div>
   );
