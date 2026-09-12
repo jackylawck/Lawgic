@@ -3,7 +3,7 @@
   "name": "Lawgic 羅輯・遊戲",
   "short_name": "Lawgic",
   "description": "高精度邏輯推理、空間拓撲運算與競技解題平台。收錄 18 款經典謎題，具備因果提示階梯與零信任本地存證。",
-  "lang": "zh-HK",
+  "lang": "zh-Hant-HK",
   "dir": "ltr",
   "id": "./?source=pwa",
   "start_url": "./",
