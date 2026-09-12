@@ -111,7 +111,9 @@ export const CognitiveDashboard = memo(function CognitiveDashboard({ onClose, fo
     // eslint-disable-next-line react-hooks/exhaustive-deps -- 版本鎖合約：profile.history 引用易受重新渲染抖動，改以 [historyLen, lastHistoryTimestamp] 作為只讀追加型穩態依賴
   }, [historyLen, lastHistoryTimestamp]);
 
-  // 2. 純字串指紋簽名（原始值穩定依賴，杜絕 SHA-256 運算無限循環）
+  // 2. 純字串指紋簽名（使用 personalBest.updatedAt 正確屬性，杜絕 TS2339 與無限循環）
+  const profileLastUpdate = profile.personalBest?.updatedAt || 'GENESIS';
+
   const reportSummarySignature = useMemo(() => {
     return [
       report.overallIQ,
@@ -119,9 +121,9 @@ export const CognitiveDashboard = memo(function CognitiveDashboard({ onClose, fo
       report.sem,
       report.pureClearRate,
       report.trajectory?.length || 0,
-      profile.updatedAt || 'GENESIS',
+      profileLastUpdate,
     ].join('|');
-  }, [report.overallIQ, report.percentileRank, report.sem, report.pureClearRate, report.trajectory?.length, profile.updatedAt]);
+  }, [report.overallIQ, report.percentileRank, report.sem, report.pureClearRate, report.trajectory?.length, profileLastUpdate]);
 
   useEffect(() => {
     let isMounted = true;
@@ -154,7 +156,7 @@ export const CognitiveDashboard = memo(function CognitiveDashboard({ onClose, fo
     );
   }, [exportLongitudinalDataset, playSound, announce, isEn]);
 
-  // 3. 列印安全焦點維護（實體綁定 printButtonRef，消除盲目 document.activeElement 漂移）
+  // 3. 列印安全焦點維護
   const handlePrintReport = useCallback(() => {
     playSound('click');
     window.print();
