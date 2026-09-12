@@ -7,7 +7,12 @@ import { MetricErrorBar } from './MetricErrorBar';
 import { CognitiveRadarChart } from './CognitiveRadarChart';
 import { PBCelebrationModal } from './PBCelebrationModal';
 import { TournamentSubmissionModal } from './TournamentSubmissionModal';
-import { getEnvironmentFingerprint, calculateInfractionScore } from '../utils/tournamentSecurity';
+import {
+  TournamentProctoringSession,
+  getEnvironmentFingerprint,
+  calculateInfractionScore,
+} from '../utils/tournamentSecurity';
+import { VaultManager, VaultItem } from '../utils/vaultStorage';
 import {
   WebSlitherlinkGenerator,
   SlitherlinkSpec,
@@ -45,19 +50,31 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
   const { lang } = useLanguage();
   const isEn = lang === 'en';
 
-  if (!actualPuzzle) {
-    return (
-      <div className="flex items-center justify-center p-8 text-xs font-mono text-slate-500">
-        {isEn ? 'Loading Topology...' : '載入拓撲盤面中...'}
-      </div>
-    );
-  }
-
   const spec: SlitherlinkSpec = (actualPuzzle as any)?.puzzle;
   const rows = spec?.rows || 6;
   const cols = spec?.cols || 6;
   const grid = useMemo(() => (spec as any)?.clues || (spec as any)?.grid || [], [spec]);
-  const currentTier = (actualPuzzle.tier as TierKey) || 'kids';
+  const currentTier = (actualPuzzle?.tier as TierKey) || 'kids';
+  const seed = (actualPuzzle?.metrics as any)?.seed || (spec as any)?.seed || 12345;
+
+  const [isFav, setIsFav] = useState<boolean>(() =>
+    actualPuzzle?.id ? VaultManager.isFavorited(actualPuzzle.id) : false
+  );
+
+  // 實體防作弊稽核 Session (P0 修復)
+  const proctoringRef = useRef<TournamentProctoringSession | null>(null);
+
+  useEffect(() => {
+    proctoringRef.current = new TournamentProctoringSession();
+    return () => {
+      proctoringRef.current?.destroy();
+      proctoringRef.current = null;
+    };
+  }, [actualPuzzle?.id]);
+
+  useEffect(() => {
+    setIsFav(VaultManager.isFavorited(actualPuzzle?.id || ''));
+  }, [actualPuzzle?.id]);
 
   const t = useMemo(() => ({
     speed: isEn ? 'Speed' : '競速',
@@ -130,11 +147,11 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
   const movesCountRef = useRef<number>(0);
   const hasRecordedRef = useRef<boolean>(false);
 
-  const STORAGE_KEY = `slither_state_${actualPuzzle.id}`;
+  const STORAGE_KEY = `slither_state_${actualPuzzle?.id || 'sandbox'}`;
 
   // 跨分頁狀態自動秒級恢復
   useEffect(() => {
-    if (typeof window === 'undefined' || !actualPuzzle.id) return;
+    if (typeof window === 'undefined' || !actualPuzzle?.id) return;
     const saved = sessionStorage.getItem(STORAGE_KEY);
     if (saved) {
       try {
@@ -169,7 +186,7 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
     setConflictDisplay(0);
     movesCountRef.current = 0;
     hasRecordedRef.current = false;
-  }, [actualPuzzle.id, rows, cols]);
+  }, [actualPuzzle?.id, rows, cols]);
 
   // 即時自動儲存
   useEffect(() => {
@@ -197,6 +214,22 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
     frameId = requestAnimationFrame(updateTimer);
     return () => cancelAnimationFrame(frameId);
   }, [isCompleted, isReplaying]);
+
+  // P1 修復：標準化金庫收藏對接
+  const handleToggleFavorite = () => {
+    if (!actualPuzzle) return;
+    const vaultItem: VaultItem = {
+      id: actualPuzzle.id,
+      engine: 'slitherlink',
+      tier: String(actualPuzzle.tier || 'kids'),
+      seed: Number(seed),
+      steps: movesCountRef.current,
+      timeSpentSec: Math.round(elapsedMs / 1000),
+      date: new Date().toISOString(),
+    };
+    const res = VaultManager.toggleFavorite(vaultItem);
+    setIsFav(res.isFav);
+  };
 
   // 雙態衝突檢測：超標 (Overflow) + 飢餓 (Starvation)
   const analysis = useMemo(() => {
@@ -381,7 +414,7 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
     }
   }, [isCompleted, tournamentMode, isReplaying, activeHint, rows, cols, grid, hEdges, vEdges]);
 
-  // 全鍵盤熱鍵監聽 (F: 專注, H: 提示, N: 無猜測, Z/Y: 撤銷/重做)
+  // 全鍵盤熱鍵監聽
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (isCompleted || isReplaying) return;
@@ -402,7 +435,7 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isCompleted, isReplaying, handleUndo, handleRedo, handleRequestHint]);
 
-  // 驗證閉合與心理計量簽名
+  // 驗證閉合與心理計量簽名 (P2 修復：增加 hasRecordedRef 守衛防抖)
   useEffect(() => {
     if (isCompleted || isReplaying || analysis.totalConflicts > 0) return;
 
@@ -544,7 +577,6 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
   }, [isReplaying, replayStepIndex, replayStepsList, replaySpeed]);
 
   const handleAdvancedShare = async () => {
-    const seed = (actualPuzzle as any)?.puzzle?.seed || (actualPuzzle.metrics as any)?.seed || 0;
     const origin = typeof window !== 'undefined' ? window.location.origin : 'https://lawgic.app';
     const duelUrl = `${origin}/?engine=slitherlink&tier=${currentTier}&seed=${seed}`;
 
@@ -577,15 +609,23 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
     return isEn ? entry.en : entry.zh;
   };
 
-  const theoryTime = (actualPuzzle.metrics as any)?.estimated_time_sec || rows * cols * 3;
+  const theoryTime = (actualPuzzle?.metrics as any)?.estimated_time_sec || rows * cols * 3;
   const benchmarkData = useMemo(() => {
     return getBenchmarkMetrics('TopologicalLookahead', theoryTime, 'slitherlink');
   }, [getBenchmarkMetrics, theoryTime]);
 
   const cci = useMemo(() => getCompositeCognitiveIndex(), [getCompositeCognitiveIndex, isCompleted]);
 
+  if (!actualPuzzle) {
+    return (
+      <div className="flex items-center justify-center p-8 text-xs font-mono text-slate-500">
+        {isEn ? 'Loading Topology...' : '載入拓撲盤面中...'}
+      </div>
+    );
+  }
+
   return (
-    <div className="flex flex-col items-center justify-center p-1 select-none font-mono">
+    <div className="flex flex-col items-center justify-center p-1 select-none font-mono w-full max-w-[420px] mx-auto">
       {/* 頂部 HUD (支援 Zen Mode 折疊) */}
       {!isZenMode && (
         <div className="w-full grid grid-cols-5 gap-1 px-0.5 mb-1.5 text-[8px] sm:text-[9px] animate-fade-in">
@@ -609,7 +649,7 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
           <button
             onClick={() => setNoGuessMode((prev) => !prev)}
             disabled={tournamentMode}
-            className={`p-1 rounded border text-center transition ${
+            className={`p-1 rounded border text-center transition cursor-pointer ${
               tournamentMode
                 ? 'bg-purple-950/80 border-purple-500 text-purple-300 font-bold cursor-not-allowed'
                 : noGuessMode
@@ -624,7 +664,7 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
           <button
             onClick={handleRequestHint}
             disabled={isCompleted || tournamentMode || isReplaying}
-            className={`p-1 rounded border text-center transition ${
+            className={`p-1 rounded border text-center transition cursor-pointer ${
               tournamentMode
                 ? 'bg-slate-900 border-slate-800 text-slate-600 cursor-not-allowed'
                 : activeHint
@@ -657,7 +697,7 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
                 <button
                   key={spd}
                   onClick={() => setReplaySpeed(spd as 1 | 2 | 4)}
-                  className={`px-1 py-0.2 rounded text-[6.5px] font-bold ${
+                  className={`px-1 py-0.2 rounded text-[6.5px] font-bold cursor-pointer ${
                     replaySpeed === spd ? 'bg-cyan-500 text-slate-950' : 'bg-slate-800 text-slate-400'
                   }`}
                 >
@@ -666,7 +706,7 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
               ))}
               <button
                 onClick={handleRestoreUserBoard}
-                className="ml-1 px-1.5 py-0.2 bg-rose-950 hover:bg-rose-900 border border-rose-500/60 text-rose-300 rounded text-[6.5px] font-bold"
+                className="ml-1 px-1.5 py-0.2 bg-rose-950 hover:bg-rose-900 border border-rose-500/60 text-rose-300 rounded text-[6.5px] font-bold cursor-pointer"
               >
                 {t.restoreMine}
               </button>
@@ -687,7 +727,7 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
           </div>
           <button
             onClick={handleRequestHint}
-            className="text-[6.5px] text-amber-400 hover:underline ml-2 whitespace-nowrap"
+            className="text-[6.5px] text-amber-400 hover:underline ml-2 whitespace-nowrap cursor-pointer"
           >
             [因果提示]
           </button>
@@ -730,13 +770,24 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
         className="relative overflow-hidden p-3 rounded-xl bg-slate-950 border-2 border-slate-800 shadow-2xl"
         style={{ width: 'min(88vw, 42vh)', height: 'min(88vw, 42vh)', touchAction: 'none' }}
       >
-        <button
-          onClick={() => setIsZenMode((prev) => !prev)}
-          className="absolute top-1 right-1 px-1.5 py-0.5 bg-slate-900/80 hover:bg-slate-800 border border-slate-700/60 rounded text-[6.5px] text-slate-400 hover:text-cyan-300 font-mono z-30 transition cursor-pointer"
-          title="Toggle Zen Focus Mode (Key: F)"
-        >
-          {isZenMode ? '⤢ EXPAND' : '☯ ZEN [F]'}
-        </button>
+        <div className="absolute top-1 right-1 flex items-center gap-1 z-30">
+          <button
+            onClick={handleToggleFavorite}
+            className={`px-1.5 py-0.5 rounded border transition cursor-pointer text-[6.5px] ${
+              isFav ? 'border-amber-500 text-amber-300 bg-amber-950/80' : 'bg-slate-900/80 border-slate-700/60 text-slate-400 hover:text-white'
+            }`}
+            title={isFav ? (isEn ? 'In Vault' : '已在傳奇庫') : (isEn ? 'Save to Vault' : '收藏')}
+          >
+            {isFav ? '★' : '☆'}
+          </button>
+          <button
+            onClick={() => setIsZenMode((prev) => !prev)}
+            className="px-1.5 py-0.5 bg-slate-900/80 hover:bg-slate-800 border border-slate-700/60 rounded text-[6.5px] text-slate-400 hover:text-cyan-300 font-mono transition cursor-pointer"
+            title="Toggle Zen Focus Mode (Key: F)"
+          >
+            {isZenMode ? '⤢ EXPAND' : '☯ ZEN [F]'}
+          </button>
+        </div>
 
         <div
           className="relative w-full h-full"
@@ -861,21 +912,21 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
           <button
             onClick={handleUndo}
             disabled={history.length === 0 || isCompleted || isReplaying}
-            className="px-2 py-0.5 bg-slate-900 border border-slate-800 rounded hover:bg-slate-800 disabled:opacity-40"
+            className="px-2 py-0.5 bg-slate-900 border border-slate-800 rounded hover:bg-slate-800 disabled:opacity-40 cursor-pointer"
           >
             ↩ {t.undo}
           </button>
           <button
             onClick={handleRedo}
             disabled={redoStack.length === 0 || isCompleted || isReplaying}
-            className="px-2 py-0.5 bg-slate-900 border border-slate-800 rounded hover:bg-slate-800 disabled:opacity-40"
+            className="px-2 py-0.5 bg-slate-900 border border-slate-800 rounded hover:bg-slate-800 disabled:opacity-40 cursor-pointer"
           >
             ↪ {t.redo}
           </button>
 
           {/* 戰術快捷鍵指引 HUD */}
           <div className="relative group">
-            <button className="px-1.5 py-0.5 bg-slate-900 hover:bg-slate-800 border border-slate-800 rounded text-slate-400 hover:text-slate-200 text-[7px] flex items-center gap-1 transition">
+            <button className="px-1.5 py-0.5 bg-slate-900 hover:bg-slate-800 border border-slate-800 rounded text-slate-400 hover:text-slate-200 text-[7px] flex items-center gap-1 transition cursor-pointer">
               <span>⌨️</span>
             </button>
             <div className="absolute bottom-full left-0 mb-1 hidden group-hover:flex flex-col gap-1 p-2 bg-slate-950/95 border border-slate-700/80 rounded-lg text-[7px] text-slate-300 w-44 shadow-2xl z-40 backdrop-blur-md">
@@ -896,7 +947,7 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
           {!tournamentMode && (
             <button
               onClick={handleAdvancedShare}
-              className="px-2 py-0.5 bg-slate-900 border border-slate-800 rounded hover:bg-slate-800 text-amber-300"
+              className="px-2 py-0.5 bg-slate-900 border border-slate-800 rounded hover:bg-slate-800 text-amber-300 cursor-pointer"
               title="Share Duel"
             >
               🔗 {t.duelLink}
@@ -923,13 +974,13 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
           <div className="flex items-center gap-1">
             <button
               onClick={() => setIsZenMode(false)}
-              className="px-2 py-0.5 bg-slate-800 hover:bg-slate-700 text-[6.5px] text-slate-300 rounded transition"
+              className="px-2 py-0.5 bg-slate-800 hover:bg-slate-700 text-[6.5px] text-slate-300 rounded transition cursor-pointer"
             >
               {isEn ? 'View Metrics' : '查看數據'}
             </button>
             <button
               onClick={() => setShowSubmitModal(true)}
-              className="px-2 py-0.5 bg-cyan-950 border border-cyan-500/60 text-cyan-300 font-bold text-[6.5px] rounded transition"
+              className="px-2 py-0.5 bg-cyan-950 border border-cyan-500/60 text-cyan-300 font-bold text-[6.5px] rounded transition cursor-pointer"
             >
               {isEn ? 'Submit' : '賽事提交'}
             </button>
@@ -988,7 +1039,7 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
             <button
               onClick={handleStartReplay}
               disabled={isReplaying}
-              className="flex-1 py-1 bg-indigo-950 hover:bg-indigo-900 border border-indigo-500/60 text-indigo-300 text-[7.5px] font-bold rounded transition shadow flex items-center justify-center gap-0.5 active:scale-95"
+              className="flex-1 py-1 bg-indigo-950 hover:bg-indigo-900 border border-indigo-500/60 text-indigo-300 text-[7.5px] font-bold rounded transition shadow flex items-center justify-center gap-0.5 active:scale-95 cursor-pointer"
             >
               <span>🔁</span>
               <span>{t.aiReplay}</span>
@@ -997,7 +1048,7 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
             {userStateBackup && (
               <button
                 onClick={handleRestoreUserBoard}
-                className="flex-1 py-1 bg-slate-900 hover:bg-slate-800 border border-cyan-500/60 text-cyan-300 text-[7.5px] font-bold rounded transition shadow flex items-center justify-center gap-0.5 active:scale-95"
+                className="flex-1 py-1 bg-slate-900 hover:bg-slate-800 border border-cyan-500/60 text-cyan-300 text-[7.5px] font-bold rounded transition shadow flex items-center justify-center gap-0.5 active:scale-95 cursor-pointer"
               >
                 <span>↩️</span>
                 <span>{t.restoreMine}</span>
@@ -1006,7 +1057,7 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
 
             <button
               onClick={handleAdvancedShare}
-              className="flex-1 py-1 bg-slate-900 hover:bg-slate-800 border border-amber-500/60 text-amber-300 text-[7.5px] font-bold rounded transition shadow flex items-center justify-center gap-0.5 active:scale-95"
+              className="flex-1 py-1 bg-slate-900 hover:bg-slate-800 border border-amber-500/60 text-amber-300 text-[7.5px] font-bold rounded transition shadow flex items-center justify-center gap-0.5 active:scale-95 cursor-pointer"
             >
               <span>🔗</span>
               <span>{t.duelLink}</span>
@@ -1014,7 +1065,7 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
 
             <button
               onClick={() => setShowSubmitModal(true)}
-              className="flex-1 py-1 bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 text-slate-950 text-[7.5px] font-black rounded shadow transition active:scale-95 flex items-center justify-center gap-0.5"
+              className="flex-1 py-1 bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 text-slate-950 text-[7.5px] font-black rounded shadow transition active:scale-95 flex items-center justify-center gap-0.5 cursor-pointer"
             >
               <span>📤</span>
               <span>{t.submit}</span>
@@ -1039,6 +1090,7 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
         <PBCelebrationModal pb={profile.personalBest} onClose={() => setShowPBModal(false)} isEn={isEn} />
       )}
 
+      {/* 賽事提交 Modal (P0 修復：動態掛接真實稽核快照) */}
       {showSubmitModal && (
         <TournamentSubmissionModal
           payload={{
@@ -1051,12 +1103,9 @@ export const SlitherlinkBoard: React.FC<Props> = ({ puzzleData, puzzle, tourname
             tier: currentTier,
             timeSpentSec: Math.round(elapsedMs / 1000),
             conflictsCount: conflictCountRef.current,
-            infractionScore: calculateInfractionScore({
-              tabSwitches: 0,
-              blurEvents: 0,
-              clipboardEvents: 0,
-              untrustedEvents: 0,
-            }),
+            infractionScore: proctoringRef.current
+              ? calculateInfractionScore(proctoringRef.current.getSnapshot())
+              : 0,
             environment: getEnvironmentFingerprint(),
             timestamp: new Date().toISOString(),
           }}
