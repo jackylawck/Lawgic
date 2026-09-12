@@ -1,4 +1,3 @@
-// core-engine/src/lib.rs
 use wasm_bindgen::prelude::*;
 
 #[cfg(feature = "console_error_panic_hook")]
@@ -11,7 +10,7 @@ pub type BitMask = u16;
 pub const ALL_CANDIDATES: BitMask = 0x03FE; // Bits 1..=9 (0b0000_0011_1111_1110)
 
 /// 編譯期靜態計算 81 格的 20 個正交同行、同列與九宮鄰居。
-/// 使用 static 確保唯讀資料段單例存在，杜絕 const 內聯展開導致二進位體積膨脹。
+/// 使用 static 確保唯讀資料段單例存在，避免 const 內聯重複膨脹二進位。
 static PEERS_TABLE: [[u8; 20]; 81] = {
     let mut table = [[0u8; 20]; 81];
     let mut i = 0;
@@ -124,25 +123,17 @@ impl SudokuEngine {
     /// 返回 `cells` 陣列的零拷貝指標，供前端直接映射 WebAssembly.Memory。
     ///
     /// # Safety & WebAssembly Memory 契約
-    ///
-    /// 1. **對齊保證**：指標為 2-byte 對齊（指向 `u16`）。JS 側必須使用 `Uint16Array` 視圖存取。
-    /// 2. **基底位址穩定性**：`cells` 為固定大小陣列 `[BitMask; 81]`，落子操作僅修改記憶體內容，不會改變基底位址。
-    /// 3. **記憶體增長脫鉤防禦 (Detached Buffer Trap)**：
-    ///    若宿主環境或任何操作引發了 `WebAssembly.Memory.grow`，所有既有的 JS `TypedArray` 視圖會立即失效。
-    ///    前端呼叫端必須在每次寫入操作後，重新透過 `memory.buffer` 構建視圖，禁止長期快取。
+    /// 1. 指標為 2-byte 對齊（指向 `u16`），JS 端需使用 `Uint16Array` 視圖存取。
+    /// 2. `cells` 為固定大小連續陣列 `[BitMask; 81]`，落子不會改變基底位址。
+    /// 3. 若 WASM 執行緒觸發 `memory.grow`，原 `ArrayBuffer` 會脫鉤，JS 端需在讀取時重新透過 `memory.buffer` 構建視圖。
     ///
     /// # Returns
-    /// **wasm-bindgen 返回型別為 JS `number`**（WASM 線性記憶體偏移量）。
-    /// JS 端使用範例：
-    /// ```js
-    /// const ptr = engine.get_cells_ptr();
-    /// const cells = new Uint16Array(wasmMemory.buffer, ptr, 81);
-    /// ```
+    /// wasm-bindgen 輸出為 JS `number`（WASM 線性記憶體偏移位址）。
     pub fn get_cells_ptr(&self) -> *const BitMask {
         self.cells.as_ptr()
     }
 
-    /// 取得指定儲存格的候選數 BitMask（跨邊界安全唯讀查詢）
+    /// 取得指定儲存格的候選數 BitMask
     pub fn get_cell_mask(&self, idx: usize) -> Result<u16, JsValue> {
         if idx >= 81 {
             return Err(JsValue::from_str("OUT_OF_BOUNDS: Index out of range"));
@@ -155,7 +146,7 @@ impl SudokuEngine {
         self.cells.iter().all(|&m| m.count_ones() == 1)
     }
 
-    /// 尚未確定的格子數量（供前端進度條展示）
+    /// 尚未確定的格子數量
     pub fn get_unsolved_count(&self) -> u32 {
         self.cells.iter().filter(|&&m| m.count_ones() > 1).count() as u32
     }
@@ -174,7 +165,7 @@ impl SudokuEngine {
 
         let old_val = self.user_inputs[idx];
         if old_val == val {
-            return Ok(true); // 冪等短路：相同數值跳過重複傳播開銷
+            return Ok(true); // 冪等短路：數值相同直接回傳
         }
 
         let backup_cells = self.cells;
@@ -239,16 +230,10 @@ impl SudokuEngine {
         bfs_propagate(&mut self.cells, &mut queue, &mut queued, 1)
     }
 
-    /// 驗證工具（非常態遊玩運算）：使用回溯搜尋計算解空間基數
-    ///
-    /// # Performance
-    /// 針對極端高難度題型，回溯深度可能耗時數毫秒至數十毫秒。
-    /// 建議在 Worker 執行緒中呼叫，避免阻塞 UI 渲染循環。
-    ///
-    /// # Returns
+    /// 驗證解空間基數（回溯搜尋）
     /// - 0 = 無解
-    /// - 1 = 數學唯一解（符合頂級純演繹賽事標準）
-    /// - 2 = 多解（至少 2 個解，已觸發剪枝早退）
+    /// - 1 = 數學唯一解
+    /// - 2 = 多解（觸發剪枝早退）
     pub fn verify_solution_count(&self) -> u32 {
         let mut solver_cells = self.cells;
         let mut count = 0;
@@ -256,8 +241,7 @@ impl SudokuEngine {
         count
     }
 
-    /// 原地修改與撤銷（In-place Backtracking & Undo）的 MRV 回溯計數器
-    /// 杜絕遞迴呼叫時累積複製大陣列所帶來的堆疊溢位與耗能
+    /// 原地修改與撤銷（In-place Backtracking & Undo）MRV 回溯計數器
     fn backtrack_count(board: &mut [BitMask; 81], count: &mut u32) {
         if *count >= 2 {
             return;
@@ -266,17 +250,16 @@ impl SudokuEngine {
         let mut min_candidates = 10;
         let mut best_idx = None;
 
-        // 單次線性掃描：優先攔截矛盾死局格
         for i in 0..81 {
             let ones = board[i].count_ones();
             if ones == 0 {
-                return; // 存在無候選數的矛盾格，立即剪枝
+                return; // 存在矛盾，剪枝
             }
             if ones > 1 && ones < min_candidates {
                 min_candidates = ones;
                 best_idx = Some(i);
                 if ones == 2 {
-                    // 已達最優分支因子，但需繼續確保未掃描格子沒有 0
+                    // 已為最小可能分支度，補查剩餘尚未掃描格子是否有 0
                     for j in (i + 1)..81 {
                         if board[j].count_ones() == 0 {
                             return;
@@ -289,7 +272,6 @@ impl SudokuEngine {
 
         let best_idx = match best_idx {
             None => {
-                // 所有格子皆只有 1 個候選數且無 0，確認為一個合法解
                 *count += 1;
                 return;
             }
@@ -304,7 +286,6 @@ impl SudokuEngine {
                 continue;
             }
 
-            // 原地修改前備份盤面狀態
             let backup = *board;
             board[best_idx] = mask;
 
@@ -321,13 +302,11 @@ impl SudokuEngine {
                 }
             }
 
-            // 狀態撤銷，恢復回溯分支點
             *board = backup;
         }
     }
 }
 
-// ── 原生純 Rust 單元測試 ──
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -351,11 +330,11 @@ mod tests {
     #[test]
     fn test_backtrack_count_aborts_on_zero_candidate_dead_end() {
         let mut board = [ALL_CANDIDATES; 81];
-        board[0] = 0; // 注入零候選數矛盾
+        board[0] = 0;
         let mut count = 0;
 
         SudokuEngine::backtrack_count(&mut board, &mut count);
-        assert_eq!(count, 0, "零候選數的死路必須返回 0，不可誤判為有效解");
+        assert_eq!(count, 0);
     }
 
     #[test]
@@ -366,6 +345,6 @@ mod tests {
 
         let mut count = 0;
         SudokuEngine::backtrack_count(&mut board, &mut count);
-        assert_eq!(count, 0, "二分支之後出現死局時，必須即刻剪枝");
+        assert_eq!(count, 0);
     }
 }
