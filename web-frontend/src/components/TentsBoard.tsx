@@ -9,10 +9,18 @@ import {
   TentCoord,
   EntropyGainProjection,
 } from '../engines/tentsGenerator';
+import { VaultManager, VaultItem } from '../utils/vaultStorage';
+import {
+  TournamentProctoringSession,
+  getEnvironmentFingerprint,
+  calculateInfractionScore,
+} from '../utils/tournamentSecurity';
+import { TournamentSubmissionModal } from './TournamentSubmissionModal';
 
 interface Props {
   puzzle?: PuzzleEntity;
   puzzleData?: PuzzleEntity;
+  tournamentMode?: boolean;
 }
 
 type CellState = 0 | 1 | 2 | 3; // 0: 空, 1: 帳篷, 2: 樹木, 3: 草地
@@ -27,12 +35,12 @@ interface AnnotationStroke {
   points: StrokePoint[];
 }
 
-export const TentsBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
+export const TentsBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode = false }) => {
   const actualPuzzle = puzzleData || puzzle;
   const { lang } = useLanguage();
   const isEn = lang === 'en';
 
-  const { recordAttempt } = useLearnerProfile();
+  const { recordAttempt, profile, getCompositeCognitiveIndex } = useLearnerProfile();
   const spec = useMemo(() => {
     return ((actualPuzzle?.puzzle || actualPuzzle) as unknown as TentsSpec) || null;
   }, [actualPuzzle]);
@@ -42,6 +50,7 @@ export const TentsBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
   const initialTrees = useMemo(() => spec?.trees || [], [spec]);
   const initialRowCounts = useMemo(() => spec?.rowCounts || [], [spec]);
   const initialColCounts = useMemo(() => spec?.colCounts || [], [spec]);
+  const seed = (actualPuzzle?.metrics as any)?.seed || (spec as any)?.seed || 12345;
 
   // 棋盤本體狀態
   const [board, setBoard] = useState<CellState[][]>(() => {
@@ -52,28 +61,17 @@ export const TentsBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
     return b;
   });
 
-  // 當題目切換時重設狀態
-  useEffect(() => {
-    const b: CellState[][] = Array.from({ length: rows }, () => Array(cols).fill(0));
-    for (const tree of initialTrees) {
-      if (tree.r < rows && tree.c < cols) b[tree.r][tree.c] = 2;
-    }
-    setBoard(b);
-    setIsCompleted(false);
-    setElapsedMs(0);
-    setGhostSnapshots([]);
-    setGhostIndex(-1);
-    setStrokes([]);
-    setMindPulseCoord(null);
-    setHoveredRipple(null);
-    startTimeRef.current = Date.now();
-  }, [actualPuzzle?.id, rows, cols, initialTrees]);
-
   const [isCompleted, setIsCompleted] = useState<boolean>(false);
   const [elapsedMs, setElapsedMs] = useState<number>(0);
   const [isCtrlActive, setIsCtrlActive] = useState<boolean>(false);
   const [isAltActive, setIsAltActive] = useState<boolean>(false);
   const [isShiftActive, setIsShiftActive] = useState<boolean>(false);
+
+  // 傳奇庫收藏與排行榜提交
+  const [isFav, setIsFav] = useState<boolean>(() =>
+    actualPuzzle?.id ? VaultManager.isFavorited(actualPuzzle.id) : false
+  );
+  const [showSubmitModal, setShowSubmitModal] = useState<boolean>(false);
 
   // 熵增益光場映射
   const [entropyGainMap, setEntropyGainMap] = useState<Record<string, EntropyGainProjection>>({});
@@ -98,7 +96,39 @@ export const TentsBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
   const [mindPulseCoord, setMindPulseCoord] = useState<TentCoord | null>(null);
 
   const startTimeRef = useRef<number>(Date.now());
+  const hasRecordedRef = useRef<boolean>(false);
   const cellSize = Math.min(320 / Math.max(rows, cols), 46);
+
+  // 實體防作弊稽核 Session (P0 修復)
+  const proctoringRef = useRef<TournamentProctoringSession | null>(null);
+
+  useEffect(() => {
+    proctoringRef.current = new TournamentProctoringSession();
+    return () => {
+      proctoringRef.current?.destroy();
+      proctoringRef.current = null;
+    };
+  }, [actualPuzzle?.id]);
+
+  // 當題目切換時重設狀態
+  useEffect(() => {
+    const b: CellState[][] = Array.from({ length: rows }, () => Array(cols).fill(0));
+    for (const tree of initialTrees) {
+      if (tree.r < rows && tree.c < cols) b[tree.r][tree.c] = 2;
+    }
+    setBoard(b);
+    setIsCompleted(false);
+    setElapsedMs(0);
+    setGhostSnapshots([]);
+    setGhostIndex(-1);
+    setStrokes([]);
+    setMindPulseCoord(null);
+    setHoveredRipple(null);
+    setShowSubmitModal(false);
+    hasRecordedRef.current = false;
+    startTimeRef.current = Date.now();
+    setIsFav(VaultManager.isFavorited(actualPuzzle?.id || ''));
+  }, [actualPuzzle?.id, rows, cols, initialTrees]);
 
   // 鍵盤修飾鍵全局精確綁定
   useEffect(() => {
@@ -193,14 +223,13 @@ export const TentsBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
     [board, spec]
   );
 
-  // 落子與平行宇宙快照保存
+  // 落子與平行宇宙快照保存 + 防重錄守衛 (P2)
   const applyCell = useCallback(
     (r: number, c: number, val: CellState) => {
       if (board[r][c] === 2 || isCompleted) return;
 
-      if (navigator.vibrate) navigator.vibrate(6);
+      if (typeof navigator !== 'undefined' && navigator.vibrate) navigator.vibrate(6);
 
-      // 深拷貝當前快照存入幽靈佇列（最多保留最近 5 個分歧點）
       setGhostSnapshots((prev) => [board.map((row) => [...row]), ...prev.slice(0, 4)]);
 
       setBoard((prev) => {
@@ -219,10 +248,11 @@ export const TentsBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
         }
 
         // 完備性與奇偶閉鎖檢定
-        if (allTents === initialTrees.length && deltaPhi === 0) {
+        if (allTents === initialTrees.length && deltaPhi === 0 && !hasRecordedRef.current) {
           if (WebTentsGenerator.hasUniqueBijectiveMatching(initialTrees, tentCoords, rows, cols)) {
+            hasRecordedRef.current = true;
             setIsCompleted(true);
-            if (navigator.vibrate) navigator.vibrate([15, 60, 25]);
+            if (typeof navigator !== 'undefined' && navigator.vibrate) navigator.vibrate([15, 60, 25]);
 
             if (actualPuzzle) {
               recordAttempt({
@@ -245,6 +275,22 @@ export const TentsBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
     },
     [board, isCompleted, rows, cols, initialTrees, deltaPhi, actualPuzzle, recordAttempt]
   );
+
+  // P1 修復：標準化金庫收藏對接
+  const handleToggleFavorite = () => {
+    if (!actualPuzzle) return;
+    const vaultItem: VaultItem = {
+      id: actualPuzzle.id,
+      engine: 'tents',
+      tier: String(actualPuzzle.tier || 'kids'),
+      seed: Number(seed),
+      steps: rows * cols,
+      timeSpentSec: Math.round(elapsedMs / 1000),
+      date: new Date().toISOString(),
+    };
+    const res = VaultManager.toggleFavorite(vaultItem);
+    setIsFav(res.isFav);
+  };
 
   // Canvas 墨跡塗鴉重繪邏輯
   const redrawCanvas = useCallback(() => {
@@ -274,7 +320,6 @@ export const TentsBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
     redrawCanvas();
   }, [redrawCanvas]);
 
-  // 墨跡事件監聽
   const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (!isAltActive) return;
     isDrawingRef.current = true;
@@ -315,7 +360,6 @@ export const TentsBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
       };
       setStrokes((prev) => [...prev, newStroke]);
 
-      // 思維心搏（環繞猶豫度積分）
       const pts = currentPointsRef.current;
       const avgX = pts.reduce((a, b) => a + b.x, 0) / pts.length;
       const avgY = pts.reduce((a, b) => a + b.y, 0) / pts.length;
@@ -336,7 +380,6 @@ export const TentsBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
     currentPointsRef.current = [];
   };
 
-  // 滾輪切換平行宇宙快照
   const handleWheel = (e: React.WheelEvent) => {
     if (!isShiftActive || ghostSnapshots.length === 0) return;
     if (e.deltaY > 0) {
@@ -347,17 +390,27 @@ export const TentsBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
   };
 
   const activeGhost = ghostIndex >= 0 ? ghostSnapshots[ghostIndex] : null;
+  const cci = useMemo(() => getCompositeCognitiveIndex(), [getCompositeCognitiveIndex, isCompleted]);
 
   return (
     <div
       onWheel={handleWheel}
-      className="flex flex-col items-center justify-center p-3 select-none font-mono bg-black text-white min-h-screen"
+      className="flex flex-col items-center justify-center p-3 select-none font-mono bg-black text-white min-h-screen w-full max-w-[440px] mx-auto"
     >
       {/* 頂部極致微型看板 */}
       <div className="w-full max-w-sm flex items-center justify-between px-2 mb-2 text-[8px] text-neutral-400">
-        <div className="flex gap-2">
+        <div className="flex items-center gap-2">
           <span>TIME: {(elapsedMs / 1000).toFixed(1)}s</span>
           <span>DIM: {rows}&times;{cols}</span>
+          <button
+            onClick={handleToggleFavorite}
+            className={`px-1.5 py-0.5 rounded border transition cursor-pointer text-[7.5px] ${
+              isFav ? 'border-amber-500 text-amber-300 bg-amber-950/40' : 'border-neutral-800 text-neutral-500 hover:text-white'
+            }`}
+            title={isFav ? (isEn ? 'In Vault' : '已在傳奇庫') : (isEn ? 'Save to Vault' : '收藏')}
+          >
+            {isFav ? '★' : '☆'}
+          </button>
         </div>
 
         {/* 阻尼相位鎖儀表 */}
@@ -442,6 +495,7 @@ export const TentsBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
                     y2={v.to[0] * (cellSize + 4) + cellSize / 2}
                     stroke="#f43f5e"
                     strokeWidth="1.5"
+                    strokeLinecap="round"
                     strokeDasharray="2 2"
                     markerEnd="url(#arrow)"
                     className="animate-pulse"
@@ -553,26 +607,61 @@ export const TentsBoard: React.FC<Props> = ({ puzzle, puzzleData }) => {
         </div>
       </div>
 
-      {/* 勝利結算面板（防空安全渲染） */}
+      {/* 勝利結算面板 */}
       {isCompleted && (
-        <div className="mt-3 p-3 bg-neutral-950 border border-emerald-500/80 rounded-xl text-center max-w-xs shadow-2xl animate-fade-in">
+        <div className="mt-3 p-3 bg-neutral-950 border border-emerald-500/80 rounded-xl text-center max-w-xs w-full shadow-2xl animate-fade-in font-mono">
           <div className="text-emerald-400 font-bold text-xs tracking-widest mb-1">
             TOPOLOGY COLLAPSED
           </div>
-          <div className="text-[7.5px] text-neutral-400 mb-2">
+          <div className="text-[8px] text-neutral-400 mb-1">
+            Gf: IQ {cci.standardIQ} · {(elapsedMs / 1000).toFixed(1)}s
+          </div>
+          <div className="text-[7.5px] text-neutral-500 mb-2">
             ZERO-ASSUMPTION PROOF: VERIFIED | WPF KEY: {spec?.wpfAnswerKey ?? 'N/A'}
           </div>
-          <button
-            onClick={() => {
-              if (spec?.wpfAnswerKey) {
-                navigator.clipboard.writeText(spec.wpfAnswerKey);
-              }
-            }}
-            className="w-full py-1 bg-emerald-600/20 hover:bg-emerald-600/40 text-emerald-300 border border-emerald-500/50 rounded text-[8px] font-bold transition active:scale-95"
-          >
-            COPY WPF CERTIFIED KEY
-          </button>
+          <div className="flex gap-1.5">
+            <button
+              onClick={() => {
+                if (spec?.wpfAnswerKey) {
+                  navigator.clipboard.writeText(spec.wpfAnswerKey);
+                }
+              }}
+              className="flex-1 py-1.5 bg-neutral-900 hover:bg-neutral-800 text-neutral-300 border border-neutral-700 rounded text-[7.5px] font-bold transition active:scale-95 cursor-pointer"
+            >
+              COPY KEY
+            </button>
+            <button
+              onClick={() => setShowSubmitModal(true)}
+              className="flex-1 py-1.5 bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 text-slate-950 text-[7.5px] font-black rounded transition active:scale-95 cursor-pointer shadow"
+            >
+              {isEn ? 'SUBMIT' : '賽事提交'}
+            </button>
+          </div>
         </div>
+      )}
+
+      {/* 賽事提交 Modal (P0 修復) */}
+      {showSubmitModal && actualPuzzle && (
+        <TournamentSubmissionModal
+          payload={{
+            submissionId: `SUB-${actualPuzzle.id}-${Date.now().toString(36)}`,
+            tournamentId: tournamentMode ? 'WPF_TENTS_2026' : 'GLOBAL_TENTS_STAGE',
+            playerId: profile.personalBest.updatedAt ? 'CONTENDER_VERIFIED' : 'LOCAL_PLAYER_1',
+            division: 'open',
+            puzzleId: actualPuzzle.id,
+            engineType: 'tents',
+            tier: (actualPuzzle.tier as TierKey) || 'kids',
+            timeSpentSec: Math.round(elapsedMs / 1000),
+            conflictsCount: 0,
+            infractionScore: proctoringRef.current
+              ? calculateInfractionScore(proctoringRef.current.getSnapshot())
+              : 0,
+            environment: getEnvironmentFingerprint(),
+            timestamp: new Date().toISOString(),
+          }}
+          onClose={() => setShowSubmitModal(false)}
+          isEn={isEn}
+        />
       )}
     </div>
   );
