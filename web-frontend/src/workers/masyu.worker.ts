@@ -34,12 +34,12 @@ export const MAX_REQUEST_ID_LENGTH = 128;
 
 /**
  * 🔒 真正具備「編譯期窮舉校驗」的 Tier 白名單映射
- * 透過 Record<TierKey, true>，只要 masyuCore.ts 增刪任何 TierKey，
- * 這裡若未 100% 同步，tsc 將直接噴出 TS2741 (Property missing) 或 TS2322 (Excess property)！
+ * 補上 expert: true 以滿足 masyuCore.ts 的 TierKey 定義
  */
 const TIER_EXHAUSTIVE_MAP: Readonly<Record<TierKey, true>> = {
   kids: true,
   intermediate: true,
+  expert: true,
   master: true,
   legendary: true,
   ultimate: true,
@@ -105,7 +105,6 @@ self.addEventListener('message', (e: MessageEvent<WorkerRequest>) => {
 
   try {
     if (action === 'produce_single') {
-      // 統一由 resolveSeed 提供保底數值，行為與 batch 對齊
       const currentSeed = resolveSeed(seed);
       const puzzle = MasyuCoreEngine.produceSinglePuzzle(tier as TierKey, currentSeed, flowTuning);
 
