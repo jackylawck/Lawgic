@@ -4,6 +4,13 @@ import { PuzzleEntity, TierKey } from '../generated';
 import { useLearnerProfile } from '../hooks/useLearnerProfile';
 import { useLanguage } from '../contexts/LanguageContext';
 import { NonogramSpec, NonogramHintStep, WebNonogramGenerator } from '../engines/nonogramGenerator';
+import { VaultManager, VaultItem } from '../utils/vaultStorage';
+import {
+  TournamentProctoringSession,
+  getEnvironmentFingerprint,
+  calculateInfractionScore,
+} from '../utils/tournamentSecurity';
+import { TournamentSubmissionModal } from './TournamentSubmissionModal';
 
 interface Props {
   puzzle?: PuzzleEntity;
@@ -72,7 +79,6 @@ function useCompetitionTimer(initialMs: number = 0) {
     isPausedRef.current = false;
   }, []);
 
-  // 核心修復：使用 useMemo 確保回傳物件參照在生命週期內絕對穩定
   return useMemo(() => ({
     getElapsedMs,
     pause,
@@ -121,7 +127,7 @@ export const NonogramBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentM
   const actualPuzzle = puzzleData || puzzle;
   const { lang } = useLanguage();
   const isEn = lang === 'en';
-  const { recordAttempt } = useLearnerProfile();
+  const { recordAttempt, profile } = useLearnerProfile();
 
   const spec = (actualPuzzle?.puzzle || actualPuzzle) as unknown as NonogramSpec;
   const rows = spec?.rows || 5;
@@ -130,6 +136,7 @@ export const NonogramBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentM
   const colClues = spec?.colClues || [];
   const solution: boolean[][] = spec?.solution || [];
   const solvingSteps: NonogramHintStep[] = spec?.solvingSteps || [];
+  const seed = (actualPuzzle?.metrics as any)?.seed || spec?.seed || 12345;
 
   const puzzleStorageKey = useMemo(() => `nono_session_${actualPuzzle?.id || 'sandbox'}`, [actualPuzzle?.id]);
   const prevPuzzleKeyRef = useRef<string>(puzzleStorageKey);
@@ -142,6 +149,10 @@ export const NonogramBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentM
   const [activeInputMode, setActiveInputMode] = useState<1 | 2 | 3>(1);
   const [isCompleted, setIsCompleted] = useState<boolean>(false);
   const [finalElapsedMs, setFinalElapsedMs] = useState<number | null>(null);
+  const [isFav, setIsFav] = useState<boolean>(() =>
+    actualPuzzle?.id ? VaultManager.isFavorited(actualPuzzle.id) : false
+  );
+  const [showSubmitModal, setShowSubmitModal] = useState<boolean>(false);
 
   // 訓練級真暫停狀態
   const [isPaused, setIsPaused] = useState<boolean>(false);
@@ -153,7 +164,7 @@ export const NonogramBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentM
   // Zen 模式切換
   const [showTimer, setShowTimer] = useState<boolean>(tournamentMode);
 
-  // 統一計時引擎 (參照穩定)
+  // 統一計時引擎
   const timer = useCompetitionTimer(0);
 
   const [isDarkMode, setIsDarkMode] = useState<boolean>(true);
@@ -170,6 +181,19 @@ export const NonogramBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentM
   // 漸進式引導提示
   const [hintLevel, setHintLevel] = useState<number>(0);
   const [activeHint, setActiveHint] = useState<NonogramHintStep | null>(null);
+
+  const hasRecordedRef = useRef<boolean>(false);
+
+  // 實體防作弊稽核 Session
+  const proctoringRef = useRef<TournamentProctoringSession | null>(null);
+
+  useEffect(() => {
+    proctoringRef.current = new TournamentProctoringSession();
+    return () => {
+      proctoringRef.current?.destroy();
+      proctoringRef.current = null;
+    };
+  }, [actualPuzzle?.id]);
 
   // 快照持久化指針
   const latestSessionRef = useRef<NonogramSessionState>({
@@ -214,7 +238,7 @@ export const NonogramBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentM
     }
   }, [selectedCell]);
 
-  // 切換題目生命週期（無損 Flush 舊存檔，精準同步 Wall Clock）
+  // 切換題目生命週期
   useEffect(() => {
     if (prevPuzzleKeyRef.current && prevPuzzleKeyRef.current !== puzzleStorageKey) {
       try {
@@ -264,7 +288,9 @@ export const NonogramBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentM
     setFinalElapsedMs(null);
     setIsDragging(false);
     setIsResetPending(false);
-  }, [puzzleStorageKey, rows, cols, timer]);
+    hasRecordedRef.current = false;
+    setIsFav(VaultManager.isFavorited(actualPuzzle?.id || ''));
+  }, [puzzleStorageKey, rows, cols, timer, actualPuzzle?.id]);
 
   // 卸載前快照保護
   useEffect(() => {
@@ -278,7 +304,6 @@ export const NonogramBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentM
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, [puzzleStorageKey, timer]);
 
-  // 核心修復：副作用完全抽離至 setState 外部
   const togglePause = useCallback(() => {
     if (isCompleted) return;
     const next = !isPaused;
@@ -290,7 +315,6 @@ export const NonogramBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentM
     setIsPaused(next);
   }, [isCompleted, isPaused, timer]);
 
-  // 禪模式顯示切換
   const toggleTimerVisibility = useCallback(() => {
     setShowTimer((prev) => !prev);
   }, []);
@@ -387,7 +411,9 @@ export const NonogramBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentM
           setRedoStack([]);
         }
 
-        if (checkVictory(next)) {
+        // P2 修復：加入 hasRecordedRef 防禦重複結算
+        if (!hasRecordedRef.current && checkVictory(next)) {
+          hasRecordedRef.current = true;
           const preciseElapsed = timer.getElapsedMs();
           setFinalElapsedMs(preciseElapsed);
           setIsCompleted(true);
@@ -447,7 +473,6 @@ export const NonogramBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentM
     });
   }, [isCompleted, isPaused, redoStack]);
 
-  // 雙擊 R 鍵免彈窗重設
   const executeReset = useCallback(() => {
     setGrid(Array.from({ length: rows }, () => Array(cols).fill(0)));
     setHistoryStack([]);
@@ -587,6 +612,22 @@ export const NonogramBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentM
     }
   }, [isCompleted, isPaused, tournamentMode, solvingSteps, grid, activeHint]);
 
+  // P0 修復：標準化金庫收藏對接
+  const handleToggleFavorite = () => {
+    if (!actualPuzzle) return;
+    const vaultItem: VaultItem = {
+      id: actualPuzzle.id,
+      engine: 'nonogram',
+      tier: String(actualPuzzle.tier || 'kids'),
+      seed: Number(seed),
+      steps: rows * cols,
+      timeSpentSec: Math.round(timer.getElapsedMs() / 1000),
+      date: new Date().toISOString(),
+    };
+    const res = VaultManager.toggleFavorite(vaultItem);
+    setIsFav(res.isFav);
+  };
+
   // 鍵盤全功能映射
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -724,7 +765,7 @@ export const NonogramBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentM
   return (
     <div
       onContextMenu={(e) => e.preventDefault()}
-      className={`flex flex-col items-center justify-center p-4 select-none outline-none touch-none transition-colors duration-200 ${
+      className={`flex flex-col items-center justify-center p-4 select-none outline-none touch-none transition-colors duration-200 w-full max-w-[440px] mx-auto ${
         isDarkMode ? 'bg-stone-900 text-stone-200' : 'bg-[#f7f5f0] text-stone-800'
       }`}
     >
@@ -734,6 +775,15 @@ export const NonogramBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentM
           <span className="font-serif font-bold tracking-wide text-base">
             {isEn ? spec.themeTitleEn || 'Nonogram' : spec.themeTitleZh || '數織'}
           </span>
+          <button
+            onClick={handleToggleFavorite}
+            className={`px-1.5 py-0.5 rounded border transition cursor-pointer text-xs ${
+              isFav ? 'border-amber-500 text-amber-300 bg-amber-950' : 'border-stone-700 text-stone-500'
+            }`}
+            title={isFav ? (isEn ? 'In Vault' : '已在傳奇庫') : (isEn ? 'Save to Vault' : '收藏')}
+          >
+            {isFav ? '★' : '☆'}
+          </button>
           <span className="text-xs opacity-40 font-mono">
             {rows}&times;{cols}
           </span>
@@ -742,7 +792,7 @@ export const NonogramBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentM
         <div className="flex items-center gap-2 text-xs font-mono">
           <button
             onClick={togglePause}
-            className={`px-2 py-0.5 rounded transition font-medium border ${
+            className={`px-2 py-0.5 rounded transition font-medium border cursor-pointer ${
               isPaused
                 ? 'bg-amber-500 text-black border-amber-400 font-bold'
                 : 'opacity-60 hover:opacity-100 border-stone-700'
@@ -752,10 +802,10 @@ export const NonogramBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentM
             {isPaused ? (isEn ? 'PAUSED' : '已暫停') : '⏸'}
           </button>
 
-          {/* 計時子組件：獨立重繪，保證父組件 225 個方格 0 重繪 */}
+          {/* 計時子組件 */}
           <button
             onClick={toggleTimerVisibility}
-            className={`px-2 py-0.5 rounded transition font-medium ${
+            className={`px-2 py-0.5 rounded transition font-medium cursor-pointer ${
               showTimer ? 'opacity-90 bg-stone-800' : 'opacity-40 hover:opacity-80'
             }`}
             title={isEn ? 'Toggle Timer Display' : '切換計時顯示'}
@@ -772,7 +822,7 @@ export const NonogramBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentM
 
           <button
             onClick={() => setIsDarkMode(!isDarkMode)}
-            className="opacity-50 hover:opacity-100 transition px-1"
+            className="opacity-50 hover:opacity-100 transition px-1 cursor-pointer"
             title={isEn ? 'Toggle Theme' : '切換主題'}
           >
             {isDarkMode ? '☼' : '☽'}
@@ -1168,11 +1218,44 @@ export const NonogramBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentM
               {isEn ? 'Primary Technique' : '核心技巧'}: {techniqueLabel}
             </div>
 
-            <div className="mt-3 pt-2.5 border-t border-stone-800/60 w-full text-[11px] font-sans text-stone-400 leading-relaxed italic">
+            <div className="mt-3 pt-2.5 border-t border-stone-800/60 w-full text-[11px] font-sans text-stone-400 leading-relaxed italic mb-3">
               {eurekaInsight}
             </div>
+
+            <button
+              onClick={() => setShowSubmitModal(true)}
+              className="w-full py-2 bg-neutral-200 hover:bg-white text-black text-xs font-bold rounded-lg cursor-pointer transition shadow"
+            >
+              📤 {isEn ? 'Submit to Leaderboard' : '提交成績至排行榜'}
+            </button>
           </div>
         </div>
+      )}
+
+      {/* 賽事提交 Modal */}
+      {showSubmitModal && actualPuzzle && (
+        <TournamentSubmissionModal
+          payload={{
+            submissionId: `SUB-${actualPuzzle.id}-${Date.now().toString(36)}`,
+            tournamentId: tournamentMode ? 'WPF_NONOGRAM_2026' : 'GLOBAL_NONOGRAM_STAGE',
+            playerId: profile.personalBest.updatedAt ? 'CONTENDER_VERIFIED' : 'LOCAL_PLAYER_1',
+            division: 'open',
+            puzzleId: actualPuzzle.id,
+            engineType: 'nonogram',
+            tier: (actualPuzzle.tier as string) || 'kids',
+            timeSpentSec: Math.round(
+              (finalElapsedMs !== null ? finalElapsedMs : timer.getElapsedMs()) / 1000
+            ),
+            conflictsCount: 0,
+            infractionScore: proctoringRef.current
+              ? calculateInfractionScore(proctoringRef.current.getSnapshot())
+              : 0,
+            environment: getEnvironmentFingerprint(),
+            timestamp: new Date().toISOString(),
+          }}
+          onClose={() => setShowSubmitModal(false)}
+          isEn={isEn}
+        />
       )}
     </div>
   );
