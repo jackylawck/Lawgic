@@ -19,7 +19,13 @@ import {
   WebKakuroGenerator,
   generateSanctionedSignature,
 } from '../engines/kakuroGenerator';
-import { VaultManager } from '../utils/vaultStorage';
+import { VaultManager, VaultItem } from '../utils/vaultStorage';
+import {
+  TournamentProctoringSession,
+  getEnvironmentFingerprint,
+  calculateInfractionScore,
+} from '../utils/tournamentSecurity';
+import { TournamentSubmissionModal } from './TournamentSubmissionModal';
 
 interface Props {
   puzzle?: PuzzleEntity;
@@ -130,7 +136,7 @@ export const KakuroBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMod
   const actualPuzzle = puzzleData || puzzle;
   const { lang } = useLanguage();
   const isEn = lang === 'en';
-  const { recordAttempt, getCompositeCognitiveIndex } = useLearnerProfile();
+  const { recordAttempt, profile, getCompositeCognitiveIndex } = useLearnerProfile();
 
   const spec = (actualPuzzle?.puzzle || actualPuzzle) as unknown as KakuroSpec;
   const rows = spec?.rows || 5;
@@ -149,15 +155,19 @@ export const KakuroBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMod
   const [showAutoCandidates, setShowAutoCandidates] = useState<boolean>(!tournamentMode);
   const [isCompleted, setIsCompleted] = useState<boolean>(false);
   const [isTimeOut, setIsTimeOut] = useState<boolean>(false);
-  const [isFav, setIsFav] = useState<boolean>(false);
+  const [isFav, setIsFav] = useState<boolean>(() =>
+    actualPuzzle?.id ? VaultManager.isFavorited(actualPuzzle.id) : false
+  );
   const [sanctionedSig, setSanctionedSig] = useState<string>('');
+  const [showSubmitModal, setShowSubmitModal] = useState<boolean>(false);
 
-  // 瞬時觸控筆記修飾切換（供螢幕按鈕輔助）
+  // 瞬時觸控筆記修飾切換
   const [touchNoteModifier, setTouchNoteModifier] = useState<boolean>(false);
 
   const [errorLogs, setErrorLogs] = useState<ErrorLogItem[]>([]);
   const [correctionsCount, setCorrectionsCount] = useState<number>(0);
   const prevConflictCountRef = useRef<number>(0);
+  const hasRecordedRef = useRef<boolean>(false);
 
   const [hintLevel, setHintLevel] = useState<number>(0);
   const [activeHint, setActiveHint] = useState<KakuroHintStep | null>(null);
@@ -166,6 +176,17 @@ export const KakuroBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMod
   const [remainingSec, setRemainingSec] = useState<number>(timeLimit);
   const [accumulatedMs, setAccumulatedMs] = useState<number>(0);
   const lastActiveTimestamp = useRef<number>(performance.now());
+
+  // 實體賽事行為稽核 Session
+  const proctoringRef = useRef<TournamentProctoringSession | null>(null);
+
+  useEffect(() => {
+    proctoringRef.current = new TournamentProctoringSession();
+    return () => {
+      proctoringRef.current?.destroy();
+      proctoringRef.current = null;
+    };
+  }, [actualPuzzle?.id]);
 
   useEffect(() => {
     setUserGrid(Array.from({ length: rows }, () => Array(cols).fill(0)));
@@ -183,6 +204,7 @@ export const KakuroBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMod
     setIsFav(VaultManager.isFavorited(actualPuzzle?.id || ''));
     lastActiveTimestamp.current = performance.now();
     prevConflictCountRef.current = 0;
+    hasRecordedRef.current = false;
     setShowAutoCandidates(!tournamentMode);
 
     for (let r = 0; r < rows; r++) {
@@ -222,7 +244,7 @@ export const KakuroBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMod
     if (initialGrid[r]?.[c]?.type !== 'white') return [];
     const notes = manualNotes[`${r},${c}`] || [];
     const excludedDigits = notes.length > 0
-      ? [1, 2, 3, 4, 5, 6, 7, 8, 9].filter(n => !notes.includes(n))
+      ? [1, 2, 3, 4, 5, 6, 7, 8, 9].filter((n) => !notes.includes(n))
       : [];
 
     return WebKakuroGenerator.getCellCandidatesForHint(initialGrid, userGrid, rows, cols, r, c, excludedDigits);
@@ -295,7 +317,6 @@ export const KakuroBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMod
     [initialGrid, rows, cols]
   );
 
-  // 核心輸入派發：支援修飾鍵即時寫入筆記 (asNote: boolean)
   const setDigit = useCallback(
     async (r: number, c: number, val: number, asNote: boolean = false) => {
       if (isCompleted || isTimeOut || initialGrid[r]?.[c]?.type !== 'white') return;
@@ -336,7 +357,8 @@ export const KakuroBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMod
           });
         }
 
-        if (checkVictory(next)) {
+        if (!hasRecordedRef.current && checkVictory(next)) {
+          hasRecordedRef.current = true;
           setIsCompleted(true);
           const timeSpent = Math.max(1, Math.round(accumulatedMs / 1000));
           generateSanctionedSignature(`KAKURO-${actualPuzzle?.id}-${timeSpent}-${seed}`).then(setSanctionedSig);
@@ -385,21 +407,22 @@ export const KakuroBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMod
     }
   }, [isCompleted, isTimeOut, tournamentMode, initialGrid, userGrid, rows, cols, activeHint]);
 
+  // P0 修復：提取 res.isFav，且日期採 ISO 8601 標準
   const handleToggleFavorite = () => {
     if (!actualPuzzle) return;
-    const nextFav = VaultManager.toggleFavorite({
+    const vaultItem: VaultItem = {
       id: actualPuzzle.id,
       engine: 'kakuro',
       tier: String(actualPuzzle.tier || 'kids'),
       seed: Number(seed),
       steps: rows * cols,
       timeSpentSec: Math.round(accumulatedMs / 1000),
-      date: new Date().toLocaleDateString(),
-    });
-    setIsFav(nextFav);
+      date: new Date().toISOString(),
+    };
+    const res = VaultManager.toggleFavorite(vaultItem);
+    setIsFav(res.isFav);
   };
 
-  // 鍵盤導航與修飾鍵直通
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (isCompleted || isTimeOut) return;
@@ -413,28 +436,40 @@ export const KakuroBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMod
         case 'arrowup':
           e.preventDefault();
           for (let nr = r - 1; nr >= 0; nr--) {
-            if (initialGrid[nr]?.[c]?.type === 'white') { setSelectedCell([nr, c]); break; }
+            if (initialGrid[nr]?.[c]?.type === 'white') {
+              setSelectedCell([nr, c]);
+              break;
+            }
           }
           break;
         case 's':
         case 'arrowdown':
           e.preventDefault();
           for (let nr = r + 1; nr < rows; nr++) {
-            if (initialGrid[nr]?.[c]?.type === 'white') { setSelectedCell([nr, c]); break; }
+            if (initialGrid[nr]?.[c]?.type === 'white') {
+              setSelectedCell([nr, c]);
+              break;
+            }
           }
           break;
         case 'a':
         case 'arrowleft':
           e.preventDefault();
           for (let nc = c - 1; nc >= 0; nc--) {
-            if (initialGrid[r]?.[nc]?.type === 'white') { setSelectedCell([r, nc]); break; }
+            if (initialGrid[r]?.[nc]?.type === 'white') {
+              setSelectedCell([r, nc]);
+              break;
+            }
           }
           break;
         case 'd':
         case 'arrowright':
           e.preventDefault();
           for (let nc = c + 1; nc < cols; nc++) {
-            if (initialGrid[r]?.[nc]?.type === 'white') { setSelectedCell([r, nc]); break; }
+            if (initialGrid[r]?.[nc]?.type === 'white') {
+              setSelectedCell([r, nc]);
+              break;
+            }
           }
           break;
         case '0':
@@ -452,7 +487,6 @@ export const KakuroBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMod
           const num = parseInt(e.key, 10);
           if (!isNaN(num) && num >= 1 && num <= 9) {
             e.preventDefault();
-            // Shift+數字 即時寫入筆記，否則直接填入
             setDigit(r, c, num, isShift || touchNoteModifier);
           }
           break;
@@ -464,7 +498,6 @@ export const KakuroBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMod
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [selectedCell, initialGrid, rows, cols, isCompleted, isTimeOut, setDigit, handleRequestHint, touchNoteModifier]);
 
-  // 區塊感知尺寸：嚴格保證 11x11 單元格地板面積 >= 32px
   const cellSize = useMemo(() => {
     return Math.max(32, Math.min(Math.floor(340 / Math.max(rows, cols)), 44));
   }, [rows, cols]);
@@ -520,15 +553,23 @@ export const KakuroBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMod
             </button>
           )}
           <span className="text-slate-600">|</span>
-          <span className="text-purple-300 font-bold">{rows}&times;{cols}</span>
+          <span className="text-purple-300 font-bold">
+            {rows}&times;{cols}
+          </span>
         </div>
       </div>
 
       {/* 狀態進度看板 */}
       <div className="w-full grid grid-cols-3 gap-1 mb-2 text-[8px]">
         <div className="bg-slate-950 border border-slate-800 p-1 rounded text-center">
-          <div className="text-slate-500 text-[6.5px]">{tournamentMode ? (isEn ? 'Countdown' : '倒數') : (isEn ? 'Time' : '耗時')}</div>
-          <div className={`font-bold ${tournamentMode && remainingSec <= 30 ? 'text-rose-400 animate-pulse' : 'text-slate-200'}`}>
+          <div className="text-slate-500 text-[6.5px]">
+            {tournamentMode ? (isEn ? 'Countdown' : '倒數') : (isEn ? 'Time' : '耗時')}
+          </div>
+          <div
+            className={`font-bold ${
+              tournamentMode && remainingSec <= 30 ? 'text-rose-400 animate-pulse' : 'text-slate-200'
+            }`}
+          >
             {tournamentMode ? `${remainingSec}s` : `${(accumulatedMs / 1000).toFixed(1)}s`}
           </div>
         </div>
@@ -538,7 +579,11 @@ export const KakuroBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMod
         </div>
         <div className="bg-slate-950 border border-slate-800 p-1 rounded text-center">
           <div className="text-slate-500 text-[6.5px]">{isEn ? 'Conflict Status' : '衝突警示'}</div>
-          <div className={`font-bold ${conflicts.size > 0 ? 'text-rose-400 animate-pulse' : 'text-emerald-400'}`}>
+          <div
+            className={`font-bold ${
+              conflicts.size > 0 ? 'text-rose-400 animate-pulse' : 'text-emerald-400'
+            }`}
+          >
             {conflicts.size > 0 ? `${conflicts.size} ${isEn ? 'Conflicts' : '處衝突'}` : 'OK'}
           </div>
         </div>
@@ -587,7 +632,6 @@ export const KakuroBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMod
                 );
               }
 
-              // 絕對衝突覆蓋：衝突發生時，強行覆寫並剝離所有淡色跑道底色
               let bgClass = 'bg-slate-950 text-cyan-300 hover:bg-slate-900 border border-slate-800';
               if (isInAcrossRun && !isInDownRun) bgClass = 'bg-cyan-950/25 text-cyan-200 border-cyan-900/50';
               if (isInDownRun && !isInAcrossRun) bgClass = 'bg-amber-950/25 text-amber-200 border-amber-900/50';
@@ -635,7 +679,7 @@ export const KakuroBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMod
         </div>
       </div>
 
-      {/* 候選導引條：緊密吸附於數字鍵盤正上方，形成最短眼球掃視路徑 */}
+      {/* 候選導引條 */}
       {showAutoCandidates && !tournamentMode && initialGrid[selectedCell[0]]?.[selectedCell[1]]?.type === 'white' && (
         <div className="w-full max-w-[290px] mt-2 p-1 bg-slate-950/95 border border-cyan-700/60 rounded-t-lg text-[7.5px] text-slate-300 flex items-center justify-between shadow">
           <span className="font-bold text-cyan-400 pl-1">
@@ -788,12 +832,43 @@ export const KakuroBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMod
             </div>
           )}
 
-          <div className="text-[8.5px] text-slate-300 mb-1">
+          <div className="text-[8.5px] text-slate-300 mb-2">
             {isEn
               ? `Time: ${(accumulatedMs / 1000).toFixed(2)}s | Partition Entropy: ${entropy} | Gf: IQ ${cci.standardIQ}`
               : `耗時: ${(accumulatedMs / 1000).toFixed(2)}s | 分割熵: ${entropy} | Gf: IQ ${cci.standardIQ}`}
           </div>
+
+          <button
+            onClick={() => setShowSubmitModal(true)}
+            className="w-full py-1.5 bg-neutral-200 hover:bg-white text-black text-[8px] font-bold rounded-lg cursor-pointer transition shadow"
+          >
+            {isEn ? 'SUBMIT TO LEADERBOARD' : '提交成績至排行榜'}
+          </button>
         </div>
+      )}
+
+      {/* 賽事提交 Modal */}
+      {showSubmitModal && actualPuzzle && (
+        <TournamentSubmissionModal
+          payload={{
+            submissionId: `SUB-${actualPuzzle.id}-${Date.now().toString(36)}`,
+            tournamentId: tournamentMode ? 'WPF_KAKURO_2026' : 'GLOBAL_ARITHMETIC_STAGE',
+            playerId: profile.personalBest.updatedAt ? 'CONTENDER_VERIFIED' : 'LOCAL_PLAYER_1',
+            division: 'open',
+            puzzleId: actualPuzzle.id,
+            engineType: 'kakuro',
+            tier: (actualPuzzle.tier as string) || 'kids',
+            timeSpentSec: Math.round(accumulatedMs / 1000),
+            conflictsCount: correctionsCount,
+            infractionScore: proctoringRef.current
+              ? calculateInfractionScore(proctoringRef.current.getSnapshot())
+              : 0,
+            environment: getEnvironmentFingerprint(),
+            timestamp: new Date().toISOString(),
+          }}
+          onClose={() => setShowSubmitModal(false)}
+          isEn={isEn}
+        />
       )}
     </div>
   );
