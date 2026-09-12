@@ -13,6 +13,13 @@ import {
   PreviewResult,
   CellState,
 } from '../engines/mazeGenerator';
+import { VaultManager, VaultItem } from '../utils/vaultStorage';
+import {
+  TournamentProctoringSession,
+  getEnvironmentFingerprint,
+  calculateInfractionScore,
+} from '../utils/tournamentSecurity';
+import { TournamentSubmissionModal } from './TournamentSubmissionModal';
 
 interface Props {
   puzzle?: PuzzleEntity;
@@ -24,7 +31,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode 
   const actualPuzzle = puzzleData || puzzle;
   const { lang } = useLanguage();
   const isEn = lang === 'en';
-  const { recordAttempt, getCompositeCognitiveIndex } = useLearnerProfile();
+  const { recordAttempt, profile, getCompositeCognitiveIndex } = useLearnerProfile();
 
   const spec = (actualPuzzle?.puzzle || actualPuzzle) as unknown as MazeSpec;
   const width = spec?.width || 17;
@@ -36,6 +43,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode 
   const twinLandmarks: TwinLandmarkPair[] = spec?.twinLandmarks || [];
   const deceptionWaypoints: DeceptionWaypoint[] = spec?.deceptionWaypoints || [];
   const optimalSolution: [number, number][] = (actualPuzzle?.solution as [number, number][]) || [];
+  const seed = (actualPuzzle?.metrics as any)?.seed || spec?.seed || 12345;
 
   const engineRef = useRef<PlayableMazeEngine | null>(null);
 
@@ -55,6 +63,11 @@ export const MazeBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode 
   const [repelWarning, setRepelWarning] = useState<string | null>(null);
   const [undoNotice, setUndoNotice] = useState<boolean>(false);
 
+  const [isFav, setIsFav] = useState<boolean>(() =>
+    actualPuzzle?.id ? VaultManager.isFavorited(actualPuzzle.id) : false
+  );
+  const [showSubmitModal, setShowSubmitModal] = useState<boolean>(false);
+
   const [isGlitching, setIsGlitching] = useState<boolean>(false);
   const glitchTriggeredRef = useRef<boolean>(false);
 
@@ -67,6 +80,26 @@ export const MazeBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode 
 
   const lastMoveTimeRef = useRef<number>(Date.now());
   const [strategicThoughtTime, setStrategicThoughtTime] = useState<number>(0);
+  const hasRecordedRef = useRef<boolean>(false);
+
+  // 實體防作弊稽核 Session
+  const proctoringRef = useRef<TournamentProctoringSession | null>(null);
+
+  useEffect(() => {
+    proctoringRef.current = new TournamentProctoringSession();
+    return () => {
+      proctoringRef.current?.destroy();
+      proctoringRef.current = null;
+    };
+  }, [actualPuzzle?.id]);
+
+  const cci = useMemo(() => {
+    try {
+      return getCompositeCognitiveIndex();
+    } catch {
+      return { standardIQ: 110 };
+    }
+  }, [getCompositeCognitiveIndex]);
 
   const updateCellsPartial = useCallback((changedCoords: [number, number][]) => {
     if (!engineRef.current || changedCoords.length === 0) return;
@@ -112,9 +145,11 @@ export const MazeBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode 
     setRepelWarning(null);
     setPreviewHover(null);
     setUndoNotice(false);
+    setIsFav(VaultManager.isFavorited(actualPuzzle?.id || ''));
+    hasRecordedRef.current = false;
     glitchTriggeredRef.current = false;
     lastMoveTimeRef.current = Date.now();
-  }, [spec]);
+  }, [spec, actualPuzzle?.id]);
 
   useEffect(() => {
     handleFullReset();
@@ -176,7 +211,9 @@ export const MazeBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode 
         setStrategicThoughtTime((prev) => prev + stepDuration);
       }
 
-      if (res.hitGoal) {
+      // P2 修復：加入 hasRecordedRef 守衛防止重複結算
+      if (res.hitGoal && !hasRecordedRef.current) {
+        hasRecordedRef.current = true;
         setIsCompleted(true);
         const timeSpent = Math.max(1, Math.round((Date.now() - startTime) / 1000));
         const optLen = Math.max(1, optimalSolution.length);
@@ -202,7 +239,18 @@ export const MazeBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode 
 
       return true;
     },
-    [isCompleted, end, spec.hasPhase2MentalGlitch, isEn, startTime, optimalSolution.length, actualPuzzle, recordAttempt, playerPath.length, updateCellsPartial]
+    [
+      isCompleted,
+      end,
+      spec.hasPhase2MentalGlitch,
+      isEn,
+      startTime,
+      optimalSolution.length,
+      actualPuzzle,
+      recordAttempt,
+      playerPath.length,
+      updateCellsPartial,
+    ]
   );
 
   const handlePhysicsRotate = useCallback(() => {
@@ -277,6 +325,22 @@ export const MazeBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode 
     return () => clearInterval(interval);
   }, [ghostMode, optimalSolution, playerPath]);
 
+  // P0 修復：標準化金庫收藏對接
+  const handleToggleFavorite = () => {
+    if (!actualPuzzle) return;
+    const vaultItem: VaultItem = {
+      id: actualPuzzle.id,
+      engine: 'maze',
+      tier: String(actualPuzzle.tier || 'kids'),
+      seed: Number(seed),
+      steps: stepCount,
+      timeSpentSec: Math.round(elapsedMs / 1000),
+      date: new Date().toISOString(),
+    };
+    const res = VaultManager.toggleFavorite(vaultItem);
+    setIsFav(res.isFav);
+  };
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (isCompleted) return;
@@ -328,14 +392,6 @@ export const MazeBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode 
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [handlePhysicsMove, handlePhysicsRotate, handlePhysicsUndo, handleFullReset, isCompleted]);
 
-  const cci = useMemo(() => {
-    try {
-      return getCompositeCognitiveIndex();
-    } catch {
-      return { standardIQ: 110 };
-    }
-  }, [getCompositeCognitiveIndex]);
-
   const cellSize = Math.max(16, Math.min(340 / Math.max(width, height), 26));
 
   const isVisibleInDark = useCallback(
@@ -350,23 +406,43 @@ export const MazeBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode 
 
   return (
     <div
-      className={`flex flex-col items-center justify-center p-2 select-none font-mono outline-none touch-none transition-colors duration-75 ${
+      className={`flex flex-col items-center justify-center p-2 select-none font-mono outline-none touch-none transition-colors duration-75 w-full max-w-[420px] mx-auto ${
         isGlitching ? 'bg-rose-950/40 ring-4 ring-rose-500' : ''
       }`}
     >
       {/* 數據看板 */}
       <div className="w-full max-w-[360px] mb-2 flex flex-col gap-1 text-[9px]">
         <div className="flex items-center justify-between px-1 text-slate-400">
-          <span className="text-cyan-400 font-bold">
-            {spec.hasPhase2MentalGlitch
-              ? (isEn ? '⚔️ Parity Collapse (Pressure)' : '⚔️ 宇稱坍縮滑動（二階考驗）')
-              : (isEn ? '🌀 Deterministic Lattice' : '🌀 確定性晶格迷宮')}
-          </span>
+          <div className="flex items-center gap-1.5">
+            <span className="text-cyan-400 font-bold">
+              {spec.hasPhase2MentalGlitch
+                ? isEn
+                  ? '⚔️ Parity Collapse'
+                  : '⚔️ 宇稱坍縮滑動'
+                : isEn
+                ? '🌀 Deterministic Lattice'
+                : '🌀 確定性晶格迷宮'}
+            </span>
+            <button
+              onClick={handleToggleFavorite}
+              className={`px-1.5 py-0.5 rounded border transition cursor-pointer ${
+                isFav ? 'border-amber-500 text-amber-300 bg-amber-950' : 'border-slate-700 text-slate-500'
+              }`}
+              title={isFav ? (isEn ? 'In Vault' : '已在傳奇庫') : (isEn ? 'Save to Vault' : '收藏')}
+            >
+              {isFav ? '★' : '☆'}
+            </button>
+          </div>
           <span className="text-slate-500 text-[8px]">
             {isEn ? 'Hamming Mutation' : '漢明擾動'}: <b className="text-cyan-300">{(currentEntropy * 100).toFixed(1)}%</b>
             {previewHover?.canMove && previewHover.entropyDelta !== 0 && (
-              <span className={`font-bold ml-1 animate-pulse ${previewHover.entropyDelta > 0 ? 'text-amber-400' : 'text-emerald-400'}`}>
-                ({previewHover.entropyDelta > 0 ? '+' : ''}{((previewHover.entropyDelta / (2 * width * height)) * 100).toFixed(1)}%)
+              <span
+                className={`font-bold ml-1 animate-pulse ${
+                  previewHover.entropyDelta > 0 ? 'text-amber-400' : 'text-emerald-400'
+                }`}
+              >
+                ({previewHover.entropyDelta > 0 ? '+' : ''}
+                {((previewHover.entropyDelta / (2 * width * height)) * 100).toFixed(1)}%)
               </span>
             )}
           </span>
@@ -422,10 +498,16 @@ export const MazeBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode 
               const isPositive = cell?.charge === 1;
               const visitHeat = visitedCounts.get(`${x},${y}`) || 0;
 
-              const hasRealHammingDistortion = initialCell && (cell.charge !== initialCell.charge || cell.spin !== initialCell.spin);
+              const hasRealHammingDistortion =
+                initialCell && (cell.charge !== initialCell.charge || cell.spin !== initialCell.spin);
 
-              const isPreviewLanding = previewHover?.canMove && previewHover.landing[0] === x && previewHover.landing[1] === y;
-              const isIntermediateSlip = previewHover?.canMove && previewHover.intermediate && previewHover.intermediate[0] === x && previewHover.intermediate[1] === y;
+              const isPreviewLanding =
+                previewHover?.canMove && previewHover.landing[0] === x && previewHover.landing[1] === y;
+              const isIntermediateSlip =
+                previewHover?.canMove &&
+                previewHover.intermediate &&
+                previewHover.intermediate[0] === x &&
+                previewHover.intermediate[1] === y;
 
               let cellBg = 'bg-slate-950';
               if (isWall) {
@@ -479,7 +561,9 @@ export const MazeBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode 
                       {isEnd && (
                         <span className="text-amber-400 text-[9px] font-black absolute z-10 animate-pulse">★</span>
                       )}
-                      {isPseudo && !isEnd && <span className="text-purple-400/80 text-[7px] opacity-60 absolute z-10">✦</span>}
+                      {isPseudo && !isEnd && (
+                        <span className="text-purple-400/80 text-[7px] opacity-60 absolute z-10">✦</span>
+                      )}
                       {(isTwinA || isTwinB) && !isStart && !isEnd && (
                         <span className="text-amber-400/60 text-[7px] font-bold absolute z-10">♊</span>
                       )}
@@ -505,7 +589,9 @@ export const MazeBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode 
                       {isGhost && (
                         <div
                           className={`w-[60%] h-[60%] rounded-full z-20 animate-ping ${
-                            ghostMode === 'optimal' ? 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.9)]' : 'bg-purple-400'
+                            ghostMode === 'optimal'
+                              ? 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.9)]'
+                              : 'bg-purple-400'
                           }`}
                         />
                       )}
@@ -523,7 +609,8 @@ export const MazeBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode 
         <div className="w-full max-w-[360px] mt-2 p-2 bg-slate-900 border border-purple-500/80 rounded-lg text-[8px] text-slate-200 animate-fade-in font-mono flex items-center justify-between">
           <div>
             <div className="text-purple-300 font-bold">
-              {isEn ? '🎯 Critical Fork Waypoint' : '🎯 關鍵分歧點'} [{selectedWaypoint.coordinate[0]}, {selectedWaypoint.coordinate[1]}]
+              {isEn ? '🎯 Critical Fork Waypoint' : '🎯 關鍵分歧點'} [{selectedWaypoint.coordinate[0]},{' '}
+              {selectedWaypoint.coordinate[1]}]
             </div>
             <div className="text-slate-400 text-[7.5px]">
               {isEn ? 'Trap Type' : '陷阱類型'}: {selectedWaypoint.trapType}
@@ -532,7 +619,10 @@ export const MazeBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode 
               {isEn ? 'Estimated Regret' : '估計後悔代價'}: ≈ +{selectedWaypoint.regretCost} {isEn ? 'steps' : '步'}
             </div>
           </div>
-          <button onClick={() => setSelectedWaypoint(null)} className="px-2 py-1 bg-slate-800 text-slate-400 rounded hover:text-white">
+          <button
+            onClick={() => setSelectedWaypoint(null)}
+            className="px-2 py-1 bg-slate-800 text-slate-400 rounded hover:text-white cursor-pointer"
+          >
             {isEn ? 'Close' : '關閉'}
           </button>
         </div>
@@ -546,7 +636,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode 
             isDarkVision ? 'bg-purple-600 text-white border-purple-400' : 'bg-slate-900 text-slate-400 border-slate-800'
           }`}
         >
-          {isDarkVision ? (isEn ? '👁️ Fog' : '👁️ 戰霧') : (isEn ? '🌐 Full' : '🌐 全圖')}
+          {isDarkVision ? (isEn ? '👁️ Fog' : '👁️ 戰霧') : isEn ? '🌐 Full' : '🌐 全圖'}
         </button>
 
         <button
@@ -591,7 +681,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode 
           onMouseEnter={() => handleHoverDir(0)}
           onMouseLeave={() => handleHoverDir(null)}
           onClick={() => handlePhysicsMove(0)}
-          className="py-2.5 bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-200 rounded-lg text-sm font-bold active:bg-cyan-500 active:text-black"
+          className="py-2.5 bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-200 rounded-lg text-sm font-bold active:bg-cyan-500 active:text-black cursor-pointer"
         >
           ▲
         </button>
@@ -601,14 +691,14 @@ export const MazeBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode 
           onMouseEnter={() => handleHoverDir(3)}
           onMouseLeave={() => handleHoverDir(null)}
           onClick={() => handlePhysicsMove(3)}
-          className="py-2.5 bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-200 rounded-lg text-sm font-bold active:bg-cyan-500 active:text-black"
+          className="py-2.5 bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-200 rounded-lg text-sm font-bold active:bg-cyan-500 active:text-black cursor-pointer"
         >
           ◀
         </button>
 
         <button
           onClick={handlePhysicsRotate}
-          className="py-2.5 bg-amber-950/60 hover:bg-amber-900/70 border border-amber-600/70 text-amber-300 rounded-lg text-[9px] font-bold active:scale-95 transition"
+          className="py-2.5 bg-amber-950/60 hover:bg-amber-900/70 border border-amber-600/70 text-amber-300 rounded-lg text-[9px] font-bold active:scale-95 transition cursor-pointer"
         >
           {isEn ? '↻ Spin' : '↻ 轉向'}
         </button>
@@ -617,7 +707,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode 
           onMouseEnter={() => handleHoverDir(1)}
           onMouseLeave={() => handleHoverDir(null)}
           onClick={() => handlePhysicsMove(1)}
-          className="py-2.5 bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-200 rounded-lg text-sm font-bold active:bg-cyan-500 active:text-black"
+          className="py-2.5 bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-200 rounded-lg text-sm font-bold active:bg-cyan-500 active:text-black cursor-pointer"
         >
           ▶
         </button>
@@ -627,7 +717,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode 
           onMouseEnter={() => handleHoverDir(2)}
           onMouseLeave={() => handleHoverDir(null)}
           onClick={() => handlePhysicsMove(2)}
-          className="py-2.5 bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-200 rounded-lg text-sm font-bold active:bg-cyan-500 active:text-black"
+          className="py-2.5 bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-200 rounded-lg text-sm font-bold active:bg-cyan-500 active:text-black cursor-pointer"
         >
           ▼
         </button>
@@ -643,14 +733,16 @@ export const MazeBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode 
           <div className="text-[10px] text-slate-400 mt-0.5 mb-2">
             {isEn ? 'Time' : '耗時'}: {(elapsedMs / 1000).toFixed(2)}s | Gf: IQ {cci.standardIQ}
           </div>
-          <div className="bg-slate-900/90 border border-slate-800 p-2 rounded-lg text-[8px] text-slate-300 text-left space-y-1">
+          <div className="bg-slate-900/90 border border-slate-800 p-2 rounded-lg text-[8px] text-slate-300 text-left space-y-1 mb-2">
             <div className="flex justify-between">
               <span className="text-slate-400">{isEn ? 'Hamming Residual Mutation' : '全域殘留漢明擾動'}:</span>
               <span className="text-cyan-300 font-bold">{(currentEntropy * 100).toFixed(1)}%</span>
             </div>
             <div className="flex justify-between">
               <span className="text-slate-400">{isEn ? 'Action Steps (with Undo)' : '動作步數代價 (含撤銷)'}:</span>
-              <span className="text-amber-400 font-bold">{stepCount} {isEn ? 'steps' : '步'}</span>
+              <span className="text-amber-400 font-bold">
+                {stepCount} {isEn ? 'steps' : '步'}
+              </span>
             </div>
             <div className="flex justify-between">
               <span className="text-slate-400">{isEn ? 'Physical Action Efficiency' : '物理動作效率 (玩家/最優)'}:</span>
@@ -661,7 +753,11 @@ export const MazeBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode 
             <div className="flex justify-between">
               <span className="text-slate-400">{isEn ? 'Peak Divergence Regret' : '最大分歧後悔'}:</span>
               <span className="text-rose-400 font-bold">
-                {spec.maxVisualRegretValue > 0 ? `≈ +${spec.maxVisualRegretValue} ${isEn ? 'steps' : '步'}` : (isEn ? 'Optimal Path Followed' : '完美循跡無走歧')}
+                {spec.maxVisualRegretValue > 0
+                  ? `≈ +${spec.maxVisualRegretValue} ${isEn ? 'steps' : '步'}`
+                  : isEn
+                  ? 'Optimal Path Followed'
+                  : '完美循跡無走歧'}
               </span>
             </div>
             <div className="flex justify-between">
@@ -669,7 +765,38 @@ export const MazeBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode 
               <span className="text-amber-300 font-bold">{(strategicThoughtTime / 1000).toFixed(1)}s</span>
             </div>
           </div>
+
+          <button
+            onClick={() => setShowSubmitModal(true)}
+            className="w-full py-1.5 bg-neutral-200 hover:bg-white text-black text-[8px] font-bold rounded-lg cursor-pointer transition shadow"
+          >
+            {isEn ? 'SUBMIT TO LEADERBOARD' : '提交成績至排行榜'}
+          </button>
         </div>
+      )}
+
+      {/* 賽事提交 Modal */}
+      {showSubmitModal && actualPuzzle && (
+        <TournamentSubmissionModal
+          payload={{
+            submissionId: `SUB-${actualPuzzle.id}-${Date.now().toString(36)}`,
+            tournamentId: tournamentMode ? 'WPF_MAZE_2026' : 'GLOBAL_MAZE_STAGE',
+            playerId: profile.personalBest.updatedAt ? 'CONTENDER_VERIFIED' : 'LOCAL_PLAYER_1',
+            division: 'open',
+            puzzleId: actualPuzzle.id,
+            engineType: 'maze',
+            tier: (actualPuzzle.tier as string) || 'kids',
+            timeSpentSec: Math.round(elapsedMs / 1000),
+            conflictsCount: undoCount,
+            infractionScore: proctoringRef.current
+              ? calculateInfractionScore(proctoringRef.current.getSnapshot())
+              : 0,
+            environment: getEnvironmentFingerprint(),
+            timestamp: new Date().toISOString(),
+          }}
+          onClose={() => setShowSubmitModal(false)}
+          isEn={isEn}
+        />
       )}
     </div>
   );
