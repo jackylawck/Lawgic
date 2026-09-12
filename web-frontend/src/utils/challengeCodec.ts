@@ -80,19 +80,19 @@ const MIN_GRID_DIMENSION = 1;
  */
 export class ChallengeCodec {
   private static toUrlSafeBase64(str: string): string {
-    if (typeof btoa === 'undefined') {
-      return Buffer.from(str, 'utf-8').toString('base64url');
+    const bytes = new TextEncoder().encode(str);
+    let binary = '';
+    const len = bytes.byteLength;
+    for (let i = 0; i < len; i++) {
+      binary += String.fromCharCode(bytes[i]);
     }
-    const base64 = btoa(encodeURIComponent(str).replace(/%([0-9A-F]{2})/g, (_, p1) => {
-      return String.fromCharCode(parseInt(p1, 16));
-    }));
-    return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    return btoa(binary)
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=+$/, '');
   }
 
   private static fromUrlSafeBase64(base64: string): string {
-    if (typeof atob === 'undefined') {
-      return Buffer.from(base64, 'base64url').toString('utf-8');
-    }
     let sanitized = base64.replace(/-/g, '+').replace(/_/g, '/');
     while (sanitized.length % 4) {
       sanitized += '=';
