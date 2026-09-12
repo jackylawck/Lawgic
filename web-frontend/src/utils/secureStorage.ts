@@ -104,9 +104,10 @@ export class SecureStorage {
           throw new Error('Corrupted master key seed in storage');
         }
 
+        // TS2769 修復：顯式轉型為 BufferSource，相容 TS 5.x 嚴格 DOM 型別庫
         const cryptoKey = await window.crypto.subtle.importKey(
           'raw',
-          keyBuffer,
+          keyBuffer as BufferSource,
           { name: 'AES-GCM' },
           false,
           ['encrypt', 'decrypt']
@@ -228,10 +229,11 @@ export class SecureStorage {
         window.crypto.getRandomValues(iv);
 
         const encoder = new TextEncoder();
+        // 嚴格轉型為 BufferSource，避免 TS 檢查報錯
         const encryptedBuf = await window.crypto.subtle.encrypt(
-          { name: 'AES-GCM', iv },
+          { name: 'AES-GCM', iv: iv as BufferSource },
           masterKey,
-          encoder.encode(canonicalPayload)
+          encoder.encode(canonicalPayload) as BufferSource
         );
 
         const envelope = {
@@ -303,10 +305,11 @@ export class SecureStorage {
           return defaultValue;
         }
 
+        // TS2322 修復：將 iv 與 cipherBytes 轉型為 BufferSource
         const decryptedBuf = await window.crypto.subtle.decrypt(
-          { name: 'AES-GCM', iv },
+          { name: 'AES-GCM', iv: iv as BufferSource },
           masterKey,
-          cipherBytes
+          cipherBytes as BufferSource
         );
 
         const decoder = new TextDecoder();
