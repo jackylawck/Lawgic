@@ -16,6 +16,13 @@ import { useLearnerProfile } from '../hooks/useLearnerProfile';
 import { useLanguage } from '../contexts/LanguageContext';
 import { KropkiSpec, WebKropkiGenerator, SolvingStep, KropkiDot } from '../engines/kropkiGenerator';
 import { CognitiveRadarChart } from './CognitiveRadarChart';
+import { VaultManager, VaultItem } from '../utils/vaultStorage';
+import {
+  TournamentProctoringSession,
+  getEnvironmentFingerprint,
+  calculateInfractionScore,
+} from '../utils/tournamentSecurity';
+import { TournamentSubmissionModal } from './TournamentSubmissionModal';
 
 interface Props {
   puzzle?: PuzzleEntity;
@@ -40,6 +47,7 @@ export function KropkiBoard(props: Props) {
   const n = spec?.size || 4;
   const boxRows = spec?.boxRows || (n === 4 ? 2 : n === 6 ? 2 : n === 8 ? 2 : n === 9 ? 3 : 1);
   const boxCols = spec?.boxCols || (n === 4 ? 2 : n === 6 ? 3 : n === 8 ? 4 : n === 9 ? 3 : n);
+  const seed = (actualPuzzle?.metrics as any)?.seed || spec?.seed || 12345;
 
   const initialGrid = useMemo(() => {
     return spec?.initialGrid || Array.from({ length: n }, () => Array(n).fill(0));
@@ -60,6 +68,10 @@ export function KropkiBoard(props: Props) {
   const [elapsedMs, setElapsedMs] = useState<number>(0);
   const [conflictsCount, setConflictsCount] = useState<number>(0);
   const [proofSignature, setProofSignature] = useState<string | null>(null);
+  const [isFav, setIsFav] = useState<boolean>(() =>
+    actualPuzzle?.id ? VaultManager.isFavorited(actualPuzzle.id) : false
+  );
+  const [showSubmitModal, setShowSubmitModal] = useState<boolean>(false);
 
   const [isNoteMode, setIsNoteMode] = useState<boolean>(false);
   const [isNoGuessMode, setIsNoGuessMode] = useState<boolean>(!tournamentMode);
@@ -78,6 +90,19 @@ export function KropkiBoard(props: Props) {
 
   const startTimeRef = useRef<number>(Date.now());
   const hasRecordedRef = useRef<boolean>(false);
+
+  // 實體防作弊稽核 Session
+  const proctoringRef = useRef<TournamentProctoringSession | null>(null);
+
+  useEffect(() => {
+    proctoringRef.current = new TournamentProctoringSession();
+    return () => {
+      proctoringRef.current?.destroy();
+      proctoringRef.current = null;
+    };
+  }, [actualPuzzle?.id]);
+
+  const cci = useMemo(() => getCompositeCognitiveIndex(), [getCompositeCognitiveIndex, isCompleted]);
 
   const triggerHaptic = useCallback(() => {
     if (typeof navigator !== 'undefined' && navigator.vibrate) {
@@ -133,6 +158,7 @@ export function KropkiBoard(props: Props) {
     recordedMilestonesRef.current = new Set();
     startTimeRef.current = Date.now();
     hasRecordedRef.current = false;
+    setIsFav(VaultManager.isFavorited(actualPuzzle?.id || ''));
   }, [actualPuzzle?.id, n, initialGrid]);
 
   useEffect(() => {
@@ -373,13 +399,11 @@ export function KropkiBoard(props: Props) {
     triggerHaptic();
 
     if (preAutoNotesSnapshot !== null) {
-      // 復原到快照
       setNotes(preAutoNotesSnapshot.map((row) => row.map((s) => new Set(s))));
       setPreAutoNotesSnapshot(null);
       return;
     }
 
-    // 備份當前筆記快照
     setPreAutoNotesSnapshot(notes.map((row) => row.map((s) => new Set(s))));
 
     setNotes(() => {
@@ -476,7 +500,6 @@ export function KropkiBoard(props: Props) {
       return;
     }
 
-    // No-Guess 攔截與建設性引導破局座標
     if (isNoGuessMode && num !== 0) {
       const dummyElim = new Map<string, Set<number>>();
       const dummyCache = new Map<string, number[]>();
@@ -574,6 +597,22 @@ export function KropkiBoard(props: Props) {
     triggerHaptic,
   ]);
 
+  // P0 修復：標準化金庫收藏切換
+  const handleToggleFavorite = () => {
+    if (!actualPuzzle) return;
+    const vaultItem: VaultItem = {
+      id: actualPuzzle.id,
+      engine: 'kropki',
+      tier: String(actualPuzzle.tier || 'kids'),
+      seed: Number(seed),
+      steps: n * n,
+      timeSpentSec: Math.round(elapsedMs / 1000),
+      date: new Date().toISOString(),
+    };
+    const res = VaultManager.toggleFavorite(vaultItem);
+    setIsFav(res.isFav);
+  };
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (isCompleted || !selectedCell) return;
@@ -603,8 +642,6 @@ export function KropkiBoard(props: Props) {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isCompleted, selectedCell, n, toggleNote, handleInputNumber, handleRequestHint]);
 
-  const cci = useMemo(() => getCompositeCognitiveIndex(), [getCompositeCognitiveIndex, isCompleted]);
-
   return (
     <div className="flex flex-col items-center justify-center p-2 select-none font-mono outline-none w-full max-w-[400px] mx-auto">
       {/* 頂部數據儀表 */}
@@ -617,8 +654,19 @@ export function KropkiBoard(props: Props) {
           <div className="text-slate-500 text-[6.5px]">{isEn ? '📐 Topology' : '📐 宮格架構'}</div>
           <div className="text-cyan-300 font-bold">{n}&times;{n} ({boxRows}&times;{boxCols})</div>
         </div>
-        <div className="bg-slate-950 border border-slate-800 p-1.5 rounded text-center">
-          <div className="text-slate-500 text-[6.5px]">{isEn ? '⚫⚪ Clues' : '⚫⚪ 圓點'}</div>
+        <div className="bg-slate-950 border border-slate-800 p-1.5 rounded text-center flex flex-col justify-center items-center">
+          <div className="flex items-center justify-between w-full px-1">
+            <span className="text-slate-500 text-[6.5px]">{isEn ? '⚫⚪ Clues' : '⚫⚪ 圓點'}</span>
+            <button
+              onClick={handleToggleFavorite}
+              className={`px-1 py-0.2 rounded border transition cursor-pointer text-[7px] ${
+                isFav ? 'border-amber-500 text-amber-300 bg-amber-950' : 'border-slate-700 text-slate-500'
+              }`}
+              title={isFav ? (isEn ? 'In Vault' : '已在傳奇庫') : (isEn ? 'Save to Vault' : '收藏')}
+            >
+              {isFav ? '★' : '☆'}
+            </button>
+          </div>
           <div className="text-amber-400 font-bold">{dots.length}</div>
         </div>
         <button
@@ -902,16 +950,46 @@ export function KropkiBoard(props: Props) {
             </div>
           )}
 
-          <div className="flex gap-1">
+          <div className="flex gap-2">
             <button
               onClick={exportLongitudinalDataset}
-              className="flex-1 py-1 bg-slate-900 hover:bg-slate-800 border border-cyan-500/60 text-cyan-300 text-[8px] font-bold rounded transition shadow flex items-center justify-center gap-1 active:scale-95 cursor-pointer"
+              className="flex-1 py-1.5 bg-slate-900 hover:bg-slate-800 border border-cyan-500/60 text-cyan-300 text-[8px] font-bold rounded transition shadow flex items-center justify-center gap-1 active:scale-95 cursor-pointer"
             >
               <span>📊</span>
               <span>{isEn ? 'Export Dataset' : '匯出數據集'}</span>
             </button>
+            <button
+              onClick={() => setShowSubmitModal(true)}
+              className="flex-1 py-1.5 bg-neutral-200 hover:bg-white text-black text-[8px] font-bold rounded-lg cursor-pointer transition shadow"
+            >
+              📤 {isEn ? 'Submit' : '賽事提交'}
+            </button>
           </div>
         </div>
+      )}
+
+      {/* 賽事提交 Modal */}
+      {showSubmitModal && actualPuzzle && (
+        <TournamentSubmissionModal
+          payload={{
+            submissionId: `SUB-${actualPuzzle.id}-${Date.now().toString(36)}`,
+            tournamentId: tournamentMode ? 'WPF_KROPKI_2026' : 'GLOBAL_KROPKI_STAGE',
+            playerId: profile.personalBest.updatedAt ? 'CONTENDER_VERIFIED' : 'LOCAL_PLAYER_1',
+            division: 'open',
+            puzzleId: actualPuzzle.id,
+            engineType: 'kropki',
+            tier: (actualPuzzle.tier as string) || 'kids',
+            timeSpentSec: Math.round(elapsedMs / 1000),
+            conflictsCount,
+            infractionScore: proctoringRef.current
+              ? calculateInfractionScore(proctoringRef.current.getSnapshot())
+              : 0,
+            environment: getEnvironmentFingerprint(),
+            timestamp: new Date().toISOString(),
+          }}
+          onClose={() => setShowSubmitModal(false)}
+          isEn={isEn}
+        />
       )}
     </div>
   );
