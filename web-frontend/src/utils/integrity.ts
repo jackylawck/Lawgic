@@ -82,13 +82,17 @@ export async function computePuzzleDigest(payload: Record<string, unknown>): Pro
  * 判斷是否為生產環境（未知環境預設為生產環境以防誤放行）
  */
 function isProductionEnv(): boolean {
-  if (typeof import.meta !== 'undefined' && (import.meta as Record<string, unknown>).env) {
-    const env = (import.meta as Record<string, unknown>).env as Record<string, unknown>;
-    return env.PROD === true || env.MODE === 'production';
+  if (typeof import.meta !== 'undefined') {
+    const meta = import.meta as unknown as { env?: { PROD?: boolean; MODE?: string } };
+    if (meta.env) {
+      return meta.env.PROD === true || meta.env.MODE === 'production';
+    }
   }
-  if (typeof globalThis !== 'undefined' && (globalThis as Record<string, unknown>).process) {
-    const proc = (globalThis as Record<string, unknown>).process as { env?: Record<string, unknown> };
-    return proc.env?.NODE_ENV === 'production';
+  if (typeof globalThis !== 'undefined') {
+    const glob = globalThis as unknown as { process?: { env?: { NODE_ENV?: string } } };
+    if (glob.process?.env) {
+      return glob.process.env.NODE_ENV === 'production';
+    }
   }
   return true;
 }
