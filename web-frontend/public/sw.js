@@ -1,17 +1,19 @@
-// 佔位符，由 Vite 構建流程（inject-sw-version plugin）在發布時自動替換為當前 Git SHA
+// web-frontend/public/sw.js
 const VERSION = '__BUILD_HASH__';
 
-// M3: 提取快取前綴常數，維持單一事實來源
+if (VERSION === '__BUILD_HASH__') {
+  console.warn('[SW] Build hash not injected — caching may conflict across deployments.');
+}
+
 const CACHE_PREFIX = 'logicore';
 const CORE_CACHE = `${CACHE_PREFIX}-${VERSION}-core`;
 const RUNTIME_CACHE = `${CACHE_PREFIX}-${VERSION}-runtime`;
-const MAX_RUNTIME_ITEMS = 60;
-const MAX_CORE_ITEMS = 200;
 
-// 取得當前 Service Worker scope 基礎絕對 URL（相容 GitHub Pages /Lawgic/ 子目錄）
+const MAX_RUNTIME_ITEMS = 60;
+const MAX_CORE_ITEMS = 100;
+
 const BASE_SCOPE = new URL(self.registration.scope);
 
-// 核心必備預快取清單（離線最小可用骨架，D1: 移除重複的 ./index.html，由 ./ 自適應）
 const PRECACHE_ASSETS = [
   new URL('./', BASE_SCOPE).toString(),
   new URL('./manifest.json', BASE_SCOPE).toString(),
@@ -19,28 +21,35 @@ const PRECACHE_ASSETS = [
   new URL('./Lawgic512icon.png', BASE_SCOPE).toString(),
 ];
 
-// 高效能批次 LRU 快取淘汰，杜絕遞迴非同步 I/O 阻塞
+// 高效能批次快取淘汰（支援 QuotaExceededError 暴力腰斬保險）
 async function trimCache(cacheName, maxItems) {
   try {
     const cache = await caches.open(cacheName);
     const keys = await cache.keys();
-    if (keys.length > maxItems) {
+    if (keys.length > maxItems * 1.1) {
       const deleteCount = keys.length - maxItems;
       const keysToDelete = keys.slice(0, deleteCount);
       await Promise.all(keysToDelete.map((key) => cache.delete(key)));
     }
   } catch (err) {
     console.warn('[SW] Cache trim error:', err);
+    // 配額耗盡防禦：直接抹除最舊的 50% 項目清出呼吸空間
+    try {
+      const cache = await caches.open(cacheName);
+      const keys = await cache.keys();
+      const half = Math.ceil(keys.length / 2);
+      await Promise.all(keys.slice(0, half).map((k) => cache.delete(k)));
+    } catch {}
   }
 }
 
-// 1. 安裝階段：原子化預快取（絕不在此呼叫 skipWaiting，將升級時機完全保留給前端用戶端控制）
+// 1. 安裝階段：原子化預快取
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CORE_CACHE).then(async (cache) => {
       const results = await Promise.allSettled(
         PRECACHE_ASSETS.map(async (url) => {
-          const res = await fetch(url, { cache: 'reload' });
+          const res = await fetch(url, { cache: 'no-cache' });
           if (res.ok) {
             await cache.put(url, res);
           } else {
@@ -58,7 +67,7 @@ self.addEventListener('install', (event) => {
   );
 });
 
-// 2. 啟用階段：精準清理舊版快取並立即接管控制權，同時保護 CORE_CACHE 配額
+// 2. 啟用階段：清除舊快取
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches
@@ -66,7 +75,7 @@ self.addEventListener('activate', (event) => {
       .then((keys) =>
         Promise.all(
           keys
-            .filter((key) => key !== CORE_CACHE && key !== RUNTIME_CACHE)
+            .filter((key) => key.startsWith(CACHE_PREFIX) && key !== CORE_CACHE && key !== RUNTIME_CACHE)
             .map((key) => caches.delete(key))
         )
       )
@@ -75,14 +84,22 @@ self.addEventListener('activate', (event) => {
   );
 });
 
-// 輔助函式：支援外部 request 自身主動取消與實體超時熔斷的 fetch 封裝
-function fetchWithTimeout(request, timeoutMs = 2000) {
+// 防重入、相容 Safari 的超時 fetch 封裝
+function fetchWithTimeout(request, timeoutMs) {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let aborted = false;
+  const safeAbort = () => {
+    if (aborted) return;
+    aborted = true;
+    try {
+      controller.abort();
+    } catch {}
+  };
 
-  // 保留 request 原生 signal，若外部導航取消則同步中斷
-  if (request.signal) {
-    request.signal.addEventListener('abort', () => controller.abort(), { once: true });
+  const timer = setTimeout(safeAbort, timeoutMs);
+
+  if (request.signal && typeof request.signal.addEventListener === 'function') {
+    request.signal.addEventListener('abort', safeAbort, { once: true });
   }
 
   return fetch(request, { signal: controller.signal }).finally(() => {
@@ -90,118 +107,160 @@ function fetchWithTimeout(request, timeoutMs = 2000) {
   });
 }
 
-// 3. 攔截請求
+// 3. 請求攔截
 self.addEventListener('fetch', (event) => {
   const { request } = event;
 
-  // 僅處理 HTTP(S) GET 請求
   if (request.method !== 'GET' || !request.url.startsWith('http')) {
     return;
   }
 
   const url = new URL(request.url);
 
-  // 策略 A：HTML 導航請求（帶 1.8 秒超時熔斷的 Network-First + SPA 乾淨路由相容）
+  // 策略 A：導航請求 (HTML)
   if (request.mode === 'navigate' || request.destination === 'document') {
     event.respondWith(
-      fetchWithTimeout(request, 1800)
-        .then((response) => {
-          if (response && response.status === 200) {
-            const copy = response.clone();
-            // P0-2: 使用 event.waitUntil 保證 SW 存活至寫入完成
-            event.waitUntil(
-              caches.open(CORE_CACHE).then((cache) => cache.put(request, copy))
+      (async () => {
+        const rootShellUrl = new URL('./', BASE_SCOPE).toString();
+        const hasCachedShell = Boolean(await caches.match(rootShellUrl));
+        const timeoutMs = hasCachedShell ? 1800 : 8000;
+
+        let networkResponse;
+        try {
+          networkResponse = await fetchWithTimeout(request, timeoutMs);
+        } catch {
+          // 嚴格過濾：僅在純無參數或純追蹤標記時才允許使用 App Shell fallback，防止破壞深層連結
+          const isTrackingOnly =
+            url.searchParams.size === 0 ||
+            [...url.searchParams.keys()].every((k) =>
+              ['utm_source', 'utm_medium', 'utm_campaign', 'fbclid', 'gclid'].includes(k)
             );
-          }
-          return response;
-        })
-        .catch(async () => {
+
           const matched =
             (await caches.match(request)) ||
-            (await caches.match(request, { ignoreSearch: true })) ||
-            (await caches.match(new URL('./', BASE_SCOPE).toString()));
+            (isTrackingOnly ? await caches.match(request, { ignoreSearch: true }) : null) ||
+            (isTrackingOnly ? await caches.match(rootShellUrl) : null);
+
           if (matched) return matched;
+
           return new Response('Offline - LogiCore Arena Initializing...', {
             status: 503,
             statusText: 'Service Unavailable',
             headers: { 'Content-Type': 'text/plain; charset=utf-8' },
           });
-        })
+        }
+
+        // P0-1 修復：先 trim 清理出可用槽位，再執行 put，並有半數淘汰保險
+        if (networkResponse && networkResponse.status === 200) {
+          const copy = networkResponse.clone();
+          event.waitUntil(
+            (async () => {
+              try {
+                await trimCache(CORE_CACHE, MAX_CORE_ITEMS);
+                const cache = await caches.open(CORE_CACHE);
+                await cache.put(request, copy);
+              } catch (err) {
+                console.warn('[SW] Core cache write failed, emergency trim initiated:', err);
+                try {
+                  const cache = await caches.open(CORE_CACHE);
+                  const keys = await cache.keys();
+                  await Promise.all(keys.slice(0, Math.ceil(keys.length / 2)).map((k) => cache.delete(k)));
+                } catch {}
+              }
+            })()
+          );
+        }
+
+        return networkResponse;
+      })()
     );
     return;
   }
 
-  // 策略 B：WebAssembly 與 Vite 靜態 Hash 資產（嚴格 Cache-First，秒級加載）
+  // 策略 B：WASM 與 Vite 靜態 Hash 資產 -> Cache-First（帶 10 秒網路防掛起超時）
   const isWasmBinary = url.pathname.endsWith('.wasm');
   const isHashedAsset =
     isWasmBinary ||
-    url.pathname.includes('/assets/') ||
-    /[.-][a-f0-9]{8,}\.(js|css)$/i.test(url.pathname);
+    /\/assets\/.+-[a-zA-Z0-9_-]{8,}\.(js|css|woff2?|png|jpe?g|svg|webp)$/i.test(url.pathname);
 
   if (isHashedAsset) {
     event.respondWith(
-      caches.match(request).then((cachedResponse) => {
+      (async () => {
+        const cachedResponse = await caches.match(request);
         if (cachedResponse) {
           return cachedResponse;
         }
 
-        return fetch(request).then((networkResponse) => {
+        try {
+          const networkResponse = await fetchWithTimeout(request, 10000);
           if (
             networkResponse &&
             networkResponse.status === 200 &&
             (networkResponse.type === 'basic' || networkResponse.type === 'cors')
           ) {
             const copy = networkResponse.clone();
-            // P0-2: 使用 event.waitUntil 保證 SW 存活至寫入完成
-            event.waitUntil(
-              caches.open(CORE_CACHE).then((cache) => cache.put(request, copy))
-            );
-          }
-          return networkResponse;
-        });
-      })
-    );
-    return;
-  }
-
-  // 策略 C：圖片、動態資料與非指紋資源（Stale-While-Revalidate + LRU 配額守護）
-  event.respondWith(
-    caches.match(request).then((cachedResponse) => {
-      const fetchPromise = fetch(request)
-        .then((networkResponse) => {
-          if (
-            networkResponse &&
-            (networkResponse.status === 200 || networkResponse.type === 'opaque')
-          ) {
-            const copy = networkResponse.clone();
-            // P1-1: 使用 event.waitUntil 保證非同步寫入與 LRU 淘汰執行完畢
             event.waitUntil(
               (async () => {
-                const cache = await caches.open(RUNTIME_CACHE);
-                await cache.put(request, copy);
-                await trimCache(RUNTIME_CACHE, MAX_RUNTIME_ITEMS);
+                try {
+                  await trimCache(CORE_CACHE, MAX_CORE_ITEMS);
+                  const cache = await caches.open(CORE_CACHE);
+                  await cache.put(request, copy);
+                } catch (err) {
+                  console.warn('[SW] Asset cache write error:', err);
+                }
               })()
             );
           }
           return networkResponse;
-        })
-        .catch(() => {
-          if (!cachedResponse) {
-            return new Response('Resource Unavailable Offline', {
-              status: 504,
-              statusText: 'Gateway Timeout',
-              headers: { 'Content-Type': 'text/plain; charset=utf-8' },
-            });
-          }
-          return cachedResponse;
-        });
+        } catch {
+          return new Response('Asset Unavailable Offline', { status: 504 });
+        }
+      })()
+    );
+    return;
+  }
 
-      return cachedResponse || fetchPromise;
-    })
-  );
+  // 策略 C：同源一般靜態/圖片資源 -> SWR + 10 秒超時熔斷
+  if (url.origin === location.origin) {
+    event.respondWith(
+      (async () => {
+        const cachedResponse = await caches.match(request);
+
+        const fetchPromise = (async () => {
+          try {
+            const networkResponse = await fetchWithTimeout(request, 10000);
+            if (
+              networkResponse &&
+              networkResponse.status === 200 &&
+              networkResponse.type !== 'opaque'
+            ) {
+              const copy = networkResponse.clone();
+              event.waitUntil(
+                (async () => {
+                  try {
+                    await trimCache(RUNTIME_CACHE, MAX_RUNTIME_ITEMS);
+                    const cache = await caches.open(RUNTIME_CACHE);
+                    await cache.put(request, copy);
+                  } catch (err) {
+                    console.warn('[SW] Runtime cache write error:', err);
+                  }
+                })()
+              );
+            }
+            return networkResponse;
+          } catch {
+            return cachedResponse || null;
+          }
+        })();
+
+        const result = cachedResponse || (await fetchPromise);
+        return result || new Response('Offline', { status: 504 });
+      })()
+    );
+  }
 });
 
-// 4. 前端雙向通訊協議（僅保留受控更新協議，徹底消滅死代碼）
+// 4. 前端受控通訊協議
 self.addEventListener('message', (event) => {
   if (event.data?.type === 'SKIP_WAITING') {
     self.skipWaiting();
