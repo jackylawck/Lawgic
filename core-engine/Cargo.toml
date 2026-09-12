@@ -2,51 +2,27 @@
 name = "sudoku_wasm"
 version = "0.1.0"
 edition = "2021"
-description = "Zero-copy deterministic Sudoku CSP engine compiled to WebAssembly"
-license = "MIT"
-repository = "https://github.com/jackylawck/Lawgic"
-keywords = ["sudoku", "wasm", "csp", "solver"]
-categories = ["games", "wasm"]
 
 [lib]
-# 保留 cdylib 供前端載入 WASM，保留 rlib 供 cargo test / wasm-bindgen-test 靜態連結測試 harness
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-wasm-bindgen = "0.2.92"
-# 臨床級 panic 攔截器：提供精確的 Rust 呼叫堆疊輸出，且支援可選關閉以供生產瘦身
-console_error_panic_hook = { version = "0.1.7", optional = true }
+wasm-bindgen = "0.2"
+console_error_panic_hook = { version = "0.1", optional = true }
 
 [dev-dependencies]
-wasm-bindgen-test = "0.3.42"
+criterion = "0.5"
+
+[[bench]]
+name = "solver_bench"
+harness = false
 
 [features]
 default = ["console_error_panic_hook"]
-# 若舊版代碼仍有 #[cfg(feature = "wee_alloc")] 條件判斷，顯式列入預防 rustc 1.80+ check-cfg 警告；若無可保持精簡
-wee_alloc = []
 
 [profile.release]
-opt-level = 3
-lto = "fat"
+opt-level = "z"
+lto = true
 codegen-units = 1
-# abort 模式移除 C++ 風格的 unwind 展開表，節省 15%~25% WASM 二進位體積，且與 CSP 確定性安全模型完全相符
 panic = "abort"
-strip = "symbols"
-# 保留算術溢位檢查：防範索引或候選數回繞產生幽靈多重解，以極低開銷換取數學演算正確性
-overflow-checks = true
-
-# 開發模式跳過 wasm-opt，避免每次本地調試額外耗費編譯時間
-[package.metadata.wasm-pack.profile.dev]
-wasm-opt = false
-
-# 生產模式啟用 Binaryen wasm-opt 進行二進位級深層重構
-# 【核心修正】：加入 --enable-sign-ext 徹底解鎖 i32.extend8_s 指令，杜絕 wasm-validator 報錯
-[package.metadata.wasm-pack.profile.release]
-wasm-opt = [
-    "-O4",
-    "--enable-sign-ext",
-    "--enable-bulk-memory",
-    "--enable-mutable-globals",
-    "--strip-debug",
-    "--strip-producers"
-]
+strip = true
