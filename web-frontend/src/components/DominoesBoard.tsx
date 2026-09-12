@@ -1,5 +1,5 @@
 // web-frontend/src/components/DominoesBoard.tsx
-import React, { useState, useEffect, useCallback, useMemo, useDeferredValue } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useDeferredValue, useRef } from 'react';
 import { PuzzleEntity, TierKey } from '../generated';
 import { useLearnerProfile } from '../hooks/useLearnerProfile';
 import { useLanguage } from '../contexts/LanguageContext';
@@ -10,6 +10,13 @@ import {
   DominoPlacement,
   WebDominoesGenerator,
 } from '../engines/dominoesGenerator';
+import { VaultManager, VaultItem } from '../utils/vaultStorage';
+import {
+  TournamentProctoringSession,
+  getEnvironmentFingerprint,
+  calculateInfractionScore,
+} from '../utils/tournamentSecurity';
+import { TournamentSubmissionModal } from './TournamentSubmissionModal';
 
 interface Props {
   puzzle?: PuzzleEntity;
@@ -32,7 +39,7 @@ export const DominoesBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentM
   const actualPuzzle = puzzleData || puzzle;
   const { lang } = useLanguage();
   const isEn = lang === 'en';
-  const { recordAttempt, getCompositeCognitiveIndex } = useLearnerProfile();
+  const { recordAttempt, profile, getCompositeCognitiveIndex } = useLearnerProfile();
 
   const spec = (actualPuzzle?.puzzle || actualPuzzle) as unknown as DominoesSpec;
   const rows = spec?.rows || 4;
@@ -41,6 +48,7 @@ export const DominoesBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentM
   const grid = spec?.grid || [];
   const dominoDeck = spec?.dominoes || [];
   const pinnedPlacements = spec?.pinnedPlacements || [];
+  const seed = (actualPuzzle?.metrics as any)?.seed || spec?.seed || 12345;
 
   // 水平邊界 (rows - 1, cols) & 垂直邊界 (rows, cols - 1)
   const [hBorders, setHBorders] = useState<DominoBorderState[][]>(() =>
@@ -50,11 +58,11 @@ export const DominoesBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentM
     Array.from({ length: rows }, () => Array(Math.max(0, cols - 1)).fill('unknown'))
   );
 
-  // 試探性假設集合（紫光標記，絕不攔截阻斷）
+  // 試探性假設集合（紫光標記）
   const [hypothesisHBorders, setHypothesisHBorders] = useState<Set<string>>(new Set());
   const [hypothesisVBorders, setHypothesisVBorders] = useState<Set<string>>(new Set());
 
-  // 被動懸停候選視角
+  // 懸停候選視角
   const [hoveredCell, setHoveredCell] = useState<[number, number] | null>(null);
   const [selectedCell, setSelectedCell] = useState<[number, number] | null>([0, 0]);
 
@@ -65,6 +73,10 @@ export const DominoesBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentM
   const [isCompleted, setIsCompleted] = useState<boolean>(false);
   const [elapsedMs, setElapsedMs] = useState<number>(0);
   const [startTime, setStartTime] = useState<number>(Date.now());
+  const [isFav, setIsFav] = useState<boolean>(() =>
+    actualPuzzle?.id ? VaultManager.isFavorited(actualPuzzle.id) : false
+  );
+  const [showSubmitModal, setShowSubmitModal] = useState<boolean>(false);
 
   // 操作棋譜紀錄
   const [history, setHistory] = useState<UserAction[]>([]);
@@ -75,6 +87,20 @@ export const DominoesBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentM
   const [hintLevel, setHintLevel] = useState<number>(0);
   const [activeHint, setActiveHint] = useState<DominoHintStep | null>(null);
   const [tacticalMetaHint, setTacticalMetaHint] = useState<string | null>(null);
+
+  // 防重錄守衛
+  const hasRecordedRef = useRef<boolean>(false);
+
+  // 實體防作弊稽核 Session
+  const proctoringRef = useRef<TournamentProctoringSession | null>(null);
+
+  useEffect(() => {
+    proctoringRef.current = new TournamentProctoringSession();
+    return () => {
+      proctoringRef.current?.destroy();
+      proctoringRef.current = null;
+    };
+  }, [actualPuzzle?.id]);
 
   // 初始化預置釘定線索
   useEffect(() => {
@@ -114,6 +140,8 @@ export const DominoesBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentM
     setTacticalMetaHint(null);
     setRotationDeg(0);
     setIsFlippedH(false);
+    setIsFav(VaultManager.isFavorited(actualPuzzle?.id || ''));
+    hasRecordedRef.current = false;
   }, [actualPuzzle?.id, rows, cols, pinnedPlacements]);
 
   useEffect(() => {
@@ -124,7 +152,7 @@ export const DominoesBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentM
     return () => clearInterval(interval);
   }, [isCompleted, startTime]);
 
-  // 非同步延遲分析：保障 120Hz 點擊優先渲染
+  // 非同步延遲分析：保障高幀率點擊優先渲染
   const deferredHBorders = useDeferredValue(hBorders);
   const deferredVBorders = useDeferredValue(vBorders);
 
@@ -160,7 +188,7 @@ export const DominoesBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentM
     return { list, usedCounts };
   }, [rows, cols, grid, deferredHBorders, deferredVBorders]);
 
-  // 被動懸停候選高亮計算：O(1) 掃描 4 方向
+  // 被動懸停候選高亮計算
   const candidateNeighborsOfHovered = useMemo(() => {
     if (!hoveredCell || isCompleted) return new Set<string>();
     const [hr, hc] = hoveredCell;
@@ -168,7 +196,12 @@ export const DominoesBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentM
     if (valH === undefined) return new Set<string>();
 
     const validKeys = new Set<string>();
-    const dirs = [[0, 1], [1, 0], [0, -1], [-1, 0]];
+    const dirs = [
+      [0, 1],
+      [1, 0],
+      [0, -1],
+      [-1, 0],
+    ];
 
     for (const [dr, dc] of dirs) {
       const nr = hr + dr;
@@ -220,7 +253,6 @@ export const DominoesBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentM
     return true;
   }, [identifiedDominoes, maxPip, rows, cols]);
 
-  // 樂觀更新 + 紫光標記試探（絕不彈窗阻斷）
   const toggleHBorder = (r: number, c: number) => {
     if (isCompleted) return;
 
@@ -248,7 +280,10 @@ export const DominoesBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentM
 
     const action: UserAction = {
       type: 'hBorder',
-      r, c, prev: cur, next,
+      r,
+      c,
+      prev: cur,
+      next,
       isHypothesis,
       descZh: `水平邊界 (${r + 1},${c + 1}): ${cur} ➔ ${next} ${isHypothesis ? '【試探】' : ''}`,
       descEn: `H-Border (${r + 1},${c + 1}): ${cur} -> ${next} ${isHypothesis ? '[Hypothesis]' : ''}`,
@@ -284,7 +319,10 @@ export const DominoesBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentM
 
     const action: UserAction = {
       type: 'vBorder',
-      r, c, prev: cur, next,
+      r,
+      c,
+      prev: cur,
+      next,
       isHypothesis,
       descZh: `垂直邊界 (${r + 1},${c + 1}): ${cur} ➔ ${next} ${isHypothesis ? '【試探】' : ''}`,
       descEn: `V-Border (${r + 1},${c + 1}): ${cur} -> ${next} ${isHypothesis ? '[Hypothesis]' : ''}`,
@@ -293,8 +331,10 @@ export const DominoesBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentM
     setHistoryIndex((idx) => idx + 1);
   };
 
+  // P2 修復：加入 hasRecordedRef 防禦，防止重複提交 attempt
   useEffect(() => {
-    if (!isCompleted && checkVictory()) {
+    if (!isCompleted && !hasRecordedRef.current && checkVictory()) {
+      hasRecordedRef.current = true;
       setIsCompleted(true);
       const timeSpent = Math.max(1, Math.round((Date.now() - startTime) / 1000));
       const totalHypotheses = hypothesisHBorders.size + hypothesisVBorders.size;
@@ -319,7 +359,18 @@ export const DominoesBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentM
         });
       }
     }
-  }, [hBorders, vBorders, isCompleted, checkVictory, startTime, actualPuzzle, recordAttempt, spec?.highestTechnique, hypothesisHBorders.size, hypothesisVBorders.size]);
+  }, [
+    hBorders,
+    vBorders,
+    isCompleted,
+    checkVictory,
+    startTime,
+    actualPuzzle,
+    recordAttempt,
+    spec?.highestTechnique,
+    hypothesisHBorders.size,
+    hypothesisVBorders.size,
+  ]);
 
   const handleUndo = () => {
     if (historyIndex < 0 || isCompleted) return;
@@ -392,7 +443,9 @@ export const DominoesBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentM
     if (isCompleted || tournamentMode) return;
     const forced = WebDominoesGenerator.getNextForcedDeduction(spec, hBorders, vBorders);
     if (!forced) {
-      setTacticalMetaHint(isEn ? 'No immediate forced step found.' : '目前全盤暫無單一定式約束，請檢驗連通二分匹配。');
+      setTacticalMetaHint(
+        isEn ? 'No immediate forced step found.' : '目前全盤暫無單一定式約束，請檢驗連通二分匹配。'
+      );
       return;
     }
 
@@ -403,17 +456,42 @@ export const DominoesBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentM
     );
   };
 
+  // P0 修復：標準化金庫收藏對接
+  const handleToggleFavorite = () => {
+    if (!actualPuzzle) return;
+    const vaultItem: VaultItem = {
+      id: actualPuzzle.id,
+      engine: 'dominoes',
+      tier: String(actualPuzzle.tier || 'kids'),
+      seed: Number(seed),
+      steps: history.length,
+      timeSpentSec: Math.round(elapsedMs / 1000),
+      date: new Date().toISOString(),
+    };
+    const res = VaultManager.toggleFavorite(vaultItem);
+    setIsFav(res.isFav);
+  };
+
   const cci = useMemo(() => getCompositeCognitiveIndex(), [getCompositeCognitiveIndex, isCompleted]);
   const cellSize = Math.min(300 / Math.max(rows, cols), 36);
 
   return (
-    <div className="flex flex-col items-center justify-center p-2 select-none font-mono outline-none touch-none">
+    <div className="flex flex-col items-center justify-center p-2 select-none font-mono outline-none touch-none w-full max-w-[420px] mx-auto">
       {/* 頂部看板 */}
       <div className="w-full max-w-[340px] mb-2 flex flex-col gap-1 text-[9px]">
         <div className="flex items-center justify-between px-1 text-slate-400">
-          <span className="text-amber-400 font-bold">
-            Double-{maxPip} 套裝骨牌
-          </span>
+          <div className="flex items-center gap-1.5">
+            <span className="text-amber-400 font-bold">Double-{maxPip} 套裝骨牌</span>
+            <button
+              onClick={handleToggleFavorite}
+              className={`px-1.5 py-0.5 rounded border transition cursor-pointer ${
+                isFav ? 'border-amber-500 text-amber-300 bg-amber-950' : 'border-slate-700 text-slate-500'
+              }`}
+              title={isFav ? (isEn ? 'In Vault' : '已在傳奇庫') : (isEn ? 'Save to Vault' : '收藏')}
+            >
+              {isFav ? '★' : '☆'}
+            </button>
+          </div>
           <div className="flex items-center gap-1.5">
             {hypothesisHBorders.size + hypothesisVBorders.size > 0 && (
               <span className="text-purple-400 font-bold animate-pulse">
@@ -436,7 +514,11 @@ export const DominoesBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentM
           </div>
           <div className="bg-slate-950 border border-slate-800 p-1 rounded text-center">
             <div className="text-slate-500 text-[7px]">{isEn ? 'Pure Deduction' : '純推導判定'}</div>
-            <div className={`font-bold ${hypothesisHBorders.size + hypothesisVBorders.size > 0 ? 'text-purple-400' : 'text-emerald-400'}`}>
+            <div
+              className={`font-bold ${
+                hypothesisHBorders.size + hypothesisVBorders.size > 0 ? 'text-purple-400' : 'text-emerald-400'
+              }`}
+            >
               {hypothesisHBorders.size + hypothesisVBorders.size > 0 ? '試探標記' : '100% 潔癖'}
             </div>
           </div>
@@ -547,7 +629,7 @@ export const DominoesBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentM
           <span>{tacticalMetaHint}</span>
           <button
             onClick={() => setTacticalMetaHint(null)}
-            className="px-1.5 py-0.5 bg-slate-800 text-slate-400 rounded text-[7px] ml-1"
+            className="px-1.5 py-0.5 bg-slate-800 text-slate-400 rounded text-[7px] ml-1 cursor-pointer"
           >
             關閉
           </button>
@@ -564,7 +646,9 @@ export const DominoesBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentM
             <div className="flex gap-1">
               <span className={`w-1.5 h-1.5 rounded-full ${hintLevel >= 1 ? 'bg-amber-400' : 'bg-slate-700'}`} />
               <span className={`w-1.5 h-1.5 rounded-full ${hintLevel >= 2 ? 'bg-amber-400' : 'bg-slate-700'}`} />
-              <span className={`w-1.5 h-1.5 rounded-full ${hintLevel >= 3 ? 'bg-rose-500 animate-ping' : 'bg-slate-700'}`} />
+              <span
+                className={`w-1.5 h-1.5 rounded-full ${hintLevel >= 3 ? 'bg-rose-500 animate-ping' : 'bg-slate-700'}`}
+              />
             </div>
           </div>
           <div className="py-0.5 text-[8px] text-slate-200">
@@ -574,9 +658,7 @@ export const DominoesBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentM
               </span>
             )}
             {hintLevel === 2 && (
-              <span className="text-cyan-300 font-bold">
-                ⚡ {activeHint.rationale}
-              </span>
+              <span className="text-cyan-300 font-bold">⚡ {activeHint.rationale}</span>
             )}
             {hintLevel === 3 && (
               <span className="text-rose-400 font-black">
@@ -587,13 +669,15 @@ export const DominoesBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentM
         </div>
       )}
 
-      {/* 控制按鈕群（含視角旋轉與翻轉） */}
+      {/* 控制按鈕群 */}
       <div className="flex items-center justify-between w-full max-w-[340px] mt-2 gap-1 text-[8.5px] font-bold">
         <button
           onClick={handleUndo}
           disabled={historyIndex < 0}
           className={`flex-1 py-1.5 rounded-lg border transition ${
-            historyIndex >= 0 ? 'bg-slate-900 text-slate-200 border-slate-700 cursor-pointer' : 'bg-slate-950 text-slate-600 border-slate-900'
+            historyIndex >= 0
+              ? 'bg-slate-900 text-slate-200 border-slate-700 cursor-pointer'
+              : 'bg-slate-950 text-slate-600 border-slate-900'
           }`}
         >
           ↩ 復原
@@ -602,7 +686,9 @@ export const DominoesBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentM
           onClick={handleRedo}
           disabled={historyIndex >= history.length - 1}
           className={`flex-1 py-1.5 rounded-lg border transition ${
-            historyIndex < history.length - 1 ? 'bg-slate-900 text-slate-200 border-slate-700 cursor-pointer' : 'bg-slate-950 text-slate-600 border-slate-900'
+            historyIndex < history.length - 1
+              ? 'bg-slate-900 text-slate-200 border-slate-700 cursor-pointer'
+              : 'bg-slate-950 text-slate-600 border-slate-900'
           }`}
         >
           ↪ 重做
@@ -686,7 +772,9 @@ export const DominoesBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentM
                 i === historyIndex ? 'bg-cyan-950 text-cyan-300 font-bold' : 'hover:bg-slate-800'
               } ${act.isHypothesis ? 'text-purple-300' : ''}`}
             >
-              <span>#{i + 1} {isEn ? act.descEn : act.descZh}</span>
+              <span>
+                #{i + 1} {isEn ? act.descEn : act.descZh}
+              </span>
             </div>
           ))}
         </div>
@@ -701,7 +789,7 @@ export const DominoesBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentM
           <div className="text-[10px] text-slate-400 mt-0.5 mb-2">
             Time: {(elapsedMs / 1000).toFixed(2)}s | Gf: IQ {cci.standardIQ}
           </div>
-          <div className="bg-slate-900/90 border border-slate-800 p-2 rounded-lg text-[8px] text-slate-300 text-left space-y-1">
+          <div className="bg-slate-900/90 border border-slate-800 p-2 rounded-lg text-[8px] text-slate-300 text-left space-y-1 mb-2">
             <div className="flex justify-between">
               <span className="text-slate-400">邏輯複雜度評分:</span>
               <span className="text-cyan-300 font-bold">{spec.logicalComplexityScore}</span>
@@ -712,14 +800,49 @@ export const DominoesBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentM
             </div>
             <div className="flex justify-between">
               <span className="text-slate-400">推導純度:</span>
-              <span className={`font-bold ${hypothesisHBorders.size + hypothesisVBorders.size > 0 ? 'text-purple-400' : 'text-emerald-400'}`}>
+              <span
+                className={`font-bold ${
+                  hypothesisHBorders.size + hypothesisVBorders.size > 0 ? 'text-purple-400' : 'text-emerald-400'
+                }`}
+              >
                 {hypothesisHBorders.size + hypothesisVBorders.size > 0
                   ? `包含 ${hypothesisHBorders.size + hypothesisVBorders.size} 步試探`
                   : '100% 絕對純邏輯'}
               </span>
             </div>
           </div>
+
+          <button
+            onClick={() => setShowSubmitModal(true)}
+            className="w-full py-1.5 bg-neutral-200 hover:bg-white text-black text-[8px] font-bold rounded-lg cursor-pointer transition shadow"
+          >
+            {isEn ? 'SUBMIT TO LEADERBOARD' : '提交成績至排行榜'}
+          </button>
         </div>
+      )}
+
+      {/* 賽事提交 Modal */}
+      {showSubmitModal && actualPuzzle && (
+        <TournamentSubmissionModal
+          payload={{
+            submissionId: `SUB-${actualPuzzle.id}-${Date.now().toString(36)}`,
+            tournamentId: tournamentMode ? 'WPF_DOMINOES_2026' : 'GLOBAL_DOMINO_STAGE',
+            playerId: profile.personalBest.updatedAt ? 'CONTENDER_VERIFIED' : 'LOCAL_PLAYER_1',
+            division: 'open',
+            puzzleId: actualPuzzle.id,
+            engineType: 'dominoes',
+            tier: (actualPuzzle.tier as string) || 'kids',
+            timeSpentSec: Math.round(elapsedMs / 1000),
+            conflictsCount: hypothesisHBorders.size + hypothesisVBorders.size,
+            infractionScore: proctoringRef.current
+              ? calculateInfractionScore(proctoringRef.current.getSnapshot())
+              : 0,
+            environment: getEnvironmentFingerprint(),
+            timestamp: new Date().toISOString(),
+          }}
+          onClose={() => setShowSubmitModal(false)}
+          isEn={isEn}
+        />
       )}
     </div>
   );
