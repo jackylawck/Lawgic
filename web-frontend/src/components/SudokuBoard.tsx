@@ -12,7 +12,12 @@ import { MetricErrorBar } from './MetricErrorBar';
 import { CognitiveRadarChart } from './CognitiveRadarChart';
 import { PBCelebrationModal } from './PBCelebrationModal';
 import { TournamentSubmissionModal } from './TournamentSubmissionModal';
-import { getEnvironmentFingerprint, calculateInfractionScore } from '../utils/tournamentSecurity';
+import {
+  TournamentProctoringSession,
+  getEnvironmentFingerprint,
+  calculateInfractionScore,
+} from '../utils/tournamentSecurity';
+import { VaultManager, VaultItem } from '../utils/vaultStorage';
 import { SudokuHintStep } from '../engines/sudokuGenerator';
 
 interface Props {
@@ -53,7 +58,7 @@ export const SudokuBoard: React.FC<Props> = ({
   const { lang } = useLanguage();
   const isEn = lang === 'en';
 
-  const { soundFeedback, hapticFeedback, reducedMotion, colorBlindMode } =
+  const { hapticFeedback, reducedMotion, colorBlindMode } =
     useAccessibilitySettings();
   const { playSound, announce } = useAccessibilityActions();
 
@@ -73,7 +78,7 @@ export const SudokuBoard: React.FC<Props> = ({
   const summaryCloseBtnRef = useRef<HTMLButtonElement>(null);
   const previouslyFocusedElementRef = useRef<HTMLElement | null>(null);
 
-  // 1. 資料解析與防禦（單一 useMemo 收斂冗餘）
+  // 1. 資料解析與防禦
   const puzzleSpec = useMemo(() => {
     if (!actualPuzzle) {
       return {
@@ -152,6 +157,9 @@ export const SudokuBoard: React.FC<Props> = ({
   const [isResigned, setIsResigned] = useState(false);
   const [isTimedOut, setIsTimedOut] = useState(false);
   const [elapsedSec, setElapsedSec] = useState(0);
+  const [isFav, setIsFav] = useState<boolean>(() =>
+    actualPuzzle?.id ? VaultManager.isFavorited(actualPuzzle.id) : false
+  );
 
   const [showPBModal, setShowPBModal] = useState(false);
   const [showSubmitModal, setShowSubmitModal] = useState(false);
@@ -169,11 +177,20 @@ export const SudokuBoard: React.FC<Props> = ({
   const resignStartTimeRef = useRef<number | null>(null);
 
   // 審計與安全指標 Ref
-  const tabSwitchesRef = useRef(0);
-  const blurEventsRef = useRef(0);
   const startTimeRef = useRef<number>(Date.now());
   const conflictCountRef = useRef(0);
   const hasRecordedRef = useRef(false);
+
+  // 實體防作弊稽核 Session
+  const proctoringRef = useRef<TournamentProctoringSession | null>(null);
+
+  useEffect(() => {
+    proctoringRef.current = new TournamentProctoringSession();
+    return () => {
+      proctoringRef.current?.destroy();
+      proctoringRef.current = null;
+    };
+  }, [actualPuzzle?.id]);
 
   const effectiveNoteMode = isNoteMode || isShiftPressed;
 
@@ -183,7 +200,6 @@ export const SudokuBoard: React.FC<Props> = ({
 
   const triggerHaptic = useCallback(
     (pattern: number | number[]) => {
-      // 前庭敏感使用者通常對突發感官刺激同樣敏感，reducedMotion 啟用時一併壓制實體震動
       if (hapticFeedback && !reducedMotion && typeof navigator !== 'undefined' && navigator.vibrate) {
         try {
           navigator.vibrate(pattern);
@@ -193,7 +209,6 @@ export const SudokuBoard: React.FC<Props> = ({
     [hapticFeedback, reducedMotion]
   );
 
-  // 穩定化 81 格 Ref Callback 字典，消除每次渲染 162 次 ref churn
   const cellRefCallbacks = useMemo(
     () =>
       Array.from({ length: 81 }, (_, idx) => (el: HTMLButtonElement | null) => {
@@ -264,20 +279,18 @@ export const SudokuBoard: React.FC<Props> = ({
     setHintLevel(0);
     setActiveHintText(null);
     setResignHoldProgress(0);
-    tabSwitchesRef.current = 0;
-    blurEventsRef.current = 0;
+    setIsFav(VaultManager.isFavorited(puzzleId));
     startTimeRef.current = Date.now() - (bookmark?.elapsedSec ? bookmark.elapsedSec * 1000 : 0);
     conflictCountRef.current = 0;
     hasRecordedRef.current = false;
   }, [puzzleId, initialGrid, isEn, announce]);
 
-  // 5. 防作弊環境焦點檢測
+  // 5. 離焦提示
   useEffect(() => {
     if (!isAssessmentMode || isCompleted || isTimedOut || isResigned) return;
 
     const handleVisibility = () => {
       if (document.hidden) {
-        tabSwitchesRef.current += 1;
         const msg = isEn ? 'Warning: Focus loss detected' : '警告：偵測到離開作答視窗';
         setViolationAlert(msg);
         announce(msg, 'assertive');
@@ -285,20 +298,13 @@ export const SudokuBoard: React.FC<Props> = ({
       }
     };
 
-    const handleBlur = () => {
-      blurEventsRef.current += 1;
-    };
-
     document.addEventListener('visibilitychange', handleVisibility);
-    window.addEventListener('blur', handleBlur);
-
     return () => {
       document.removeEventListener('visibilitychange', handleVisibility);
-      window.removeEventListener('blur', handleBlur);
     };
   }, [isAssessmentMode, isCompleted, isTimedOut, isResigned, isEn, announce]);
 
-  // 6. 視窗離焦修飾鍵重置
+  // 6. 修飾鍵重置
   useEffect(() => {
     const handleResetShift = () => setIsShiftPressed(false);
     window.addEventListener('blur', handleResetShift);
@@ -436,7 +442,7 @@ export const SudokuBoard: React.FC<Props> = ({
     [initialGrid, selectedCell, isCompleted, isTimedOut, isResigned, effectiveNoteMode, flatSolution, isAssessmentMode, playSound, triggerHaptic, announce, isEn, grid, checkVictory]
   );
 
-  // 9. 具備焦點作用域（Focus-Scoped）的二維 Roving 鍵盤巡航
+  // 9. 鍵盤巡航
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (isCompleted || isTimedOut || isResigned) return;
@@ -514,7 +520,7 @@ export const SudokuBoard: React.FC<Props> = ({
     };
   }, [isCompleted, isTimedOut, isResigned, selectedCell, handleNumberInput]);
 
-  // 10. 計時器核心（透過 gridRef 解耦，填數零開銷）
+  // 10. 計時器核心
   useEffect(() => {
     if (isCompleted || isTimedOut || isResigned) return;
     const timer = setInterval(() => {
@@ -567,7 +573,7 @@ export const SudokuBoard: React.FC<Props> = ({
     }
   }, [hints, isCompleted, isTimedOut, isResigned, playSound, triggerHaptic, hintLevel, isEn, announce]);
 
-  // 12. 投降覆盤機制（滑鼠 + 鍵盤 Enter/Space 雙軌長按）
+  // 12. 投降覆盤機制
   const handleGracefulResign = useCallback(() => {
     if (isCompleted || isTimedOut || isResigned || flatSolution.length !== 81) return;
     triggerHaptic([40, 60, 40]);
@@ -663,7 +669,24 @@ export const SudokuBoard: React.FC<Props> = ({
     triggerHaptic(25);
   }, [isCompleted, isTimedOut, isResigned, actualPuzzle?.id, saveBookmark, currentTier, grid, elapsedSec, isEn, announce, triggerHaptic]);
 
-  // 13. 覆盤結算浮層焦點管理（Focus Trap）
+  // 13. 金庫收藏切換（安全提取 res.isFav）
+  const handleToggleFavorite = useCallback(() => {
+    if (!actualPuzzle?.id) return;
+    const vaultItem: VaultItem = {
+      id: actualPuzzle.id,
+      engine: 'sudoku',
+      tier: currentTier,
+      seed: typeof actualPuzzle.seed === 'number' ? actualPuzzle.seed : 1001,
+      steps: conflictCountRef.current + grid.filter((v) => v !== 0).length,
+      timeSpentSec: elapsedSec,
+      iqScore: cci.standardIQ,
+      date: new Date().toISOString(),
+    };
+    const res = VaultManager.toggleFavorite(vaultItem);
+    setIsFav(res.isFav);
+  }, [actualPuzzle, currentTier, grid, elapsedSec, cci.standardIQ]);
+
+  // 14. 覆盤結算浮層焦點管理（Focus Trap）
   const isSummaryActive = isCompleted || isResigned || isTimedOut;
   useEffect(() => {
     if (isSummaryActive) {
@@ -728,7 +751,7 @@ export const SudokuBoard: React.FC<Props> = ({
       aria-label={isEn ? 'Sudoku Puzzle Game Board' : '數獨對弈盤面'}
       className="relative flex flex-col items-center justify-center w-full min-h-[90vh] select-none py-2 font-mono bg-slate-950 text-slate-100 overflow-hidden"
     >
-      {/* 視覺 Toast：加上 aria-hidden="true"，避免與 announce 產生雙重播報 */}
+      {/* 視覺 Toast */}
       {violationAlert && (
         <div aria-hidden="true" className="fixed top-4 z-50 px-4 py-2 bg-rose-600 border border-rose-400 text-white font-bold text-xs rounded-full shadow-2xl animate-bounce">
           {violationAlert}
@@ -759,7 +782,6 @@ export const SudokuBoard: React.FC<Props> = ({
           </span>
         </div>
 
-        {/* aria-live="off" 避免螢幕閱讀器每秒喧囂讀取時間跳動 */}
         <div className="text-sm font-bold tracking-wider" aria-live="off">
           {isAssessmentMode ? (
             <span className={`px-2.5 py-0.5 rounded border ${remainingTime <= 60 ? 'bg-rose-950 border-rose-600 text-rose-300 animate-pulse' : 'bg-slate-900 border-slate-800 text-rose-400'}`}>
@@ -775,6 +797,18 @@ export const SudokuBoard: React.FC<Props> = ({
         <div className="flex items-center gap-2">
           {!isCompleted && !isTimedOut && !isResigned && (
             <>
+              <button
+                type="button"
+                onClick={handleToggleFavorite}
+                aria-label={isEn ? 'Toggle Favorite' : '收藏謎題'}
+                className={`px-2 py-1 rounded border text-xs cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-amber-400 ${
+                  isFav
+                    ? 'border-amber-500/80 bg-amber-950/60 text-amber-300'
+                    : 'border-slate-800 bg-slate-900 text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                {isFav ? '★' : '☆'}
+              </button>
               <button
                 type="button"
                 onClick={handleBookmarkPuzzle}
@@ -825,8 +859,6 @@ export const SudokuBoard: React.FC<Props> = ({
         </div>
       </header>
 
-      {/* 設計決策：文字群組 aria-hidden，提示內容由 triggerHintLadder 的 announce('polite') 承載。
-          關閉按鈕保持可訪問性，消除雙重播報雜訊的同時支援鍵盤巡航關閉。 */}
       {activeHintText && (
         <div
           className="w-full max-w-[min(94vw,74vh)] bg-slate-900/95 border border-amber-500/70 text-amber-200 text-xs px-3 py-2 rounded-xl mb-2 flex items-center justify-between gap-2 shadow-2xl backdrop-blur animate-fade-in"
@@ -848,9 +880,8 @@ export const SudokuBoard: React.FC<Props> = ({
         </div>
       )}
 
-      {/* 主數獨棋盤：符合 WAI-ARIA APG 2D Grid 完整樹狀規範 */}
+      {/* 主數獨棋盤 */}
       <div className="relative flex flex-col items-center">
-        {/* 橫坐標 A-I */}
         <div className="grid grid-cols-9 w-[min(90vw,70vh)] pl-4 text-center text-[9px] text-slate-500 font-bold mb-1 tracking-widest pointer-events-none font-mono" aria-hidden="true">
           {['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I'].map((char) => (
             <div key={char}>{char}</div>
@@ -858,7 +889,6 @@ export const SudokuBoard: React.FC<Props> = ({
         </div>
 
         <div className="flex items-center">
-          {/* 縱坐標 1-9 */}
           <div className="flex flex-col justify-around h-[min(90vw,70vh)] w-4 pr-1 text-right text-[9px] text-slate-500 font-bold pointer-events-none font-mono" aria-hidden="true">
             {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((rowNum) => (
               <div key={rowNum}>{rowNum}</div>
@@ -920,7 +950,7 @@ export const SudokuBoard: React.FC<Props> = ({
                       <button
                         ref={cellRefCallbacks[idx]}
                         type="button"
-                        tabIndex={isSelected ? 0 : -1} // Roving Tabindex
+                        tabIndex={isSelected ? 0 : -1}
                         onClick={() => {
                           setSelectedCell(idx);
                           triggerHaptic(10);
@@ -1054,7 +1084,7 @@ export const SudokuBoard: React.FC<Props> = ({
         </footer>
       )}
 
-      {/* 覆盤結算視圖：全螢幕隔離 Focus Trap，動態降低 ARIA 優先級防止雙重模態衝突 */}
+      {/* 覆盤結算視圖 */}
       {isSummaryActive && (
         <div
           role="dialog"
@@ -1168,17 +1198,14 @@ export const SudokuBoard: React.FC<Props> = ({
             tier: currentTier,
             timeSpentSec: elapsedSec,
             conflictsCount: conflictCountRef.current,
-            infractionScore: calculateInfractionScore({
-              tabSwitches: tabSwitchesRef.current,
-              blurEvents: blurEventsRef.current,
-              clipboardEvents: 0,
-              untrustedEvents: 0,
-            }),
+            infractionScore: proctoringRef.current
+              ? calculateInfractionScore(proctoringRef.current.getSnapshot())
+              : 0,
             environment: getEnvironmentFingerprint(),
             timestamp: new Date().toISOString(),
           }}
           onClose={() => setShowSubmitModal(false)}
-          forceLang={lang}
+          isEn={isEn}
         />
       )}
     </div>
