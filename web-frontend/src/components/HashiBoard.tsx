@@ -1,5 +1,5 @@
 // web-frontend/src/components/HashiBoard.tsx
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { PuzzleEntity, TierKey } from '../generated';
 import { useLearnerProfile } from '../hooks/useLearnerProfile';
 import { useLanguage } from '../contexts/LanguageContext';
@@ -9,6 +9,13 @@ import {
   HashiHintStep,
   WebHashiGenerator,
 } from '../engines/hashiGenerator';
+import { VaultManager, VaultItem } from '../utils/vaultStorage';
+import {
+  TournamentProctoringSession,
+  getEnvironmentFingerprint,
+  calculateInfractionScore,
+} from '../utils/tournamentSecurity';
+import { TournamentSubmissionModal } from './TournamentSubmissionModal';
 
 interface Props {
   puzzle?: PuzzleEntity;
@@ -20,13 +27,14 @@ export const HashiBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode
   const actualPuzzle = puzzleData || puzzle;
   const { lang } = useLanguage();
   const isEn = lang === 'en';
-  const { recordAttempt, getCompositeCognitiveIndex } = useLearnerProfile();
+  const { recordAttempt, profile, getCompositeCognitiveIndex } = useLearnerProfile();
 
   const spec = (actualPuzzle?.puzzle || actualPuzzle) as unknown as HashiSpec;
   const rows = spec?.rows || 9;
   const cols = spec?.cols || 9;
   const islands: HashiIsland[] = spec?.islands || [];
   const solvingSteps: HashiHintStep[] = spec?.solvingSteps || [];
+  const seed = (actualPuzzle?.metrics as any)?.seed || spec?.seed || 12345;
 
   // 橋樑狀態映射表：key: `${r1},${c1}_${r2},${c2}` -> count: 1 | 2
   const [bridges, setBridges] = useState<Map<string, number>>(new Map());
@@ -35,6 +43,10 @@ export const HashiBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode
   const [isCompleted, setIsCompleted] = useState<boolean>(false);
   const [elapsedMs, setElapsedMs] = useState<number>(0);
   const [startTime, setStartTime] = useState<number>(Date.now());
+  const [isFav, setIsFav] = useState<boolean>(() =>
+    actualPuzzle?.id ? VaultManager.isFavorited(actualPuzzle.id) : false
+  );
+  const [showSubmitModal, setShowSubmitModal] = useState<boolean>(false);
 
   // 提示與反證鏈展開
   const [activeHint, setActiveHint] = useState<HashiHintStep | null>(null);
@@ -56,6 +68,20 @@ export const HashiBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode
   // 工程配方抽屜
   const [showRecipePanel, setShowRecipePanel] = useState<boolean>(false);
 
+  // 防重錄守衛
+  const hasRecordedRef = useRef<boolean>(false);
+
+  // 實體防作弊稽核 Session
+  const proctoringRef = useRef<TournamentProctoringSession | null>(null);
+
+  useEffect(() => {
+    proctoringRef.current = new TournamentProctoringSession();
+    return () => {
+      proctoringRef.current?.destroy();
+      proctoringRef.current = null;
+    };
+  }, [actualPuzzle?.id]);
+
   useEffect(() => {
     setBridges(new Map());
     setSelectedIsland(null);
@@ -71,6 +97,8 @@ export const HashiBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode
     setReplayDivergenceStep(null);
     setUndoStack([]);
     setShowRecipePanel(false);
+    setIsFav(VaultManager.isFavorited(actualPuzzle?.id || ''));
+    hasRecordedRef.current = false;
   }, [actualPuzzle?.id]);
 
   useEffect(() => {
@@ -250,8 +278,10 @@ export const HashiBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode
     [isCompleted, isReplaying, islands, rows, cols, bridges, noGuessMode, spec, isEn]
   );
 
+  // P2 修復：加入 hasRecordedRef 守衛防重錄
   useEffect(() => {
-    if (!isCompleted && checkVictory()) {
+    if (!isCompleted && !hasRecordedRef.current && checkVictory()) {
+      hasRecordedRef.current = true;
       setIsCompleted(true);
       const timeSpent = Math.max(1, Math.round((Date.now() - startTime) / 1000));
       if (actualPuzzle) {
@@ -262,8 +292,8 @@ export const HashiBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode
           cognitiveLoad: actualPuzzle.cognitiveLoad || {
             spatial: 0.96,
             numeric: 0.85,
-            workingMemory: 0.80,
-            inhibition: 0.90,
+            workingMemory: 0.8,
+            inhibition: 0.9,
           },
           isSuccess: true,
           timeSpentSec: timeSpent,
@@ -273,7 +303,16 @@ export const HashiBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode
         });
       }
     }
-  }, [bridges, isCompleted, checkVictory, startTime, actualPuzzle, recordAttempt, spec?.highestTechnique, conflictReport]);
+  }, [
+    bridges,
+    isCompleted,
+    checkVictory,
+    startTime,
+    actualPuzzle,
+    recordAttempt,
+    spec?.highestTechnique,
+    conflictReport,
+  ]);
 
   const handleIslandClick = (isl: HashiIsland) => {
     if (isCompleted || isReplaying) return;
@@ -287,15 +326,15 @@ export const HashiBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode
     }
   };
 
-  const handleUndo = () => {
+  const handleUndo = useCallback(() => {
     if (undoStack.length === 0 || isCompleted || isReplaying) return;
     const last = undoStack[undoStack.length - 1];
     setUndoStack((prev) => prev.slice(0, -1));
     setBridges(last);
     setSelectedIsland(null);
-  };
+  }, [undoStack, isCompleted, isReplaying]);
 
-  const handleRequestHint = () => {
+  const handleRequestHint = useCallback(() => {
     if (isCompleted || tournamentMode) return;
     const forced = WebHashiGenerator.getNextForcedDeduction(spec, bridges);
     if (!forced) return;
@@ -307,6 +346,22 @@ export const HashiBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode
     } else {
       setHintLevel((prev) => Math.min(3, prev + 1));
     }
+  }, [isCompleted, tournamentMode, spec, bridges, activeHint]);
+
+  // P0 修復：標準化金庫收藏對接
+  const handleToggleFavorite = () => {
+    if (!actualPuzzle) return;
+    const vaultItem: VaultItem = {
+      id: actualPuzzle.id,
+      engine: 'hashi',
+      tier: String(actualPuzzle.tier || 'kids'),
+      seed: Number(seed),
+      steps: islands.length,
+      timeSpentSec: Math.round(elapsedMs / 1000),
+      date: new Date().toISOString(),
+    };
+    const res = VaultManager.toggleFavorite(vaultItem);
+    setIsFav(res.isFav);
   };
 
   // 覆盤：動態捕捉第一個分歧點 (Divergence Step) 並暫停展示
@@ -329,7 +384,6 @@ export const HashiBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode
       const st = stepsToPlay[curIdx];
       const k = getEdgeKey(st.r1, st.c1, st.r2, st.c2);
 
-      // 若該步帶有首度猜測錨點或與先前玩家不符，標定分歧
       if (st.isFirstGuessAnchor && replayDivergenceStep === null) {
         setReplayDivergenceStep(curIdx + 1);
       }
@@ -340,7 +394,7 @@ export const HashiBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode
     }, 450);
   };
 
-  // 鍵盤盲操支援
+  // P2 修復：鍵盤盲操完整依賴注入
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
@@ -365,14 +419,14 @@ export const HashiBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  });
+  }, [handleUndo, handleRequestHint]);
 
   const cci = useMemo(() => getCompositeCognitiveIndex(), [getCompositeCognitiveIndex, isCompleted]);
   const cellSize = Math.min(320 / Math.max(rows, cols), 36);
 
   // SVG 橋樑渲染向量記憶化
   const renderedBridges = useMemo(() => {
-    const list: JSX.Element[] = [];
+    const list: React.ReactNode[] = [];
 
     for (const [key, count] of bridges.entries()) {
       const [pA, pB] = key.split('_');
@@ -432,13 +486,24 @@ export const HashiBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode
   }, [bridges, cellSize]);
 
   return (
-    <div className="flex flex-col items-center justify-center p-2 select-none font-mono outline-none touch-none">
+    <div className="flex flex-col items-center justify-center p-2 select-none font-mono outline-none touch-none w-full max-w-[420px] mx-auto">
       {/* 數據看板 */}
       <div className="w-full max-w-[340px] mb-2 flex flex-col gap-1 text-[9px]">
         <div className="flex items-center justify-between px-1 text-slate-400">
-          <span className="text-cyan-400 font-bold">
-            {spec.highestTechnique === 'tarjan_cut_edge_isolation' ? '🌉 Tarjan 割邊咽喉' : '🌀 視覺平衡拓撲'}
-          </span>
+          <div className="flex items-center gap-1.5">
+            <span className="text-cyan-400 font-bold">
+              {spec.highestTechnique === 'tarjan_cut_edge_isolation' ? '🌉 Tarjan 割邊咽喉' : '🌀 視覺平衡拓撲'}
+            </span>
+            <button
+              onClick={handleToggleFavorite}
+              className={`px-1.5 py-0.5 rounded border transition cursor-pointer ${
+                isFav ? 'border-amber-500 text-amber-300 bg-amber-950' : 'border-slate-700 text-slate-500'
+              }`}
+              title={isFav ? (isEn ? 'In Vault' : '已在傳奇庫') : (isEn ? 'Save to Vault' : '收藏')}
+            >
+              {isFav ? '★' : '☆'}
+            </button>
+          </div>
           <div className="flex items-center gap-1.5">
             <span className="text-amber-400 font-bold">
               ★ {spec.logicalComplexityScore > 200 ? '★★★★★' : spec.logicalComplexityScore > 120 ? '★★★★☆' : '★★★☆☆'}
@@ -479,7 +544,7 @@ export const HashiBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode
           {/* SVG 橋樑層 */}
           <svg className="absolute inset-0 w-full h-full z-10">{renderedBridges}</svg>
 
-          {/* 島嶼節點層（補丁 1：42px 擴展外圍命中圈 + 黑色硬邊描邊） */}
+          {/* 島嶼節點層 */}
           {islands.map((isl) => {
             const cur = currentCapacities.get(isl.id) || 0;
             const isFull = cur === isl.capacity;
@@ -543,7 +608,7 @@ export const HashiBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode
         </div>
       )}
 
-      {/* 階梯因果提示面板（補丁 2：反證樹動態高亮連動） */}
+      {/* 階梯因果提示面板 */}
       {hintLevel > 0 && activeHint && (
         <div className="mt-2 p-2 bg-slate-900/90 border border-cyan-500/60 rounded-xl text-center w-full max-w-[340px] shadow-lg animate-fade-in font-mono">
           <div className="flex items-center justify-between px-1 mb-1">
@@ -553,7 +618,9 @@ export const HashiBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode
             <div className="flex gap-1">
               <span className={`w-1.5 h-1.5 rounded-full ${hintLevel >= 1 ? 'bg-cyan-400' : 'bg-slate-700'}`} />
               <span className={`w-1.5 h-1.5 rounded-full ${hintLevel >= 2 ? 'bg-cyan-400' : 'bg-slate-700'}`} />
-              <span className={`w-1.5 h-1.5 rounded-full ${hintLevel >= 3 ? 'bg-rose-500 animate-ping' : 'bg-slate-700'}`} />
+              <span
+                className={`w-1.5 h-1.5 rounded-full ${hintLevel >= 3 ? 'bg-rose-500 animate-ping' : 'bg-slate-700'}`}
+              />
             </div>
           </div>
           <div className="py-0.5 text-[8px] text-slate-200">
@@ -563,9 +630,7 @@ export const HashiBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode
               </span>
             )}
             {hintLevel === 2 && (
-              <span className="text-cyan-300 font-bold">
-                ⚡ {activeHint.rationale}
-              </span>
+              <span className="text-cyan-300 font-bold">⚡ {activeHint.rationale}</span>
             )}
             {hintLevel === 3 && (
               <div>
@@ -603,7 +668,9 @@ export const HashiBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode
           onClick={handleUndo}
           disabled={undoStack.length === 0 || isReplaying}
           className={`flex-1 py-1.5 rounded-lg border transition ${
-            undoStack.length > 0 ? 'bg-slate-900 text-slate-200 border-slate-700 cursor-pointer' : 'bg-slate-950 text-slate-600 border-slate-900'
+            undoStack.length > 0
+              ? 'bg-slate-900 text-slate-200 border-slate-700 cursor-pointer'
+              : 'bg-slate-950 text-slate-600 border-slate-900'
           }`}
         >
           ↩ 復原
@@ -611,7 +678,9 @@ export const HashiBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode
         <button
           onClick={() => setNoGuessMode((p) => !p)}
           className={`flex-1 py-1.5 rounded-lg border transition cursor-pointer ${
-            noGuessMode ? 'bg-cyan-600 text-black border-cyan-400 shadow-[0_0_8px_rgba(6,182,212,0.6)]' : 'bg-slate-900 text-slate-400 border-slate-800'
+            noGuessMode
+              ? 'bg-cyan-600 text-black border-cyan-400 shadow-[0_0_8px_rgba(6,182,212,0.6)]'
+              : 'bg-slate-900 text-slate-400 border-slate-800'
           }`}
         >
           {noGuessMode ? '🛡️ 無猜模式' : '自由模式'}
@@ -673,7 +742,7 @@ export const HashiBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode
           <div className="text-[10px] text-slate-400 mt-0.5 mb-2">
             Time: {(elapsedMs / 1000).toFixed(2)}s | Gf: IQ {cci.standardIQ}
           </div>
-          <div className="bg-slate-900/90 border border-slate-800 p-2 rounded-lg text-[8px] text-slate-300 text-left space-y-1">
+          <div className="bg-slate-900/90 border border-slate-800 p-2 rounded-lg text-[8px] text-slate-300 text-left space-y-1 mb-2">
             <div className="flex justify-between">
               <span className="text-slate-400">邏輯複雜度評分:</span>
               <span className="text-cyan-300 font-bold">{spec.logicalComplexityScore}</span>
@@ -687,7 +756,38 @@ export const HashiBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode
               <span className="text-emerald-400 font-bold">{spec.directionalUniformity}</span>
             </div>
           </div>
+
+          <button
+            onClick={() => setShowSubmitModal(true)}
+            className="w-full py-1.5 bg-neutral-200 hover:bg-white text-black text-[8px] font-bold rounded-lg cursor-pointer transition shadow"
+          >
+            {isEn ? 'SUBMIT TO LEADERBOARD' : '提交成績至排行榜'}
+          </button>
         </div>
+      )}
+
+      {/* 賽事提交 Modal */}
+      {showSubmitModal && actualPuzzle && (
+        <TournamentSubmissionModal
+          payload={{
+            submissionId: `SUB-${actualPuzzle.id}-${Date.now().toString(36)}`,
+            tournamentId: tournamentMode ? 'WPF_HASHI_2026' : 'GLOBAL_BRIDGE_STAGE',
+            playerId: profile.personalBest.updatedAt ? 'CONTENDER_VERIFIED' : 'LOCAL_PLAYER_1',
+            division: 'open',
+            puzzleId: actualPuzzle.id,
+            engineType: 'hashi',
+            tier: (actualPuzzle.tier as string) || 'kids',
+            timeSpentSec: Math.round(elapsedMs / 1000),
+            conflictsCount: conflictReport.overflowCount,
+            infractionScore: proctoringRef.current
+              ? calculateInfractionScore(proctoringRef.current.getSnapshot())
+              : 0,
+            environment: getEnvironmentFingerprint(),
+            timestamp: new Date().toISOString(),
+          }}
+          onClose={() => setShowSubmitModal(false)}
+          isEn={isEn}
+        />
       )}
     </div>
   );
