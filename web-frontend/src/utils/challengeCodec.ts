@@ -69,22 +69,11 @@ const MAX_GRID_DIMENSION = 64;
 const MIN_GRID_DIMENSION = 1;
 const MAX_RAW_PAYLOAD_LENGTH = 65536; // 64KB 防 DoS 長度限制
 
-/**
- * ChallengeCodec
- * 
- * ⚠️ 安全架構與信任邊界聲明：
- * 1. 職責劃分：此編解碼器專注於 URL-safe 序列化與客戶端即時分享。
- * 2. 資料安全性：Payload 採明文 Base64 傳遞，無後端 HMAC 簽名，不保證防篡改性。
- *    任何具排位、競賽獎勵之業務結算，必須由後端根據 Seed/Solution 進行重放校驗。
- * 3. 雜湊限制：內建的 `computeDeterministicHash` 採用非加密 FNV-1a 算法，
- *    僅用於提供確定性 ID 派生與傳輸完整性檢查，不可視為防碰撞之安全密碼學校驗。
- */
 export class ChallengeCodec {
   private static toUrlSafeBase64(str: string): string {
     const bytes = new TextEncoder().encode(str);
     let binary = '';
     const len = bytes.byteLength;
-    // 分塊避免過長字串在極端環境下的呼叫棧或記憶體壓力
     const CHUNK_SIZE = 0x8000;
     for (let i = 0; i < len; i += CHUNK_SIZE) {
       binary += String.fromCharCode.apply(
@@ -115,9 +104,6 @@ export class ChallengeCodec {
     return new TextDecoder().decode(bytes);
   }
 
-  /**
-   * 計算確定性內容摘要（非加密雜湊，用於 ID 派生與傳輸損壞檢測）
-   */
   private static computeDeterministicHash(content: string): string {
     let hash = 0x811c9dc5;
     for (let i = 0; i < content.length; i++) {
@@ -127,9 +113,6 @@ export class ChallengeCodec {
     return (hash >>> 0).toString(36);
   }
 
-  /**
-   * 序列化 PuzzleEntity 為 URL-safe 短碼
-   */
   public static encode(puzzle: PuzzleEntity): string {
     if (!puzzle) return '';
 
@@ -197,16 +180,12 @@ export class ChallengeCodec {
     }
   }
 
-  /**
-   * 解碼短碼並完整還原為符合前端規範之 PuzzleEntity
-   */
   public static decode(code: string): PuzzleEntity | null {
     if (!code || typeof code !== 'string') return null;
 
     try {
       const jsonStr = this.fromUrlSafeBase64(code.trim());
       
-      // 容錯防禦：若解碼出來的是 PWA Shortcut 格式 (如 "maze:kids:1000")，優雅轉換
       if (jsonStr.includes(':') && !jsonStr.startsWith('{')) {
         const [engineType, tier = 'kids', seedStr] = jsonStr.split(':');
         const seed = seedStr ? parseInt(seedStr, 10) : undefined;
@@ -278,7 +257,7 @@ export class ChallengeCodec {
         tier,
         checksum: effectiveChecksum,
         puzzle: puzzleSpec,
-        solution: verifiedPayload.s,
+        solution: verifiedPayload.s ?? null,
         cognitiveLoad: meta.cognitiveLoad,
         metrics: {
           estimated_time_sec: rows * cols * 2.5,
@@ -291,32 +270,31 @@ export class ChallengeCodec {
     }
   }
 
-  /**
-   * 建立快捷題目佔位實體（供 PWA Shortcut 啟動時即時請求或生成使用）
-   */
   private static createPlaceholderEntity(engineType: string, tier: string, seed?: number): PuzzleEntity {
     const meta = ENGINE_METADATA_MAP[engineType] ?? {
       category: 'spatial_logic',
       cognitiveLoad: { spatial: 0.8, numeric: 0.6, workingMemory: 0.7, inhibition: 0.7 },
     };
+    const effectiveSeed = seed ?? 1000;
+    const computedChecksum = `H_${this.computeDeterministicHash(`${engineType}_${tier}_${effectiveSeed}`)}`;
+
     return {
-      id: `shortcut_${engineType}_${tier}_${seed ?? Date.now()}`,
+      id: `shortcut_${engineType}_${tier}_${effectiveSeed}`,
       category: meta.category,
       engine_type: engineType,
       tier: tier as ExtendedTierKey,
-      puzzle: { rows: 6, cols: 6, seed },
+      checksum: computedChecksum,
+      solution: null,
+      puzzle: { rows: 6, cols: 6, seed: effectiveSeed },
       cognitiveLoad: meta.cognitiveLoad,
       metrics: {
         estimated_time_sec: 120,
         irt_logit_difficulty: FALLBACK_IRT_MAP[tier] ?? 1.0,
-        seed,
+        seed: effectiveSeed,
       },
     };
   }
 
-  /**
-   * 統一解析瀏覽器 Hash 路由（雙向相容 #challenge= 與 PWA Shortcut #c=）
-   */
   public static parseRouteHash(hash: string): PuzzleEntity | null {
     if (!hash) return null;
     if (hash.startsWith('#challenge=')) {
@@ -328,9 +306,6 @@ export class ChallengeCodec {
     return null;
   }
 
-  /**
-   * 生成跨端可點擊的對決連結
-   */
   public static generateShareUrl(puzzle: PuzzleEntity): string {
     const code = this.encode(puzzle);
     const origin = typeof window !== 'undefined' ? window.location.origin : 'https://lawgic.app';
