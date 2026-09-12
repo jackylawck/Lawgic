@@ -18,7 +18,13 @@ import {
   WebHitoriGenerator,
   HITORI_SYMBOLIC_SETS,
 } from '../engines/hitoriGenerator';
-import { VaultManager } from '../utils/vaultStorage';
+import { VaultManager, VaultItem } from '../utils/vaultStorage';
+import {
+  TournamentProctoringSession,
+  getEnvironmentFingerprint,
+  calculateInfractionScore,
+} from '../utils/tournamentSecurity';
+import { TournamentSubmissionModal } from './TournamentSubmissionModal';
 
 interface Props {
   puzzle?: PuzzleEntity;
@@ -90,7 +96,7 @@ export const HitoriBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMod
   const actualPuzzle = puzzleData || puzzle;
   const { lang } = useLanguage();
   const isEn = lang === 'en';
-  const { recordAttempt, getCompositeCognitiveIndex } = useLearnerProfile();
+  const { recordAttempt, profile, getCompositeCognitiveIndex } = useLearnerProfile();
 
   const spec = (actualPuzzle?.puzzle || actualPuzzle) as unknown as HitoriSpec;
   const size = spec?.size || 4;
@@ -119,24 +125,39 @@ export const HitoriBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMod
   const [selectedCell, setSelectedCell] = useState<[number, number]>([0, 0]);
   const [isCompleted, setIsCompleted] = useState<boolean>(false);
   const [isTimeOut, setIsTimeOut] = useState<boolean>(false);
+  const [showSubmitModal, setShowSubmitModal] = useState<boolean>(false);
 
   const [cruxBreakthrough, setCruxBreakthrough] = useState<boolean>(false);
-  const [seedCopied, setSeedCopied] = useState<boolean>(false);
+  const [, setSeedCopied] = useState<boolean>(false);
   const [badgeCopied, setBadgeCopied] = useState<boolean>(false);
-  const [isFav, setIsFav] = useState<boolean>(false);
+  const [isFav, setIsFav] = useState<boolean>(() =>
+    actualPuzzle?.id ? VaultManager.isFavorited(actualPuzzle.id) : false
+  );
 
   const estSteps = actualPuzzle?.metrics?.human_sim_steps || maxDecisionDepth * 3 || 12;
 
   const [hintsTriggeredCount, setHintsTriggeredCount] = useState<number>(0);
-  const [totalActionsCount, setTotalActionsCount] = useState<number>(0); // 動作次數統計 (APM 基礎)
+  const [totalActionsCount, setTotalActionsCount] = useState<number>(0);
   const timeLimit = actualPuzzle?.metrics?.estimated_time_sec || 150;
   const [remainingSec, setRemainingSec] = useState<number>(timeLimit);
   const [accumulatedMs, setAccumulatedMs] = useState<number>(0);
   const lastActiveTimestamp = useRef<number>(performance.now());
   const isSuspended = useRef<boolean>(false);
+  const hasRecordedRef = useRef<boolean>(false);
 
   const [hintLevel, setHintLevel] = useState<number>(0);
   const [activeHint, setActiveHint] = useState<HitoriHintStep | null>(null);
+
+  // 實體賽事行為稽核 Session
+  const proctoringRef = useRef<TournamentProctoringSession | null>(null);
+
+  useEffect(() => {
+    proctoringRef.current = new TournamentProctoringSession();
+    return () => {
+      proctoringRef.current?.destroy();
+      proctoringRef.current = null;
+    };
+  }, [actualPuzzle?.id]);
 
   const renderValue = useCallback(
     (val: number | string | undefined): string => {
@@ -168,6 +189,7 @@ export const HitoriBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMod
     setHintLevel(0);
     setActiveHint(null);
     setPureInferenceMode(!tournamentMode);
+    hasRecordedRef.current = false;
 
     requestAnimationFrame(() => {
       boardContainerRef.current?.focus();
@@ -353,7 +375,8 @@ export const HitoriBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMod
           setTimeout(() => setCruxBreakthrough(false), 1500);
         }
 
-        if (checkVictory(next)) {
+        if (!hasRecordedRef.current && checkVictory(next)) {
+          hasRecordedRef.current = true;
           setIsCompleted(true);
           const timeSpent = Math.max(1, Math.round(accumulatedMs / 1000));
           const isPure = hintsTriggeredCount === 0;
@@ -423,16 +446,10 @@ export const HitoriBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMod
     [isCompleted, isTimeOut, state, toggleCell, saveHistorySnapshot]
   );
 
-  const handleCopySeed = () => {
-    if (tournamentMode) return;
-    navigator.clipboard.writeText(`HITORI-S${seed}-T${actualPuzzle?.tier || 'kids'}`);
-    setSeedCopied(true);
-    setTimeout(() => setSeedCopied(false), 2000);
-  };
-
+  // P0 修復：提取 res.isFav，且日期採 ISO 8601 標準
   const handleToggleFavorite = () => {
     if (!actualPuzzle) return;
-    const nextFav = VaultManager.toggleFavorite({
+    const vaultItem: VaultItem = {
       id: actualPuzzle.id,
       engine: 'hitori',
       tier: String(actualPuzzle.tier || 'kids'),
@@ -440,9 +457,10 @@ export const HitoriBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMod
       rhythmType: String(rhythmType),
       steps: Number(estSteps),
       timeSpentSec: Math.round(accumulatedMs / 1000),
-      date: new Date().toLocaleDateString(),
-    });
-    setIsFav(nextFav);
+      date: new Date().toISOString(),
+    };
+    const res = VaultManager.toggleFavorite(vaultItem);
+    setIsFav(res.isFav);
   };
 
   const handleCopyAsciiBadge = () => {
@@ -482,7 +500,6 @@ export const HitoriBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMod
 
       const [r, c] = selectedCell;
 
-      // 撤銷 (Ctrl+Z) 與 重做 (Ctrl+Y / Ctrl+Shift+Z)
       if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z')) {
         e.preventDefault();
         if (e.shiftKey) handleRedo();
@@ -515,14 +532,12 @@ export const HitoriBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMod
           e.preventDefault();
           setSelectedCell([r, Math.min(size - 1, c + 1)]);
           break;
-        // 暗刺 1 修復：B / 1 統一塗黑
         case '1':
         case 'b':
         case 'j':
           e.preventDefault();
           toggleCell(r, c, 1);
           break;
-        // 暗刺 1 修復：W / 2 統一圈白（同時保留原有 2/K）
         case '2':
         case 'w':
         case 'k':
@@ -572,7 +587,6 @@ export const HitoriBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMod
 
   const cci = useMemo(() => getCompositeCognitiveIndex(), [getCompositeCognitiveIndex, isCompleted]);
 
-  // 即時 APM 換算
   const currentApm = useMemo(() => {
     const minutes = Math.max(0.1, accumulatedMs / 60000);
     return Math.round(totalActionsCount / minutes);
@@ -648,7 +662,7 @@ export const HitoriBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMod
         </div>
       </div>
 
-      {/* 狀態看板（含動作計數與 APM） */}
+      {/* 狀態看板 */}
       <div className="w-full grid grid-cols-3 gap-1 mb-2 text-[8px]">
         <div className="bg-slate-950 border border-slate-800 p-1 rounded text-center">
           <div className="text-slate-500 text-[6.5px]">{tournamentMode ? (isEn ? 'Countdown' : '倒數') : (isEn ? 'Time' : '耗時')}</div>
@@ -697,7 +711,6 @@ export const HitoriBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMod
               if (isHintTarget) bgClass += ' ring-2 ring-amber-400 bg-amber-500/30 animate-pulse';
               if (isMatchedInRowCol && val === 0) bgClass += ' ring-1 ring-purple-500/50 bg-purple-950/20';
 
-              // 暗刺 2 修復：錦標賽模式下完全靜態，移除 scale 與 shadow 抖動
               const selectRingClass = tournamentMode
                 ? 'border-2 border-cyan-400 z-10'
                 : 'ring-2 ring-cyan-400 z-10 scale-[1.04] shadow-[0_0_8px_rgba(34,211,238,0.8)] transition';
@@ -722,7 +735,6 @@ export const HitoriBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMod
                     {renderValue(num)}
                   </span>
 
-                  {/* 鉛筆標記移至左下角，防遮擋 */}
                   {val === 0 && pencil !== 0 && (
                     <span className="absolute bottom-0.5 left-1 text-[9px] font-mono leading-none pointer-events-none opacity-80">
                       {pencil === 2 ? (
@@ -751,14 +763,14 @@ export const HitoriBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMod
         </div>
       </div>
 
-      {/* 快捷鍵指南：清晰標示 [1/B] 與 [2/W] */}
+      {/* 快捷鍵指南 */}
       <div className="w-full max-w-[340px] flex items-center justify-between px-1 mt-1.5 text-[7px] text-slate-500 font-mono">
         <span>{isEn ? '[1/B] Black | [2/W] White' : '[1/B] 塗黑 | [2/W] 圈白'}</span>
         <span>{isEn ? 'R-Click/P: Pencil | [0]: Clear' : '右鍵/P: 筆記 | [0]: 清除'}</span>
         <span>{isEn ? 'Ctrl+Z: Undo' : 'Ctrl+Z: 撤銷'}</span>
       </div>
 
-      {/* 暗刺 3 修復：提示階梯 Level 1 直出技術圖標與定式名稱 */}
+      {/* 提示階梯 */}
       {!tournamentMode && (
         <>
           {hintLevel > 0 && activeHint && (
@@ -848,7 +860,7 @@ export const HitoriBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMod
             </div>
           )}
 
-          <div className="text-[8.5px] text-slate-300 mb-1">
+          <div className="text-[8.5px] text-slate-300 mb-2">
             {isEn
               ? `Time: ${(accumulatedMs / 1000).toFixed(2)}s | Actions: ${totalActionsCount} (APM: ${currentApm}) | Gf: IQ ${cci.standardIQ}`
               : `耗時: ${(accumulatedMs / 1000).toFixed(2)}s | 總動作: ${totalActionsCount} (APM: ${currentApm}) | Gf: IQ ${cci.standardIQ}`}
@@ -879,8 +891,39 @@ export const HitoriBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMod
               <span>📜</span>
               <span>{badgeCopied ? (isEn ? 'Copied!' : '已複製!') : (isEn ? 'Badge' : '榮譽卡')}</span>
             </button>
+
+            <button
+              onClick={() => setShowSubmitModal(true)}
+              className="px-2.5 py-1 bg-neutral-200 hover:bg-white text-black text-[8px] font-bold rounded cursor-pointer transition shadow"
+            >
+              📤 {isEn ? 'Submit' : '賽事提交'}
+            </button>
           </div>
         </div>
+      )}
+
+      {/* 賽事提交 Modal */}
+      {showSubmitModal && actualPuzzle && (
+        <TournamentSubmissionModal
+          payload={{
+            submissionId: `SUB-${actualPuzzle.id}-${Date.now().toString(36)}`,
+            tournamentId: tournamentMode ? 'WPF_HITORI_2026' : 'GLOBAL_ISLAND_STAGE',
+            playerId: profile.personalBest.updatedAt ? 'CONTENDER_VERIFIED' : 'LOCAL_PLAYER_1',
+            division: 'open',
+            puzzleId: actualPuzzle.id,
+            engineType: 'hitori',
+            tier: String(actualPuzzle.tier || 'kids'),
+            timeSpentSec: Math.round(accumulatedMs / 1000),
+            conflictsCount: computeInstantConflicts(board, state, size).size,
+            infractionScore: proctoringRef.current
+              ? calculateInfractionScore(proctoringRef.current.getSnapshot())
+              : 0,
+            environment: getEnvironmentFingerprint(),
+            timestamp: new Date().toISOString(),
+          }}
+          onClose={() => setShowSubmitModal(false)}
+          isEn={isEn}
+        />
       )}
     </div>
   );
