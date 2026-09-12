@@ -198,6 +198,9 @@ export const SudokuBoard: React.FC<Props> = ({
     return getBenchmarkMetrics(highestTech, theoryTime, 'sudoku');
   }, [getBenchmarkMetrics, highestTech, theoryTime]);
 
+  // TS2448 / TS2454 修復：提升 cci 宣告至所有需要它的 handler 之前
+  const cci = useMemo(() => getCompositeCognitiveIndex(), [getCompositeCognitiveIndex, isCompleted]);
+
   const triggerHaptic = useCallback(
     (pattern: number | number[]) => {
       if (hapticFeedback && !reducedMotion && typeof navigator !== 'undefined' && navigator.vibrate) {
@@ -392,7 +395,6 @@ export const SudokuBoard: React.FC<Props> = ({
 
       const expectedValue = flatSolution[selectedCell];
 
-      // 評測模式硬阻斷
       if (isAssessmentMode && num !== 0 && expectedValue !== undefined && num !== expectedValue) {
         playSound('conflict');
         triggerHaptic([60, 40, 60]);
@@ -408,7 +410,6 @@ export const SudokuBoard: React.FC<Props> = ({
         return;
       }
 
-      // 自由模式標紅提醒
       if (!isAssessmentMode && num !== 0 && expectedValue !== undefined && num !== expectedValue) {
         playSound('conflict');
         triggerHaptic([30, 50, 30]);
@@ -669,7 +670,7 @@ export const SudokuBoard: React.FC<Props> = ({
     triggerHaptic(25);
   }, [isCompleted, isTimedOut, isResigned, actualPuzzle?.id, saveBookmark, currentTier, grid, elapsedSec, isEn, announce, triggerHaptic]);
 
-  // 13. 金庫收藏切換（安全提取 res.isFav）
+  // 13. 金庫收藏切換（此時 cci 已在上方安全宣告，無 TDZ 問題）
   const handleToggleFavorite = useCallback(() => {
     if (!actualPuzzle?.id) return;
     const vaultItem: VaultItem = {
@@ -741,7 +742,6 @@ export const SudokuBoard: React.FC<Props> = ({
       : -1;
 
   const remainingTime = Math.max(0, standardTimeLimit - elapsedSec);
-  const cci = getCompositeCognitiveIndex();
   const solvingPath: readonly string[] = (metrics.solving_path as string[]) || ['Standard Derivation'];
 
   return (
