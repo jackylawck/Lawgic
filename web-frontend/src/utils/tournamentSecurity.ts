@@ -17,7 +17,7 @@ export interface SecurityAuditTrail {
   clipboardEvents: number;
   untrustedEvents: number;
   totalOutFocusDurationSec?: number; // 累計脫離螢幕秒數
-  clockAnomalyCount?: number;        // 時鐘加速/篡改異常次數
+  clockAnomalyCount?: number;        // 雙時間源顯著漂移異常次數
 }
 
 export interface EnvironmentFingerprint {
@@ -34,7 +34,7 @@ export interface EnvironmentFingerprint {
 }
 
 /**
- * 採集進階 WebGL 物理顯卡硬體指紋
+ * 採集 WebGL 硬體渲染器資訊（先清洗欄位再拼接）
  */
 function getWebGLFingerprint(): string {
   if (typeof document === 'undefined') return 'SSR';
@@ -46,16 +46,17 @@ function getWebGLFingerprint(): string {
     const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
     if (!debugInfo) return 'NO_DEBUG_INFO';
 
-    const vendor = gl.getParameter(debugInfo.UNMASKED_VENDOR_WEBGL) || '';
-    const renderer = gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL) || '';
-    return `${vendor}::${renderer}`.replace(/[/\\?%*:|"<>]/g, '_');
+    const clean = (s: string) => s.replace(/[/\\?%*:|"<>]/g, '_').trim();
+    const vendor = clean(gl.getParameter(debugInfo.UNMASKED_VENDOR_WEBGL) || '');
+    const renderer = clean(gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL) || '');
+    return `${vendor}::${renderer}`;
   } catch {
     return 'WEBGL_BLOCKED';
   }
 }
 
 /**
- * 採集進階硬體 Canvas 多色階渲染指紋 (帶幾何漸層與文字抗鋸齒)
+ * 採集幾何與純字元抗鋸齒 Canvas 指紋（排除跨 OS 渲染漂移之系統 Emoji）
  */
 function getCanvasFingerprint(): string {
   if (typeof document === 'undefined') return 'SSR';
@@ -66,7 +67,6 @@ function getCanvasFingerprint(): string {
     const ctx = canvas.getContext('2d');
     if (!ctx) return 'NO_CANVAS';
 
-    // 漸層與幾何抗鋸齒微測繪
     const gradient = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
     gradient.addColorStop(0, '#ff4500');
     gradient.addColorStop(0.5, '#1e90ff');
@@ -80,7 +80,7 @@ function getCanvasFingerprint(): string {
     ctx.fillText('LogiCore.WPC.Certified.2026!?', 10, 30);
     ctx.shadowBlur = 4;
     ctx.shadowColor = 'rgba(0,0,0,0.5)';
-    ctx.fillText('🏆λπΩ§', 180, 50);
+    ctx.fillText('WPC-ALPHA-PI-OMEGA-SECT', 100, 50);
 
     const b64 = canvas.toDataURL();
     let hash = 0x811c9dc5;
@@ -94,14 +94,20 @@ function getCanvasFingerprint(): string {
   }
 }
 
+let cachedFingerprint: EnvironmentFingerprint | null = null;
+
 /**
- * 採集客戶端零信任環境多維物理指紋
+ * 採集客戶端環境指紋（具備單 Session 記憶體快取）
  */
-export function getEnvironmentFingerprint(): EnvironmentFingerprint {
+export function getEnvironmentFingerprint(forceRefresh = false): EnvironmentFingerprint {
+  if (cachedFingerprint && !forceRefresh) {
+    return cachedFingerprint;
+  }
+
   const nav = typeof window !== 'undefined' ? window.navigator : ({} as any);
   const scr = typeof window !== 'undefined' ? window.screen : ({} as any);
 
-  return {
+  cachedFingerprint = {
     userAgent: nav.userAgent || 'unknown',
     platform: nav.userAgentData?.platform || nav.platform || 'unknown',
     hardwareConcurrency: nav.hardwareConcurrency || 0,
@@ -112,10 +118,14 @@ export function getEnvironmentFingerprint(): EnvironmentFingerprint {
     canvasHash: getCanvasFingerprint(),
     webglRenderer: getWebGLFingerprint(),
   };
+
+  return cachedFingerprint;
 }
 
 /**
- * 帶有充分雪崩預熱的確定性 PRNG (Mulberry32)
+ * 確定性偽隨機數生成器 (Mulberry32)
+ * 
+ * ⚠️ 安全警告：非密碼學 PRNG。賽事出題種子若具防窺需求，必須由後端下發。
  */
 export function createSeededRandom(seedStr: string): () => number {
   let h = 1779033703 ^ seedStr.length;
@@ -124,7 +134,6 @@ export function createSeededRandom(seedStr: string): () => number {
     h = (h << 13) | (h >>> 19);
   }
 
-  // 預熱 15 輪以消弭短字串低熵偏差
   for (let round = 0; round < 15; round++) {
     h = Math.imul(h ^ (h >>> 16), 2246822507);
     h = Math.imul(h ^ (h >>> 13), 3266489909);
@@ -139,34 +148,29 @@ export function createSeededRandom(seedStr: string): () => number {
 }
 
 /**
- * 智慧違規評分引擎 (結合次數與累積失焦時間的非線性懲罰)
+ * @deprecated 僅供本機 UI 顯示參考（如個人即時專注度指標）。
+ * ⚠️ 官方賽事裁決嚴禁依賴客戶端計算之評分，伺服器應直接消費 getSnapshot() 原始稽核訊號進行後端裁決。
  */
 export function calculateInfractionScore(audit: SecurityAuditTrail): number {
   let score = 0;
 
-  // 切分頁次數 (階梯累進)
   if (audit.tabSwitches <= 2) {
     score += audit.tabSwitches * 0.75;
   } else {
     score += 1.5 + (audit.tabSwitches - 2) * 3.0;
   }
 
-  // 視窗失焦
   score += audit.blurEvents * 0.4;
 
-  // 脫離螢幕累積秒數懲罰 (超過 10 秒後每 5 秒加 1 分)
+  // 採用飽和指數曲線：最大上限 25 分，避免過夜或掛機導致分數無限爆炸
   const durationSec = audit.totalOutFocusDurationSec || 0;
   if (durationSec > 10) {
-    score += Number(((durationSec - 10) * 0.2).toFixed(1));
+    const saturatedDurationScore = 25 * (1 - Math.exp(-(durationSec - 10) / 120));
+    score += Number(saturatedDurationScore.toFixed(1));
   }
 
-  // 剪貼簿阻斷 (高危作弊特徵)
   score += audit.clipboardEvents * 5.0;
-
-  // 非物理原生事件 (腳本/外掛)
   score += audit.untrustedEvents * 8.0;
-
-  // 時鐘加速/篡改
   score += (audit.clockAnomalyCount || 0) * 10.0;
 
   return Number(score.toFixed(1));
@@ -188,7 +192,9 @@ export interface SanctionedSubmissionPayload {
 }
 
 /**
- * 零信任本地存證密碼學簽章 (HMAC-grade SHA-256 + 鏈式參數綁定)
+ * 本地提交資料完整性校驗碼 (Local Submission Integrity Checksum)
+ * 
+ * ⚠️ 安全聲明：非伺服器級 HMAC，僅防手動竄改 JSON。競賽級防作弊需仰賴後端簽章。
  */
 export async function generateLocalProofSignature(
   payload: SanctionedSubmissionPayload
@@ -198,7 +204,6 @@ export async function generateLocalProofSignature(
     ? `${env.screenRes}_${env.hardwareConcurrency}_${env.timezone}_${env.canvasHash || ''}_${env.webglRenderer || ''}`
     : 'GENERIC_CLIENT';
 
-  // 嚴格規範化簽名鏈 (Canonical Signature Sequence)
   const canonical = [
     payload.submissionId || 'SUB_UNSPECIFIED',
     payload.tournamentId,
@@ -212,7 +217,7 @@ export async function generateLocalProofSignature(
     payload.infractionScore,
     envSummary,
     payload.timestamp,
-    'LOGICORE_WPC_ZERO_TRUST_2026_PROTOCOL_V4',
+    'LOGICORE_WPC_INTEGRITY_PROTOCOL_V4',
   ].join('##');
 
   if (typeof window === 'undefined' || !window.crypto || !window.crypto.subtle) {
@@ -221,7 +226,7 @@ export async function generateLocalProofSignature(
       fallbackHash ^= canonical.charCodeAt(i);
       fallbackHash = Math.imul(fallbackHash, 0x01000193);
     }
-    return `CLIENT_FALLBACK_${(fallbackHash >>> 0).toString(16).toUpperCase()}`;
+    return `CLIENT_CHECKSUM_${(fallbackHash >>> 0).toString(16).toUpperCase()}`;
   }
 
   try {
@@ -231,14 +236,18 @@ export async function generateLocalProofSignature(
       .map((b) => b.toString(16).padStart(2, '0'))
       .join('');
 
-    return `VERIFIED_V4_${hex.slice(0, 32).toUpperCase()}`;
+    return `LOCAL_CHECKSUM_${hex.slice(0, 32).toUpperCase()}`;
   } catch {
     return `CLIENT_EXCEPTION_${Date.now().toString(16).toUpperCase()}`;
   }
 }
 
 /**
- * 自動化全域賽事監控實例 (Proctoring Session with Temporal Clock Guardian)
+ * 全域賽事行為監控實例 (Tournament Proctoring Session)
+ * 
+ * ⚠️ 邊界極限說明：
+ * 1. isTrusted 僅攔截未封裝之 dispatchEvent 合成事件，無法抵禦 CDP/Puppeteer/硬體巨集等底層模擬。
+ * 2. 睡眠恢復豁免：漂移超過 300 秒判定為筆電闔蓋或系統掛起，不視為惡意時鐘加速。
  */
 export class TournamentProctoringSession {
   private audit: SecurityAuditTrail = {
@@ -250,22 +259,32 @@ export class TournamentProctoringSession {
     clockAnomalyCount: 0,
   };
 
-  private listeners: { target: EventTarget; type: string; fn: EventListenerOrEventListenerObject; options?: any }[] = [];
+  private listeners: {
+    target: EventTarget;
+    type: string;
+    fn: EventListenerOrEventListenerObject;
+    options?: boolean | AddEventListenerOptions;
+  }[] = [];
+
   private blurStartTime: number = 0;
-  private lastTick: number = 0;
+  private lastPerfTick: number = 0;
+  private lastWallTick: number = 0;
   private clockMonitorTimer: ReturnType<typeof setInterval> | null = null;
+  private isTabHidden: boolean = false;
 
   constructor() {
     if (typeof window === 'undefined') return;
 
-    this.lastTick = performance.now();
+    this.lastPerfTick = performance.now();
+    this.lastWallTick = Date.now();
 
-    // 1. 分頁狀態與時間累計
     const onVisibilityChange = () => {
       if (document.visibilityState === 'hidden') {
+        this.isTabHidden = true;
         this.audit.tabSwitches++;
         this.blurStartTime = performance.now();
       } else {
+        this.isTabHidden = false;
         if (this.blurStartTime > 0) {
           const duration = (performance.now() - this.blurStartTime) / 1000;
           this.audit.totalOutFocusDurationSec = Number(
@@ -273,49 +292,62 @@ export class TournamentProctoringSession {
           );
           this.blurStartTime = 0;
         }
+        // 切回前景時，重新校準基準
+        this.lastPerfTick = performance.now();
+        this.lastWallTick = Date.now();
       }
     };
 
-    // 2. 視窗焦點
     const onBlur = () => {
-      this.audit.blurEvents++;
+      if (!this.isTabHidden) {
+        this.audit.blurEvents++;
+      }
     };
 
-    // 3. 剪貼簿攔截
-    const onClipboard = (e: Event) => {
-      e.preventDefault();
+    const onClipboard = () => {
       this.audit.clipboardEvents++;
     };
 
-    // 4. 輸入源可信度校驗
     const onPointerCheck = (e: Event) => {
       if (!e.isTrusted) {
         this.audit.untrustedEvents++;
       }
     };
 
+    const pointerOptions: AddEventListenerOptions = { capture: true, passive: true };
+
     document.addEventListener('visibilitychange', onVisibilityChange);
     window.addEventListener('blur', onBlur);
-    document.addEventListener('copy', onClipboard, { passive: false });
-    document.addEventListener('paste', onClipboard, { passive: false });
-    document.addEventListener('pointerdown', onPointerCheck, { capture: true, passive: true });
+    document.addEventListener('copy', onClipboard, { passive: true });
+    document.addEventListener('paste', onClipboard, { passive: true });
+    document.addEventListener('pointerdown', onPointerCheck, pointerOptions);
 
     this.listeners.push(
       { target: document, type: 'visibilitychange', fn: onVisibilityChange },
       { target: window, type: 'blur', fn: onBlur },
       { target: document, type: 'copy', fn: onClipboard },
       { target: document, type: 'paste', fn: onClipboard },
-      { target: document, type: 'pointerdown', fn: onPointerCheck }
+      { target: document, type: 'pointerdown', fn: onPointerCheck, options: pointerOptions }
     );
 
-    // 5. 時鐘漂移與加速器檢測 (Clock Skew / Speed-hack Anomaly)
     this.clockMonitorTimer = setInterval(() => {
-      const now = performance.now();
-      const elapsed = now - this.lastTick;
-      this.lastTick = now;
+      const nowPerf = performance.now();
+      const nowWall = Date.now();
 
-      // 1 秒定時器實際偏差超過 ±650ms 視為時鐘被加速或背景節流被破壞
-      if (elapsed > 1800 || elapsed < 350) {
+      if (document.visibilityState !== 'visible') {
+        this.lastPerfTick = nowPerf;
+        this.lastWallTick = nowWall;
+        return;
+      }
+
+      const perfElapsed = nowPerf - this.lastPerfTick;
+      const wallElapsed = nowWall - this.lastWallTick;
+      this.lastPerfTick = nowPerf;
+      this.lastWallTick = nowWall;
+
+      const drift = Math.abs(wallElapsed - perfElapsed);
+      // 5 秒 ~ 300 秒之間視為可疑篡改；超過 300 秒（5 分鐘）視為筆電闔蓋休眠或系統掛起喚醒，排除誤判
+      if (drift > 5000 && drift < 300_000) {
         this.audit.clockAnomalyCount = (this.audit.clockAnomalyCount || 0) + 1;
       }
     }, 1000);
