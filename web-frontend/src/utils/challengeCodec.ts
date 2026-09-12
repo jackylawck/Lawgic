@@ -67,6 +67,7 @@ const FALLBACK_IRT_MAP: Readonly<Record<string, number>> = {
 
 const MAX_GRID_DIMENSION = 64;
 const MIN_GRID_DIMENSION = 1;
+const MAX_RAW_PAYLOAD_LENGTH = 65536; // 64KB 防 DoS 長度限制
 
 /**
  * ChallengeCodec
@@ -83,8 +84,13 @@ export class ChallengeCodec {
     const bytes = new TextEncoder().encode(str);
     let binary = '';
     const len = bytes.byteLength;
-    for (let i = 0; i < len; i++) {
-      binary += String.fromCharCode(bytes[i]);
+    // 分塊避免過長字串在極端環境下的呼叫棧或記憶體壓力
+    const CHUNK_SIZE = 0x8000;
+    for (let i = 0; i < len; i += CHUNK_SIZE) {
+      binary += String.fromCharCode.apply(
+        null,
+        Array.from(bytes.subarray(i, Math.min(i + CHUNK_SIZE, len)))
+      );
     }
     return btoa(binary)
       .replace(/\+/g, '-')
@@ -93,13 +99,17 @@ export class ChallengeCodec {
   }
 
   private static fromUrlSafeBase64(base64: string): string {
+    if (base64.length > MAX_RAW_PAYLOAD_LENGTH) {
+      throw new Error('PAYLOAD_SIZE_EXCEEDED');
+    }
     let sanitized = base64.replace(/-/g, '+').replace(/_/g, '/');
     while (sanitized.length % 4) {
       sanitized += '=';
     }
     const binary = atob(sanitized);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) {
+    const len = binary.length;
+    const bytes = new Uint8Array(len);
+    for (let i = 0; i < len; i++) {
       bytes[i] = binary.charCodeAt(i);
     }
     return new TextDecoder().decode(bytes);
@@ -154,7 +164,6 @@ export class ChallengeCodec {
     const gridData = (spec.grid !== undefined && spec.grid !== spec.clues) ? (spec.grid as GridData) : undefined;
     const seed = typeof spec.seed === 'number' ? spec.seed : (puzzle.metrics as { seed?: number } | undefined)?.seed;
 
-    // 設計決策：solution 使用 || 是刻意的，空陣列或空字串視為「無 solution」，應依序 fallback
     const solutionData = (puzzle.solution || spec.solution || raw.solution || null) as GridData;
 
     const rawPayload: Omit<CompactChallengePayload, 'h'> = {
@@ -196,6 +205,14 @@ export class ChallengeCodec {
 
     try {
       const jsonStr = this.fromUrlSafeBase64(code.trim());
+      
+      // 容錯防禦：若解碼出來的是 PWA Shortcut 格式 (如 "maze:kids:1000")，優雅轉換
+      if (jsonStr.includes(':') && !jsonStr.startsWith('{')) {
+        const [engineType, tier = 'kids', seedStr] = jsonStr.split(':');
+        const seed = seedStr ? parseInt(seedStr, 10) : undefined;
+        return this.createPlaceholderEntity(engineType, tier, seed);
+      }
+
       const payload: unknown = JSON.parse(jsonStr);
 
       if (
@@ -236,7 +253,6 @@ export class ChallengeCodec {
         gridData = cluesData as unknown as GridData;
       }
 
-      // 雜湊對稱性修正：若無外部 checksum，對「不含 h 的 payload」計算雜湊，保持與 encode 輸入完全一致
       const { h: existingHash, ...payloadWithoutHash } = verifiedPayload;
       const effectiveChecksum = existingHash 
         || `H_${this.computeDeterministicHash(JSON.stringify(payloadWithoutHash))}`;
@@ -265,7 +281,6 @@ export class ChallengeCodec {
         solution: verifiedPayload.s,
         cognitiveLoad: meta.cognitiveLoad,
         metrics: {
-          /* 設計決策：estimated_time_sec 是 decode 時派生的估計值，不列入 payload 序列化以精簡 URL 長度 */
           estimated_time_sec: rows * cols * 2.5,
           irt_logit_difficulty: irt,
           seed: verifiedPayload.seed,
@@ -274,6 +289,43 @@ export class ChallengeCodec {
     } catch {
       return null;
     }
+  }
+
+  /**
+   * 建立快捷題目佔位實體（供 PWA Shortcut 啟動時即時請求或生成使用）
+   */
+  private static createPlaceholderEntity(engineType: string, tier: string, seed?: number): PuzzleEntity {
+    const meta = ENGINE_METADATA_MAP[engineType] ?? {
+      category: 'spatial_logic',
+      cognitiveLoad: { spatial: 0.8, numeric: 0.6, workingMemory: 0.7, inhibition: 0.7 },
+    };
+    return {
+      id: `shortcut_${engineType}_${tier}_${seed ?? Date.now()}`,
+      category: meta.category,
+      engine_type: engineType,
+      tier: tier as ExtendedTierKey,
+      puzzle: { rows: 6, cols: 6, seed },
+      cognitiveLoad: meta.cognitiveLoad,
+      metrics: {
+        estimated_time_sec: 120,
+        irt_logit_difficulty: FALLBACK_IRT_MAP[tier] ?? 1.0,
+        seed,
+      },
+    };
+  }
+
+  /**
+   * 統一解析瀏覽器 Hash 路由（雙向相容 #challenge= 與 PWA Shortcut #c=）
+   */
+  public static parseRouteHash(hash: string): PuzzleEntity | null {
+    if (!hash) return null;
+    if (hash.startsWith('#challenge=')) {
+      return this.decode(hash.slice('#challenge='.length));
+    }
+    if (hash.startsWith('#c=')) {
+      return this.decode(hash.slice('#c='.length));
+    }
+    return null;
   }
 
   /**
