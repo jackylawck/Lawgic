@@ -11,7 +11,13 @@ import {
   GenesisFrame,
 } from '../engines/masyuGenerator';
 import { MasyuReservoirManager } from '../engines/masyuClient';
-import { VaultManager } from '../utils/vaultStorage';
+import { VaultManager, VaultItem } from '../utils/vaultStorage';
+import {
+  TournamentProctoringSession,
+  getEnvironmentFingerprint,
+  calculateInfractionScore,
+} from '../utils/tournamentSecurity';
+import { TournamentSubmissionModal } from './TournamentSubmissionModal';
 
 interface Props {
   puzzle?: PuzzleEntity;
@@ -28,7 +34,7 @@ export const MasyuBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode
   const actualPuzzle = puzzleData || puzzle;
   const { lang } = useLanguage();
   const isEn = lang === 'en';
-  const { recordAttempt, getCompositeCognitiveIndex } = useLearnerProfile();
+  const { recordAttempt, profile, getCompositeCognitiveIndex } = useLearnerProfile();
 
   const spec = (actualPuzzle?.puzzle || actualPuzzle) as unknown as MasyuSpec;
   const size = spec?.size || 5;
@@ -36,7 +42,6 @@ export const MasyuBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode
   const seed = (actualPuzzle?.metrics as any)?.seed || 12345;
   const motif = spec?.blueprint?.motif || (actualPuzzle?.metrics as any)?.motif || 'geometric_harmony';
   const paradigm = spec?.blueprint?.paradigm || (actualPuzzle?.metrics as any)?.paradigm || 'archimedean_spiral';
-  const aestheticScore = spec?.blueprint?.aestheticScore || 0.92;
   const coverageRatio = spec?.coverageRatio || (actualPuzzle?.metrics as any)?.coverageRatio || 0.72;
   const lipschitz = spec?.lipschitzScore || (actualPuzzle?.metrics as any)?.lipschitzScore || 0.96;
   const genesisFrames: GenesisFrame[] = spec?.genesisFrames || [];
@@ -50,8 +55,11 @@ export const MasyuBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode
   const [dragStart, setDragStart] = useState<[number, number] | null>(null);
   const [isCompleted, setIsCompleted] = useState<boolean>(false);
   const [isTimeOut, setIsTimeOut] = useState<boolean>(false);
-  const [isFav, setIsFav] = useState<boolean>(false);
+  const [isFav, setIsFav] = useState<boolean>(() =>
+    VaultManager.isFavorited(actualPuzzle?.id || '')
+  );
   const [sanctionedSig, setSanctionedSig] = useState<string>('');
+  const [showSubmitModal, setShowSubmitModal] = useState<boolean>(false);
 
   const [isBoardFocused, setIsBoardFocused] = useState<boolean>(true);
 
@@ -63,6 +71,19 @@ export const MasyuBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode
 
   const undoCountRef = useRef<number>(0);
   const hintCountRef = useRef<number>(0);
+  const movesCountRef = useRef<number>(0);
+  const hasRecordedRef = useRef<boolean>(false);
+
+  // 賽事即時行為稽核 Session
+  const proctoringRef = useRef<TournamentProctoringSession | null>(null);
+
+  useEffect(() => {
+    proctoringRef.current = new TournamentProctoringSession();
+    return () => {
+      proctoringRef.current?.destroy();
+      proctoringRef.current = null;
+    };
+  }, [actualPuzzle?.id]);
 
   const [isReplayingGenesis, setIsReplayingGenesis] = useState<boolean>(false);
   const [replayFrameIndex, setReplayFrameIndex] = useState<number>(0);
@@ -95,6 +116,8 @@ export const MasyuBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode
     setSanctionedSig('');
     undoCountRef.current = 0;
     hintCountRef.current = 0;
+    movesCountRef.current = 0;
+    hasRecordedRef.current = false;
     setIsFav(VaultManager.isFavorited(actualPuzzle?.id || ''));
     lastActiveTimestamp.current = performance.now();
     requestAnimationFrame(() => boardRef.current?.focus());
@@ -107,7 +130,9 @@ export const MasyuBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode
     };
     document.addEventListener('visibilitychange', handleVisibilityChange);
 
-    if (isCompleted || isTimeOut) return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+    if (isCompleted || isTimeOut) {
+      return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+    }
 
     const timer = setInterval(() => {
       if (!isPageVisible.current) return;
@@ -159,8 +184,11 @@ export const MasyuBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode
 
   const verifyCompletion = useCallback(
     (currentEdges: Set<string>) => {
+      if (hasRecordedRef.current || isCompleted) return;
+
       if (WebMasyuGenerator.validateSolution(grid, currentEdges, size)) {
         setIsCompleted(true);
+        hasRecordedRef.current = true;
         const spent = Math.max(1, Math.round(accumulatedMs / 1000));
         generateMasyuSignature(`APEX-WPC-${actualPuzzle?.id}-${spent}-${seed}`).then(setSanctionedSig);
 
@@ -177,7 +205,12 @@ export const MasyuBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode
             puzzleId: actualPuzzle.id,
             engineType: 'masyu_wpc_apex_v10',
             tier: (actualPuzzle.tier as TierKey) || 'kids',
-            cognitiveLoad: actualPuzzle.cognitiveLoad || { spatial: 0.98, numeric: 0.05, workingMemory: 0.88, inhibition: 0.99 },
+            cognitiveLoad: actualPuzzle.cognitiveLoad || {
+              spatial: 0.98,
+              numeric: 0.05,
+              workingMemory: 0.88,
+              inhibition: 0.99,
+            },
             isSuccess: true,
             timeSpentSec: spent,
             conflictsCount: 0,
@@ -187,11 +220,12 @@ export const MasyuBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode
         }
       }
     },
-    [accumulatedMs, actualPuzzle, grid, recordAttempt, seed, size, timeLimit]
+    [accumulatedMs, actualPuzzle, grid, isCompleted, recordAttempt, seed, size, timeLimit]
   );
 
   const commitMutation = useCallback(
     (nextSnapshot: BoardSnapshot, snapshotsToArchive: BoardSnapshot[]) => {
+      movesCountRef.current++;
       setHistory((prev) => [...prev.slice(-40), ...snapshotsToArchive]);
       setRedoStack([]);
       setBoardState(nextSnapshot);
@@ -231,6 +265,23 @@ export const MasyuBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode
       setHintLevel((prev) => Math.min(3, prev + 1));
     }
   }, [isCompleted, isTimeOut, tournamentMode, grid, boardState.edges, size, activeHint]);
+
+  // 金庫收藏切換（取用 res.isFav 防止型別錯誤）
+  const handleToggleFavorite = () => {
+    if (!actualPuzzle) return;
+    const vaultItem: VaultItem = {
+      id: actualPuzzle.id,
+      engine: 'masyu',
+      tier: (actualPuzzle.tier as string) || 'kids',
+      seed: typeof seed === 'number' ? seed : 12345,
+      steps: movesCountRef.current,
+      timeSpentSec: Math.round(accumulatedMs / 1000),
+      iqScore: cci.standardIQ,
+      date: new Date().toISOString(),
+    };
+    const res = VaultManager.toggleFavorite(vaultItem);
+    setIsFav(res.isFav);
+  };
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -309,8 +360,12 @@ export const MasyuBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode
     setDragStart(null);
 
     const init = tx.initialSnapshot;
-    const isEdgesChanged = init.edges.size !== boardState.edges.size || Array.from(init.edges).some((e) => !boardState.edges.has(e));
-    const isBlockedChanged = init.blockedEdges.size !== boardState.blockedEdges.size || Array.from(init.blockedEdges).some((e) => !boardState.blockedEdges.has(e));
+    const isEdgesChanged =
+      init.edges.size !== boardState.edges.size ||
+      Array.from(init.edges).some((e) => !boardState.edges.has(e));
+    const isBlockedChanged =
+      init.blockedEdges.size !== boardState.blockedEdges.size ||
+      Array.from(init.blockedEdges).some((e) => !boardState.blockedEdges.has(e));
 
     if (isEdgesChanged || isBlockedChanged) {
       const archives = [init, ...tx.intermediateSnapshots];
@@ -377,7 +432,11 @@ export const MasyuBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode
         <div className="flex items-center gap-1.5">
           <div className="bg-slate-950 border border-slate-800 px-2 py-0.5 rounded text-center">
             <span className="text-slate-500">{tournamentMode ? 'CD' : 'TIME'}: </span>
-            <span className={`font-bold ${tournamentMode && remainingSec <= 30 ? 'text-rose-400 animate-pulse' : 'text-slate-200'}`}>
+            <span
+              className={`font-bold ${
+                tournamentMode && remainingSec <= 30 ? 'text-rose-400 animate-pulse' : 'text-slate-200'
+              }`}
+            >
               {tournamentMode ? `${remainingSec}s` : `${(accumulatedMs / 1000).toFixed(1)}s`}
             </span>
           </div>
@@ -395,6 +454,17 @@ export const MasyuBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode
 
         <div className="flex items-center gap-1.5 text-slate-400 font-semibold">
           <button
+            onClick={handleToggleFavorite}
+            className={`px-1.5 py-0.5 rounded border transition cursor-pointer ${
+              isFav
+                ? 'border-amber-500/80 bg-amber-950/60 text-amber-300 font-bold'
+                : 'border-slate-800 bg-slate-900 text-slate-400 hover:text-slate-200'
+            }`}
+            title={isEn ? 'Toggle Favorite' : '收藏謎題'}
+          >
+            {isFav ? '★' : '☆'}
+          </button>
+          <button
             onClick={handleUndo}
             disabled={history.length === 0 || isCompleted}
             className="px-1.5 py-0.5 rounded border border-slate-700 bg-slate-900 text-slate-300 disabled:opacity-30 hover:border-slate-500 cursor-pointer transition-colors"
@@ -410,7 +480,9 @@ export const MasyuBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode
           >
             ⟳
           </button>
-          <span className="text-cyan-400 font-bold">{size}&times;{size}</span>
+          <span className="text-cyan-400 font-bold">
+            {size}&times;{size}
+          </span>
         </div>
       </div>
 
@@ -502,7 +574,9 @@ export const MasyuBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode
                   {hasRightEdge && (
                     <div
                       className={`absolute left-1/2 top-1/2 -translate-y-1/2 z-0 pointer-events-none transition-all ${
-                        isReplayingGenesis ? 'bg-amber-400 shadow-[0_0_12px_rgba(251,191,36,0.9)]' : 'bg-cyan-400 shadow-[0_0_8px_rgba(34,211,238,0.9)]'
+                        isReplayingGenesis
+                          ? 'bg-amber-400 shadow-[0_0_12px_rgba(251,191,36,0.9)]'
+                          : 'bg-cyan-400 shadow-[0_0_8px_rgba(34,211,238,0.9)]'
                       }`}
                       style={{ width: cellSize, height: 3.5 }}
                     />
@@ -528,7 +602,9 @@ export const MasyuBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode
                   {hasBottomEdge && (
                     <div
                       className={`absolute left-1/2 top-1/2 -translate-x-1/2 z-0 pointer-events-none transition-all ${
-                        isReplayingGenesis ? 'bg-amber-400 shadow-[0_0_12px_rgba(251,191,36,0.9)]' : 'bg-cyan-400 shadow-[0_0_8px_rgba(34,211,238,0.9)]'
+                        isReplayingGenesis
+                          ? 'bg-amber-400 shadow-[0_0_12px_rgba(251,191,36,0.9)]'
+                          : 'bg-cyan-400 shadow-[0_0_8px_rgba(34,211,238,0.9)]'
                       }`}
                       style={{ height: cellSize, width: 3.5 }}
                     />
@@ -575,7 +651,9 @@ export const MasyuBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode
           </div>
           <div className="flex justify-between text-[6.5px] text-slate-600 font-mono">
             <span>START</span>
-            <span>TIMELINE: {currentStepIndex}/{totalTimelineSteps}</span>
+            <span>
+              TIMELINE: {currentStepIndex}/{totalTimelineSteps}
+            </span>
             <span>REDO MAX</span>
           </div>
         </div>
@@ -635,49 +713,108 @@ export const MasyuBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode
 
           <div className="text-[8.5px] text-slate-300 mb-1">
             {isEn
-              ? `Time: ${(accumulatedMs / 1000).toFixed(2)}s | Pure: ${hintCountRef.current === 0 ? 'YES' : 'NO'} | Gf: IQ ${cci.standardIQ}`
-              : `耗時: ${(accumulatedMs / 1000).toFixed(2)}s | 純淨通關: ${hintCountRef.current === 0 ? '是' : '否'} | Gf: IQ ${cci.standardIQ}`}
+              ? `Time: ${(accumulatedMs / 1000).toFixed(2)}s | Pure: ${
+                  hintCountRef.current === 0 ? 'YES' : 'NO'
+                } | Gf: IQ ${cci.standardIQ}`
+              : `耗時: ${(accumulatedMs / 1000).toFixed(2)}s | 純淨通關: ${
+                  hintCountRef.current === 0 ? '是' : '否'
+                } | Gf: IQ ${cci.standardIQ}`}
           </div>
 
           <div className="my-1.5 p-1.5 bg-slate-900/90 border border-slate-800 rounded flex items-center justify-between gap-2">
             <div className="text-left text-[7px] text-slate-400 leading-tight">
               <div className="font-bold text-purple-300">{paradigm.replace(/_/g, ' ')}</div>
-              <div>Iter: {genesisFrames.length * 40} | Cov: {coverageRatio} | Lip: {lipschitz}</div>
+              <div>
+                Iter: {genesisFrames.length * 40} | Cov: {coverageRatio} | Lip: {lipschitz}
+              </div>
             </div>
 
             <svg className="w-10 h-6 shrink-0" viewBox="0 0 40 24" fill="none">
               {paradigm === 'archimedean_spiral' && (
-                <path d="M20,12 A4,4 0 0,1 24,16 A8,8 0 0,1 16,20 A12,12 0 0,1 8,8" stroke="#A855F7" strokeWidth="1.5" strokeLinecap="round" />
+                <path
+                  d="M20,12 A4,4 0 0,1 24,16 A8,8 0 0,1 16,20 A12,12 0 0,1 8,8"
+                  stroke="#A855F7"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                />
               )}
               {paradigm === 'sinusoidal_braid' && (
-                <path d="M2,12 Q10,2 20,12 T38,12 M2,12 Q10,22 20,12 T38,12" stroke="#22D3EE" strokeWidth="1.5" strokeLinecap="round" />
+                <path
+                  d="M2,12 Q10,2 20,12 T38,12 M2,12 Q10,22 20,12 T38,12"
+                  stroke="#22D3EE"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                />
               )}
               {paradigm === 'superelliptic_meander' && (
-                <path d="M4,4 L36,4 L36,20 L4,20 Z" stroke="#34D399" strokeWidth="1.5" strokeLinejoin="round" />
+                <path
+                  d="M4,4 L36,4 L36,20 L4,20 Z"
+                  stroke="#34D399"
+                  strokeWidth="1.5"
+                  strokeLinejoin="round"
+                />
               )}
               {paradigm === 'hyperbolic_cross' && (
-                <path d="M4,4 Q20,12 36,4 M4,20 Q20,12 36,20" stroke="#F43F5E" strokeWidth="1.5" strokeLinecap="round" />
+                <path
+                  d="M4,4 Q20,12 36,4 M4,20 Q20,12 36,20"
+                  stroke="#F43F5E"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                />
               )}
             </svg>
           </div>
 
-          {genesisFrames.length > 0 && (
+          <div className="flex items-center justify-center gap-2 mt-2">
+            {genesisFrames.length > 0 && (
+              <button
+                onClick={() => {
+                  setIsReplayingGenesis(true);
+                  setReplayFrameIndex(0);
+                }}
+                disabled={isReplayingGenesis}
+                className="px-2.5 py-1 bg-amber-950/80 border border-amber-500/80 text-amber-300 hover:bg-amber-900 text-[8px] font-bold rounded-lg transition shadow flex items-center gap-1 cursor-pointer disabled:opacity-50"
+              >
+                {isReplayingGenesis ? (
+                  <>⏳ {isEn ? `Frame ${replayFrameIndex + 1}` : `影格 ${replayFrameIndex + 1}`}</>
+                ) : (
+                  <>▶ {isEn ? 'Cinema' : '造物重播'}</>
+                )}
+              </button>
+            )}
+
             <button
-              onClick={() => {
-                setIsReplayingGenesis(true);
-                setReplayFrameIndex(0);
-              }}
-              disabled={isReplayingGenesis}
-              className="mt-1.5 px-3 py-1 bg-amber-950/80 border border-amber-500/80 text-amber-300 hover:bg-amber-900 text-[8.5px] font-bold rounded-lg transition shadow flex items-center justify-center gap-1.5 mx-auto cursor-pointer disabled:opacity-50"
+              onClick={() => setShowSubmitModal(true)}
+              className="px-3 py-1 bg-neutral-200 hover:bg-white text-black text-[8px] font-bold rounded-lg cursor-pointer transition shadow"
             >
-              {isReplayingGenesis ? (
-                <>⏳ {isEn ? `Genesis Frame ${replayFrameIndex + 1}/${genesisFrames.length}` : `造物重播中 ${replayFrameIndex + 1}/${genesisFrames.length}`}</>
-              ) : (
-                <>▶ {isEn ? 'Watch Genesis Annealing Cinema' : '觀看造物退火重播劇場'}</>
-              )}
+              {isEn ? 'SUBMIT' : '提交成績'}
             </button>
-          )}
+          </div>
         </div>
+      )}
+
+      {/* 賽事提交 Modal */}
+      {showSubmitModal && actualPuzzle && (
+        <TournamentSubmissionModal
+          payload={{
+            submissionId: `SUB-${actualPuzzle.id}-${Date.now().toString(36)}`,
+            tournamentId: tournamentMode ? 'WPF_MASYU_APEX_2026' : 'GLOBAL_EULERIAN_STAGE',
+            playerId: profile.personalBest.updatedAt ? 'CONTENDER_VERIFIED' : 'LOCAL_PLAYER_1',
+            division: 'open',
+            puzzleId: actualPuzzle.id,
+            engineType: 'masyu',
+            tier: (actualPuzzle.tier as string) || 'kids',
+            timeSpentSec: Math.round(accumulatedMs / 1000),
+            conflictsCount: 0,
+            infractionScore: proctoringRef.current
+              ? calculateInfractionScore(proctoringRef.current.getSnapshot())
+              : 0,
+            environment: getEnvironmentFingerprint(),
+            timestamp: new Date().toISOString(),
+          }}
+          onClose={() => setShowSubmitModal(false)}
+          isEn={isEn}
+        />
       )}
     </div>
   );
