@@ -149,17 +149,37 @@ export class VaultManager {
     return width;
   }
 
+  /**
+   * 純前端跨環境 UTF-8 轉 Base64 實作（徹底移除 Node.js Buffer 依賴）
+   */
   private static utf8ToBase64(str: string): string {
+    const bytes = new TextEncoder().encode(str);
+    let binary = '';
+    const len = bytes.byteLength;
+    for (let i = 0; i < len; i++) {
+      binary += String.fromCharCode(bytes[i]);
+    }
+
     if (typeof window !== 'undefined' && typeof window.btoa === 'function') {
-      const bytes = new TextEncoder().encode(str);
-      let binary = '';
-      const len = bytes.byteLength;
-      for (let i = 0; i < len; i++) {
-        binary += String.fromCharCode(bytes[i]);
-      }
       return window.btoa(binary);
     }
-    return Buffer.from(str, 'utf-8').toString('base64');
+    if (typeof btoa === 'function') {
+      return btoa(binary);
+    }
+
+    // 純 JS 查表 Fallback，杜絕型別與環境依賴
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+    let res = '';
+    for (let i = 0; i < len; i += 3) {
+      const b0 = bytes[i];
+      const b1 = i + 1 < len ? bytes[i + 1] : 0;
+      const b2 = i + 2 < len ? bytes[i + 2] : 0;
+      res += chars[b0 >> 2];
+      res += chars[((b0 & 3) << 4) | (b1 >> 4)];
+      res += i + 1 < len ? chars[((b1 & 15) << 2) | (b2 >> 6)] : '=';
+      res += i + 2 < len ? chars[b2 & 63] : '=';
+    }
+    return res;
   }
 
   public static generateChallengeLink(engine: string, tier: string, seed: number): string {
@@ -404,9 +424,6 @@ export class VaultManager {
     );
   }
 
-  /**
-   * P2 修復：分離 JSON 解析異常 (InvalidFormat) 與 LocalStorage 配額異常 (StorageQuotaExceeded)
-   */
   public static importVaultJson(jsonStr: string): ImportVaultResult {
     if (!jsonStr || typeof jsonStr !== 'string') {
       return { success: false, importedCount: 0, skippedCount: 0, error: 'InvalidFormat' };
