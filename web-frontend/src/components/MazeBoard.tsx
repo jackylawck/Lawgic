@@ -27,7 +27,7 @@ interface Props {
   tournamentMode?: boolean;
 }
 
-// 確保 cells 擁有保底矩陣生成器，杜絕 PlayableMazeEngine 建構子內 spec.cells.map 崩潰
+// 確保 cells 擁有保底矩陣生成器，補齊 CellState 完整定義 (visited, mutationCount)
 const ensureSpecCells = (s: MazeSpec): MazeSpec => {
   if (Array.isArray(s.cells) && s.cells.length > 0) {
     return s;
@@ -38,6 +38,8 @@ const ensureSpecCells = (s: MazeSpec): MazeSpec => {
     Array.from({ length: w }, () => ({
       charge: 0 as const,
       spin: 0 as const,
+      visited: false,
+      mutationCount: 0,
     }))
   );
   return {
@@ -75,6 +77,8 @@ export const MazeBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode 
       Array.from({ length: width }, () => ({
         charge: 0 as const,
         spin: 0 as const,
+        visited: false,
+        mutationCount: 0,
       }))
     );
   });
@@ -440,7 +444,6 @@ export const MazeBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode 
     [isDarkVision, playerPos]
   );
 
-  // 避免 grid 尚未準備就緒時造成渲染錯誤
   if (!spec || !spec.grid || spec.grid.length === 0) {
     return (
       <div className="flex items-center justify-center p-8 text-xs font-mono text-slate-500">
