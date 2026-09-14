@@ -36,7 +36,6 @@ const EngineFallbackUI: React.FC<{ resetErrorBoundary: () => void; error?: Error
     error?.message?.includes('Failed to fetch dynamically imported module') ||
     error?.message?.includes('Loading chunk');
 
-  // 時間維度修復 1：等待 caches.delete 完成後再 reload，杜絕 SW 快取清理競爭
   const handleReload = async () => {
     if ('caches' in window) {
       try {
@@ -141,10 +140,7 @@ const MainDashboard: React.FC = () => {
   const fallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const boardContainerRef = useRef<HTMLDivElement>(null);
-  
-  // 時間維度修復 2：初始化為 -Infinity，杜絕載入首 150ms 內的操作吞咽
   const lastMoveTimeRef = useRef<number>(-Infinity);
-  
   const toastTimeoutRef = useRef<ReturnType<typeof setTimeout>>();
   const dashboardModalRef = useRef<HTMLDivElement>(null);
   const previouslyFocusedElementRef = useRef<HTMLElement | null>(null);
@@ -198,11 +194,9 @@ const MainDashboard: React.FC = () => {
       if ('serviceWorker' in navigator) {
         const reg = await navigator.serviceWorker.getRegistration();
         if (reg?.waiting) {
-          navigator.serviceWorker.addEventListener(
-            'controllerchange',
-            controllerChangeHandler,
-            { once: true }
-          );
+          navigator.serviceWorker.addEventListener('controllerchange', controllerChangeHandler, {
+            once: true,
+          });
 
           reg.waiting.postMessage({ type: 'SKIP_WAITING' });
 
@@ -239,6 +233,7 @@ const MainDashboard: React.FC = () => {
     [t, isEn, showToast, announce]
   );
 
+  // 注意：需確保 usePuzzlePool 內部已切換為 Worker 呼叫而非主線程計算
   const {
     activeList,
     activePuzzle,
@@ -265,7 +260,7 @@ const MainDashboard: React.FC = () => {
   }, [activeList.length, playSound, safeVibrate, setPuzzleIndex]);
 
   const handleLiveGenerate = useCallback(async () => {
-    if (tournamentMode) return;
+    if (tournamentMode || isGenerating) return;
     playSound('click');
     safeVibrate(20);
     const success = await triggerManualGenerate();
@@ -274,7 +269,7 @@ const MainDashboard: React.FC = () => {
       announce(t.toast.dynamicSynthesized, 'polite');
     }
     boardContainerRef.current?.focus();
-  }, [tournamentMode, playSound, safeVibrate, triggerManualGenerate, showToast, announce, t]);
+  }, [tournamentMode, isGenerating, playSound, safeVibrate, triggerManualGenerate, showToast, announce, t]);
 
   const handleToggleTournament = useCallback(() => {
     playSound('alert');
@@ -287,7 +282,7 @@ const MainDashboard: React.FC = () => {
     onNext: handleNextPuzzle,
     onGenerate: handleLiveGenerate,
     onToggleTournament: handleToggleTournament,
-    disabled: showDashboardModal || showComplianceModal,
+    disabled: showDashboardModal || showComplianceModal || isGenerating,
   });
 
   useEffect(() => {
@@ -299,7 +294,6 @@ const MainDashboard: React.FC = () => {
     });
   }, [setPuzzleIndex]);
 
-  // 時間維度修復 3：精確依賴拆解，防止每次渲染時頻繁呼叫 document.title
   useEffect(() => {
     const activeGame = ALL_GAMES.find((g) => g.id === selectedType);
     const gameName = activeGame ? (isEn ? activeGame.nameEn : activeGame.nameZh) : 'Cognitive Arena';
@@ -370,7 +364,7 @@ const MainDashboard: React.FC = () => {
 
   const handleJoystickMove = useCallback((x: number, y: number) => {
     const now = performance.now();
-    if (now - lastMoveTimeRef.current < 150) return;
+    if (now - lastMoveTimeRef.current < 120) return; // 調整至 120ms 提升手感反應
 
     const threshold = 0.45;
     let dx = 0;
@@ -427,7 +421,8 @@ const MainDashboard: React.FC = () => {
     }
   }, []);
 
-  const cci = getCompositeCognitiveIndex();
+  // 最佳化：使用 useMemo 避免每次重新渲染重複遍歷歷史 Profile
+  const cci = useMemo(() => getCompositeCognitiveIndex(), [getCompositeCognitiveIndex]);
 
   return (
     <main className="min-h-screen bg-[#070a0f] text-slate-200 flex flex-col items-center py-2 px-2 font-mono selection:bg-indigo-600">
@@ -584,15 +579,15 @@ const MainDashboard: React.FC = () => {
             </button>
             <button
               onClick={handleLiveGenerate}
-              disabled={tournamentMode}
+              disabled={tournamentMode || isGenerating}
               className={`py-2 text-[10px] font-bold border rounded-lg shadow-sm transition flex items-center justify-center gap-1 outline-none focus-visible:ring-1 focus-visible:ring-cyan-400 ${
-                tournamentMode
+                tournamentMode || isGenerating
                   ? 'bg-slate-900/50 border-slate-800 text-slate-600 cursor-not-allowed'
                   : 'bg-cyan-950 hover:bg-cyan-900 active:scale-95 text-cyan-300 border-cyan-700/60 cursor-pointer'
               }`}
             >
               <span>⚡</span>
-              <span>{t.actions.generate}</span>
+              <span>{isGenerating ? (isEn ? 'Solving...' : '求解中...') : t.actions.generate}</span>
             </button>
             <button
               onClick={handleNextPuzzle}
