@@ -26,15 +26,16 @@ interface Props {
   tournamentMode?: boolean;
 }
 
+// 保底生成器：棋盤格正負極性絕對交替，杜絕起點同極相斥死鎖
 const ensureSpecCells = (s: MazeSpec): MazeSpec => {
   if (Array.isArray(s.cells) && s.cells.length > 0) {
     return s;
   }
   const w = s.width || 17;
   const h = s.height || 17;
-  const fallbackCells: CellState[][] = Array.from({ length: h }, () =>
-    Array.from({ length: w }, () => ({
-      charge: 1 as const,
+  const fallbackCells: CellState[][] = Array.from({ length: h }, (_, y) =>
+    Array.from({ length: w }, (_, x) => ({
+      charge: ((x + y) % 2 === 0 ? 1 : -1) as (1 | -1),
       spin: 0 as const,
       visited: false,
       mutationCount: 0,
@@ -71,9 +72,9 @@ export const MazeBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode 
     if (Array.isArray(spec?.cells) && spec.cells.length > 0) {
       return spec.cells;
     }
-    return Array.from({ length: height }, () =>
-      Array.from({ length: width }, () => ({
-        charge: 1 as const,
+    return Array.from({ length: height }, (_, y) =>
+      Array.from({ length: width }, (_, x) => ({
+        charge: ((x + y) % 2 === 0 ? 1 : -1) as (1 | -1),
         spin: 0 as const,
         visited: false,
         mutationCount: 0,
