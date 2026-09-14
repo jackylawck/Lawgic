@@ -27,7 +27,7 @@ interface Props {
   tournamentMode?: boolean;
 }
 
-// 確保 cells 擁有保底矩陣生成器，補齊 CellState 完整定義 (visited, mutationCount)
+// 確保 cells 擁有保底矩陣生成器，修復 charge (必須為 1 或 -1) 與完整屬性
 const ensureSpecCells = (s: MazeSpec): MazeSpec => {
   if (Array.isArray(s.cells) && s.cells.length > 0) {
     return s;
@@ -36,7 +36,7 @@ const ensureSpecCells = (s: MazeSpec): MazeSpec => {
   const h = s.height || 17;
   const fallbackCells: CellState[][] = Array.from({ length: h }, () =>
     Array.from({ length: w }, () => ({
-      charge: 0 as const,
+      charge: 1 as const,
       spin: 0 as const,
       visited: false,
       mutationCount: 0,
@@ -75,7 +75,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode 
     }
     return Array.from({ length: height }, () =>
       Array.from({ length: width }, () => ({
-        charge: 0 as const,
+        charge: 1 as const,
         spin: 0 as const,
         visited: false,
         mutationCount: 0,
@@ -243,7 +243,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode 
       });
 
       const distToGoal = Math.abs(nextPos[0] - end[0]) + Math.abs(nextPos[1] - end[1]);
-      if (distToGoal <= 2 && spec.hasPhase2MentalGlitch && !glitchTriggeredRef.current) {
+      if (distToGoal <= 2 && spec?.hasPhase2MentalGlitch && !glitchTriggeredRef.current) {
         glitchTriggeredRef.current = true;
         setIsGlitching(true);
         setTimeout(() => setIsGlitching(false), 300);
@@ -463,7 +463,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode 
         <div className="flex items-center justify-between px-1 text-slate-400">
           <div className="flex items-center gap-1.5">
             <span className="text-cyan-400 font-bold">
-              {spec.hasPhase2MentalGlitch
+              {spec?.hasPhase2MentalGlitch
                 ? isEn
                   ? '⚔️ Parity Collapse'
                   : '⚔️ 宇稱坍縮滑動'
@@ -542,7 +542,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode 
               const isVisible = isVisibleInDark(x, y);
 
               const cell = cellGrid[y]?.[x];
-              const initialCell = spec.initialCells?.[y]?.[x];
+              const initialCell = spec?.initialCells?.[y]?.[x];
               const isPositive = cell?.charge === 1;
               const visitHeat = visitedCounts.get(`${x},${y}`) || 0;
 
@@ -797,7 +797,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode 
             <div className="flex justify-between">
               <span className="text-slate-400">{isEn ? 'Peak Divergence Regret' : '最大分歧後悔'}:</span>
               <span className="text-rose-400 font-bold">
-                {spec.maxVisualRegretValue > 0
+                {spec?.maxVisualRegretValue > 0
                   ? `≈ +${spec.maxVisualRegretValue} ${isEn ? 'steps' : '步'}`
                   : isEn
                   ? 'Optimal Path Followed'
