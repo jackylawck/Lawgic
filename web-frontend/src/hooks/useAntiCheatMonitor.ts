@@ -1,4 +1,3 @@
-// web-frontend/src/hooks/useAntiCheatMonitor.ts
 import { useEffect } from 'react';
 import {
   useAntiCheatActions,
