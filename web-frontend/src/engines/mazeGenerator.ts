@@ -23,7 +23,7 @@ export interface CellState {
 export interface DeceptionWaypoint {
   coordinate: [number, number];
   divergedStep: number;
-  regretCost: number;
+  regretCost: number;      // 物理後悔代價：走入分歧後相對於最優解的步數差
   trapType: 'Straight_Lure' | 'Camouflaged_Bypass' | 'Goal_Keeper_Fork' | 'Twin_Landmark_Trap';
 }
 
@@ -36,9 +36,9 @@ export interface TwinLandmarkPair {
 export interface MazeSpec {
   rows: number;
   cols: number;
-  grid: number[][];
-  cells: CellState[][];
-  initialCells: CellState[][];
+  grid: number[][];            // 0: 通道, 1: 幾何牆壁
+  cells: CellState[][];        // 物理微觀狀態
+  initialCells: CellState[][]; // 初始快照
   width: number;
   height: number;
   size: number;
@@ -244,7 +244,6 @@ export class PlayableMazeEngine {
     const currentCell = this.cells[cy][cx];
     const targetCell = this.cells[ty][tx];
 
-    // 同極相斥阻擋
     if (targetCell.charge === currentCell.charge) {
       return { canMove: false, landing: this.pos, intermediate: null, slid: false, pathTraversed: [this.pos], entropyDelta: 0, reason: 'REPULSION' };
     }
@@ -969,7 +968,7 @@ export class WebMazeGenerator {
     corridor: [number, number][],
     rnd: () => number
   ): { cells: CellState[][]; initialCells: CellState[][] } {
-    // 預設全域棋盤格交替，保障任何連通分支皆能通行
+    // 預設全域棋盤格奇偶交替（基底異極）
     const cells: CellState[][] = Array.from({ length: height }, (_, y) =>
       Array.from({ length: width }, (_, x) => ({
         charge: ((x + y) % 2 === 0 ? 1 : -1) as (1 | -1),
@@ -979,10 +978,12 @@ export class WebMazeGenerator {
       }))
     );
 
-    // 核心走廊嚴格交替賦予（正 -> 負 -> 正 -> 負），並確保前進 spin 向量相符
+    // 核心走廊嚴格交替賦予（正 -> 負 -> 正 -> 負），保證起點第一步永遠可邁出
+    const corridorSet = new Set<string>();
     let currentCharge: 1 | -1 = 1;
     for (let i = 0; i < corridor.length; i++) {
       const [cx, cy] = corridor[i];
+      corridorSet.add(`${cx},${cy}`);
       cells[cy][cx].charge = currentCharge;
       currentCharge = (currentCharge * -1) as (1 | -1);
 
@@ -993,6 +994,22 @@ export class WebMazeGenerator {
         const forwardDir = DIR_VECTORS.findIndex(([vx, vy]) => vx === dx && vy === dy);
         if (forwardDir !== -1) {
           cells[cy][cx].spin = forwardDir as Direction;
+        }
+      }
+    }
+
+    // 在分歧死胡同的盲端保留實質同極相斥陷阱
+    for (let y = 1; y < height - 1; y++) {
+      for (let x = 1; x < width - 1; x++) {
+        if (grid[y][x] === 0 && !corridorSet.has(`${x},${y}`) && rnd() < 0.3) {
+          for (const [dx, dy] of DIR_VECTORS) {
+            const adjX = x + dx;
+            const adjY = y + dy;
+            if (grid[adjY]?.[adjX] === 0) {
+              cells[y][x].charge = cells[adjY][adjX].charge;
+              break;
+            }
+          }
         }
       }
     }
