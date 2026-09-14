@@ -1,25 +1,38 @@
 // web-frontend/src/workers/maze.worker.ts
-import { WebMazeGenerator } from '../engines/mazeGenerator';
-import { TierKey } from '../generated';
+import { WebMazeGenerator, StrategyPersona } from '../engines/mazeGenerator';
+import { TierKey, PuzzleEntity } from '../generated';
 
-export interface MazeWorkerRequest {
-  id: string;
-  tier: TierKey;
-  seed?: number;
-}
+export type MazeWorkerAction =
+  | { type: 'GENERATE'; id: string; tier: TierKey; personaBias?: StrategyPersona; seed?: number }
+  | { type: 'ABORT'; id: string };
 
-export interface MazeWorkerResponse {
-  id: string;
-  puzzleEntity: any;
-  error?: string;
-}
+export type MazeWorkerMessage =
+  | { type: 'PROGRESS'; id: string; progress: number }
+  | { type: 'SUCCESS'; id: string; puzzleEntity: PuzzleEntity }
+  | { type: 'ERROR'; id: string; error: string };
 
-self.onmessage = (e: MessageEvent<MazeWorkerRequest>) => {
-  const { id, tier, seed } = e.data;
+self.onmessage = (e: MessageEvent<MazeWorkerAction>) => {
+  const data = e.data;
+  if (!data || data.type !== 'GENERATE') return;
+
+  const { id, tier, personaBias, seed } = data;
+
   try {
-    const puzzleEntity = WebMazeGenerator.generate(tier, undefined, seed);
-    self.postMessage({ id, puzzleEntity } as MazeWorkerResponse);
+    const puzzleEntity = WebMazeGenerator.generate(
+      tier,
+      personaBias,
+      seed,
+      (progress: number) => {
+        self.postMessage({ type: 'PROGRESS', id, progress } as MazeWorkerMessage);
+      }
+    );
+
+    self.postMessage({ type: 'SUCCESS', id, puzzleEntity } as MazeWorkerMessage);
   } catch (err: any) {
-    self.postMessage({ id, puzzleEntity: null, error: err?.message || 'Worker execution failed' } as MazeWorkerResponse);
+    self.postMessage({
+      type: 'ERROR',
+      id,
+      error: err?.message || 'Maze generation failed unexpectedly.',
+    } as MazeWorkerMessage);
   }
 };
