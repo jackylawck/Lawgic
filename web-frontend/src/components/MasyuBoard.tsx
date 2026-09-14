@@ -38,7 +38,7 @@ export const MasyuBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode
 
   const spec = (actualPuzzle?.puzzle || actualPuzzle) as unknown as MasyuSpec;
   const size = spec?.size || 5;
-  const grid = spec?.grid || [];
+  const grid = useMemo(() => spec?.grid || [], [spec?.grid]);
   const seed = (actualPuzzle?.metrics as any)?.seed || 12345;
   const motif = spec?.blueprint?.motif || (actualPuzzle?.metrics as any)?.motif || 'geometric_harmony';
   const paradigm = spec?.blueprint?.paradigm || (actualPuzzle?.metrics as any)?.paradigm || 'archimedean_spiral';
@@ -182,11 +182,17 @@ export const MasyuBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode
     return degMap;
   }, [boardState.edges]);
 
+  // 核心修復 1：只有在「至少有 4 條邊」且「所有節點度數皆不為奇數」的先決條件下才跑重型圖演算法
   const verifyCompletion = useCallback(
     (currentEdges: Set<string>) => {
-      if (hasRecordedRef.current || isCompleted) return;
+      if (hasRecordedRef.current || isCompleted || currentEdges.size < 4) return;
 
-      if (WebMasyuGenerator.validateSolution(grid, currentEdges, size)) {
+      // 快速前置剪枝：如果邊集不能形成迴路，直接跳過昂貴的驗證
+      for (const deg of nodeDegrees.values()) {
+        if (deg % 2 !== 0 || deg > 2) return;
+      }
+
+      if (grid.length > 0 && WebMasyuGenerator.validateSolution(grid, currentEdges, size)) {
         setIsCompleted(true);
         hasRecordedRef.current = true;
         const spent = Math.max(1, Math.round(accumulatedMs / 1000));
@@ -220,18 +226,18 @@ export const MasyuBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode
         }
       }
     },
-    [accumulatedMs, actualPuzzle, grid, isCompleted, recordAttempt, seed, size, timeLimit]
+    [accumulatedMs, actualPuzzle, grid, isCompleted, nodeDegrees, recordAttempt, seed, size, timeLimit]
   );
 
+  // 核心修復 2：拖曳期間不呼叫 verifyCompletion，將運算移至 handlePointerUp 完成後才觸發一次
   const commitMutation = useCallback(
     (nextSnapshot: BoardSnapshot, snapshotsToArchive: BoardSnapshot[]) => {
       movesCountRef.current++;
       setHistory((prev) => [...prev.slice(-40), ...snapshotsToArchive]);
       setRedoStack([]);
       setBoardState(nextSnapshot);
-      verifyCompletion(nextSnapshot.edges);
     },
-    [verifyCompletion]
+    []
   );
 
   const handleUndo = useCallback(() => {
@@ -253,7 +259,7 @@ export const MasyuBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode
   }, [redoStack, boardState, verifyCompletion, isCompleted, isTimeOut]);
 
   const handleRequestHint = useCallback(() => {
-    if (isCompleted || isTimeOut || tournamentMode) return;
+    if (isCompleted || isTimeOut || tournamentMode || grid.length === 0) return;
     hintCountRef.current++;
     const step = WebMasyuGenerator.getWpcHint(grid, boardState.edges, size);
     if (!step) return;
@@ -266,7 +272,6 @@ export const MasyuBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode
     }
   }, [isCompleted, isTimeOut, tournamentMode, grid, boardState.edges, size, activeHint]);
 
-  // 金庫收藏切換（取用 res.isFav 防止型別錯誤）
   const handleToggleFavorite = () => {
     if (!actualPuzzle) return;
     const vaultItem: VaultItem = {
@@ -353,6 +358,7 @@ export const MasyuBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode
     }
   };
 
+  // 核心修復 3：手指/滑鼠放開時，整批歸檔進 History，並統一觸發一次結算校驗
   const handlePointerUp = () => {
     const tx = dragTransactionRef.current;
     if (!tx) return;
@@ -370,6 +376,8 @@ export const MasyuBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode
     if (isEdgesChanged || isBlockedChanged) {
       const archives = [init, ...tx.intermediateSnapshots];
       commitMutation(boardState, archives);
+      // 在使用者動作停頓時進行單次驗證
+      verifyCompletion(boardState.edges);
     }
   };
 
@@ -388,6 +396,7 @@ export const MasyuBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode
 
     const nextSnapshot: BoardSnapshot = { edges: nextEdges, blockedEdges: nextBlocked };
     commitMutation(nextSnapshot, [boardState]);
+    verifyCompletion(nextSnapshot.edges);
   };
 
   const cellSize = Math.min(280 / size, size >= 9 ? 30 : 42);
@@ -414,6 +423,15 @@ export const MasyuBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode
 
   const totalTimelineSteps = history.length + redoStack.length;
   const currentStepIndex = history.length;
+
+  // 核心防禦：若資料庫尚未傳回網格，顯示加載骨架避免白屏崩潰
+  if (!grid || grid.length === 0) {
+    return (
+      <div className="flex items-center justify-center p-8 text-xs font-mono text-slate-500">
+        {isEn ? 'Calibrating Masyu topology...' : '校準珍珠迴路矩陣中...'}
+      </div>
+    );
+  }
 
   return (
     <div
@@ -697,10 +715,10 @@ export const MasyuBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode
         </div>
       )}
 
-      {/* 通關成就面板與拓撲指紋 */}
+      {/* 通關成就面板 */}
       {isCompleted && (
         <div className="mt-2.5 p-3 bg-slate-950 border border-emerald-500/80 rounded-xl text-center w-full max-w-[320px] shadow-2xl font-mono animate-fade-in">
-          <div className="text-emerald-400 font-bold text-xs mb-0.5 uppercase tracking-wider">
+          <div className="text-emerald-400 font-black text-xs mb-0.5 uppercase tracking-wider">
             {isEn ? 'EULERIAN LOOP CONVERGED!' : '歐拉單一閉環完美收斂！'}
           </div>
 
