@@ -1,3 +1,4 @@
+// web-frontend/src/components/MazeBoard.tsx
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { PuzzleEntity, TierKey } from '../generated';
 import { useLearnerProfile } from '../hooks/useLearnerProfile';
@@ -26,7 +27,6 @@ interface Props {
   tournamentMode?: boolean;
 }
 
-// 保底生成器：棋盤格正負極性絕對交替，杜絕起點同極相斥死鎖
 const ensureSpecCells = (s: MazeSpec): MazeSpec => {
   if (Array.isArray(s.cells) && s.cells.length > 0) {
     return s;
@@ -36,16 +36,166 @@ const ensureSpecCells = (s: MazeSpec): MazeSpec => {
   const fallbackCells: CellState[][] = Array.from({ length: h }, (_, y) =>
     Array.from({ length: w }, (_, x) => ({
       charge: ((x + y) % 2 === 0 ? 1 : -1) as (1 | -1),
-      spin: 0 as const,
+      spin: ((x + y) % 4) as Direction,
       visited: false,
       mutationCount: 0,
     }))
   );
   return {
     ...s,
+    targetTerminalCharge: s.targetTerminalCharge ?? 1,
     cells: fallbackCells,
+    initialCells: fallbackCells.map((r) => r.map((c) => ({ ...c }))),
   };
 };
+
+// ============================================================================
+// 獨立 Memoized 單元格組件（徹底解決 841 節點重複 Reconciliation）
+// ============================================================================
+interface CellProps {
+  x: number;
+  y: number;
+  val: number;
+  cellSize: number;
+  isPlayer: boolean;
+  isGhost: boolean;
+  ghostMode: 'none' | 'player' | 'optimal';
+  isVisible: boolean;
+  isStart: boolean;
+  isEnd: boolean;
+  isPseudo: boolean;
+  isTwin: boolean;
+  isGlitching: boolean;
+  targetTerminalCharge: 1 | -1;
+  cell?: CellState;
+  hasRealHammingDistortion: boolean;
+  visitHeat: number;
+  showHeatmap: boolean;
+  showDeceptionWaypoints: boolean;
+  waypointHit?: DeceptionWaypoint;
+  isPreviewLanding: boolean;
+  isIntermediateSlip: boolean;
+  onWaypointClick?: (wp: DeceptionWaypoint) => void;
+}
+
+const MazeCell: React.FC<CellProps> = React.memo((props) => {
+  const {
+    val,
+    cellSize,
+    isPlayer,
+    isGhost,
+    ghostMode,
+    isVisible,
+    isStart,
+    isEnd,
+    isPseudo,
+    isTwin,
+    isGlitching,
+    targetTerminalCharge,
+    cell,
+    hasRealHammingDistortion,
+    visitHeat,
+    showHeatmap,
+    showDeceptionWaypoints,
+    waypointHit,
+    isPreviewLanding,
+    isIntermediateSlip,
+    onWaypointClick,
+  } = props;
+
+  const isWall = val === 1;
+  const isPositive = cell?.charge === 1;
+
+  let cellBg = 'bg-slate-950';
+  if (isWall) {
+    cellBg = 'bg-slate-800/90 border border-slate-700/50 shadow-inner rounded-[1px]';
+  } else if (cell) {
+    if (isPositive) {
+      cellBg = hasRealHammingDistortion
+        ? 'bg-rose-950/70 border border-rose-500/60 shadow-[inset_0_0_5px_rgba(244,63,94,0.4)]'
+        : 'bg-rose-950/30 border border-rose-900/40';
+    } else {
+      cellBg = hasRealHammingDistortion
+        ? 'bg-blue-950/70 border border-blue-500/60 shadow-[inset_0_0_5px_rgba(59,130,246,0.4)]'
+        : 'bg-blue-950/30 border border-blue-900/40';
+    }
+  }
+
+  if (showHeatmap && !isWall && visitHeat > 0) {
+    cellBg = visitHeat >= 4 ? 'bg-rose-600/80' : visitHeat >= 2 ? 'bg-amber-500/70' : 'bg-emerald-600/50';
+  }
+
+  if (showDeceptionWaypoints && waypointHit) {
+    cellBg = 'bg-purple-600/90 shadow-[0_0_8px_rgba(168,85,247,0.9)] animate-pulse';
+  }
+
+  if (!isVisible) {
+    cellBg = 'bg-slate-950/95';
+  }
+
+  return (
+    <div
+      onClick={() => waypointHit && onWaypointClick?.(waypointHit)}
+      style={{ width: cellSize, height: cellSize, aspectRatio: '1/1' }}
+      className={`flex items-center justify-center font-bold text-[8px] transition-colors duration-150 relative ${cellBg} ${
+        waypointHit ? 'cursor-pointer' : ''
+      }`}
+    >
+      {isVisible && !isWall && cell && (
+        <>
+          {!isGlitching && (
+            <span
+              className={`text-[8px] font-mono select-none ${
+                hasRealHammingDistortion ? 'opacity-90 font-black' : 'opacity-35'
+              } ${isPositive ? 'text-rose-300' : 'text-blue-300'}`}
+            >
+              {DIR_ARROWS[cell.spin]}
+            </span>
+          )}
+
+          {isStart && <span className="text-emerald-400 text-[9px] font-black absolute z-10">S</span>}
+          {isEnd && (
+            <span
+              className={`text-[9px] font-black absolute z-10 animate-pulse ${
+                targetTerminalCharge === 1 ? 'text-rose-400' : 'text-blue-400'
+              }`}
+            >
+              ★
+            </span>
+          )}
+          {isPseudo && !isEnd && <span className="text-purple-400/80 text-[7px] opacity-60 absolute z-10">✦</span>}
+          {isTwin && !isStart && !isEnd && (
+            <span className="text-amber-400/60 text-[7px] font-bold absolute z-10">♊</span>
+          )}
+
+          {isIntermediateSlip && (
+            <div className="w-full h-full border-2 border-dashed border-amber-400/90 bg-amber-500/20 absolute z-15" />
+          )}
+
+          {isPreviewLanding && (
+            <div className="w-full h-full border-2 border-emerald-400 bg-emerald-500/30 absolute z-15 animate-ping" />
+          )}
+
+          {isPlayer && (
+            <div className="w-[70%] h-[70%] bg-cyan-400 rounded-sm shadow-[0_0_8px_rgba(34,211,238,0.9)] z-20 flex items-center justify-center">
+              <div className={`w-1.5 h-1.5 rounded-full ${isPositive ? 'bg-rose-600' : 'bg-blue-600'}`} />
+            </div>
+          )}
+
+          {isGhost && (
+            <div
+              className={`w-[60%] h-[60%] rounded-full z-20 animate-ping ${
+                ghostMode === 'optimal'
+                  ? 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.9)]'
+                  : 'bg-purple-400'
+              }`}
+            />
+          )}
+        </>
+      )}
+    </div>
+  );
+});
 
 export const MazeBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode = false }) => {
   const actualPuzzle = puzzleData || puzzle;
@@ -64,22 +214,14 @@ export const MazeBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode 
   const deceptionWaypoints: DeceptionWaypoint[] = spec?.deceptionWaypoints || [];
   const optimalSolution: [number, number][] = (actualPuzzle?.solution as [number, number][]) || [];
   const seed = (actualPuzzle?.metrics as any)?.seed || spec?.seed || 12345;
+  const targetTerminalCharge = spec?.targetTerminalCharge ?? 1;
 
   const engineRef = useRef<PlayableMazeEngine | null>(null);
 
   const [playerPos, setPlayerPos] = useState<[number, number]>(start);
   const [cellGrid, setCellGrid] = useState<CellState[][]>(() => {
-    if (Array.isArray(spec?.cells) && spec.cells.length > 0) {
-      return spec.cells;
-    }
-    return Array.from({ length: height }, (_, y) =>
-      Array.from({ length: width }, (_, x) => ({
-        charge: ((x + y) % 2 === 0 ? 1 : -1) as (1 | -1),
-        spin: 0 as const,
-        visited: false,
-        mutationCount: 0,
-      }))
-    );
+    if (Array.isArray(spec?.cells) && spec.cells.length > 0) return spec.cells;
+    return ensureSpecCells(spec).cells;
   });
   const [playerPath, setPlayerPath] = useState<[number, number][]>([start]);
   const [currentEntropy, setCurrentEntropy] = useState<number>(0);
@@ -216,7 +358,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode 
 
       if (!res.success) {
         if (res.reason === 'REPULSION') {
-          setRepelWarning(isEn ? 'Repelled by matching charge!' : '同極相斥，無法踏入！');
+          setRepelWarning(isEn ? '⚡ Repelled by matching charge!' : '⚡ 同極相斥，無法進入！');
           setTimeout(() => setRepelWarning(null), 1000);
         }
         return false;
@@ -239,6 +381,15 @@ export const MazeBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode 
         next.set(key, (next.get(key) || 0) + 1);
         return next;
       });
+
+      if (res.reason === 'PARITY_LOCKED') {
+        setRepelWarning(
+          isEn
+            ? `🔒 Parity mismatch! Goal requires ${targetTerminalCharge === 1 ? 'Positive (+1)' : 'Negative (-1)'}`
+            : `🔒 終點宇稱不符！需攜帶「${targetTerminalCharge === 1 ? '正極(紅)' : '負極(藍)'}」抵達`
+        );
+        setTimeout(() => setRepelWarning(null), 2500);
+      }
 
       const distToGoal = Math.abs(nextPos[0] - end[0]) + Math.abs(nextPos[1] - end[1]);
       if (distToGoal <= 2 && spec?.hasPhase2MentalGlitch && !glitchTriggeredRef.current) {
@@ -282,6 +433,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode 
       isCompleted,
       end,
       spec?.hasPhase2MentalGlitch,
+      targetTerminalCharge,
       isEn,
       startTime,
       optimalSolution.length,
@@ -442,6 +594,9 @@ export const MazeBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode 
     [isDarkVision, playerPos]
   );
 
+  const currentPlayerCharge = engineRef.current ? engineRef.current.cells[playerPos[1]][playerPos[0]].charge : 1;
+  const isParityAligned = currentPlayerCharge === targetTerminalCharge;
+
   if (!spec || !spec.grid || spec.grid.length === 0) {
     return (
       <div className="flex items-center justify-center p-8 text-xs font-mono text-slate-500">
@@ -463,8 +618,8 @@ export const MazeBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode 
             <span className="text-cyan-400 font-bold">
               {spec?.hasPhase2MentalGlitch
                 ? isEn
-                  ? '⚔️ Parity Collapse'
-                  : '⚔️ 宇稱坍縮滑動'
+                  ? '⚔️ Parity Collapse (Hardcore)'
+                  : '⚔️ 宇稱坍縮滑動（競技級）'
                 : isEn
                 ? '🌀 Deterministic Lattice'
                 : '🌀 確定性晶格迷宮'}
@@ -474,29 +629,38 @@ export const MazeBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode 
               className={`px-1.5 py-0.5 rounded border transition cursor-pointer ${
                 isFav ? 'border-amber-500 text-amber-300 bg-amber-950' : 'border-slate-700 text-slate-500'
               }`}
-              title={isFav ? (isEn ? 'In Vault' : '已在傳奇庫') : (isEn ? 'Save to Vault' : '收藏')}
+              title={isFav ? (isEn ? 'In Vault' : '已在傳奇庫') : isEn ? 'Save to Vault' : '收藏'}
             >
               {isFav ? '★' : '☆'}
             </button>
           </div>
-          <span className="text-slate-500 text-[8px]">
-            {isEn ? 'Hamming Mutation' : '漢明擾動'}: <b className="text-cyan-300">{(currentEntropy * 100).toFixed(1)}%</b>
-            {previewHover?.canMove && previewHover.entropyDelta !== 0 && (
-              <span
-                className={`font-bold ml-1 animate-pulse ${
-                  previewHover.entropyDelta > 0 ? 'text-amber-400' : 'text-emerald-400'
-                }`}
-              >
-                ({previewHover.entropyDelta > 0 ? '+' : ''}
-                {((previewHover.entropyDelta / (2 * width * height)) * 100).toFixed(1)}%)
-              </span>
-            )}
-          </span>
+          {/* 終點宇稱即時狀態指示燈 */}
+          <div className="flex items-center gap-1 text-[8px]">
+            <span className="text-slate-500">{isEn ? 'Key Sync' : '宇稱對齊'}:</span>
+            <span
+              className={`font-black px-1 rounded ${
+                isParityAligned
+                  ? 'bg-emerald-950 text-emerald-300 border border-emerald-500/50'
+                  : 'bg-rose-950 text-rose-400 border border-rose-500/50 animate-pulse'
+              }`}
+            >
+              {isParityAligned ? (isEn ? 'READY' : '已就緒') : isEn ? 'INVERT REQ' : '需調相'}
+            </span>
+          </div>
         </div>
+
         <div className="grid grid-cols-3 gap-1">
           <div className="bg-slate-950 border border-slate-800 p-1 rounded text-center">
-            <div className="text-slate-500 text-[7px]">{isEn ? 'Time' : '耗時'}</div>
-            <div className="text-slate-200 font-bold">{(elapsedMs / 1000).toFixed(1)}s</div>
+            <div className="text-slate-500 text-[7px]">{isEn ? 'Body / Goal Key' : '自身 / 終點宇稱'}</div>
+            <div className="font-bold flex items-center justify-center gap-1">
+              <span className={currentPlayerCharge === 1 ? 'text-rose-400' : 'text-blue-400'}>
+                {currentPlayerCharge === 1 ? '+1' : '-1'}
+              </span>
+              <span className="text-slate-600">/</span>
+              <span className={targetTerminalCharge === 1 ? 'text-rose-400' : 'text-blue-400'}>
+                {targetTerminalCharge === 1 ? '+1' : '-1'}
+              </span>
+            </div>
           </div>
           <div className="bg-slate-950 border border-slate-800 p-1 rounded text-center">
             <div className="text-slate-500 text-[7px]">{isEn ? 'Action Steps / Opt' : '動作步數 / 最優'}</div>
@@ -515,11 +679,11 @@ export const MazeBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode 
 
       {repelWarning && (
         <div className="w-full max-w-[360px] mb-1 py-1 px-2 bg-rose-950/90 border border-rose-500 text-rose-200 text-[9px] text-center font-bold rounded animate-pulse shadow-lg">
-          ⚡ {repelWarning}
+          {repelWarning}
         </div>
       )}
 
-      {/* 迷宮畫布 */}
+      {/* 迷宮畫布（Memoized Cell 陣列） */}
       <div className="relative p-2 bg-slate-950 border-2 border-slate-800 rounded-xl shadow-2xl flex flex-col items-center">
         <div
           className="grid gap-[1px] bg-slate-900 p-[2px] rounded border border-slate-800 relative"
@@ -527,7 +691,6 @@ export const MazeBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode 
         >
           {grid.map((row, y) =>
             row.map((val, x) => {
-              const isWall = val === 1;
               const isStart = x === start[0] && y === start[1];
               const isEnd = x === end[0] && y === end[1];
               const isPseudo = pseudoGoals.some(([px, py]) => px === x && py === y);
@@ -541,106 +704,49 @@ export const MazeBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode 
 
               const cell = cellGrid[y]?.[x];
               const initialCell = spec?.initialCells?.[y]?.[x];
-              const isPositive = cell?.charge === 1;
               const visitHeat = visitedCounts.get(`${x},${y}`) || 0;
 
-              const hasRealHammingDistortion =
-                initialCell && (cell?.charge !== initialCell.charge || cell?.spin !== initialCell.spin);
+              const hasRealHammingDistortion = Boolean(
+                initialCell && (cell?.charge !== initialCell.charge || cell?.spin !== initialCell.spin)
+              );
 
-              const isPreviewLanding =
-                previewHover?.canMove && previewHover.landing[0] === x && previewHover.landing[1] === y;
-              const isIntermediateSlip =
+              const isPreviewLanding = Boolean(
+                previewHover?.canMove && previewHover.landing[0] === x && previewHover.landing[1] === y
+              );
+              const isIntermediateSlip = Boolean(
                 previewHover?.canMove &&
-                previewHover.intermediate &&
-                previewHover.intermediate[0] === x &&
-                previewHover.intermediate[1] === y;
-
-              // 牆體明確對比度
-              let cellBg = 'bg-slate-950';
-              if (isWall) {
-                cellBg = 'bg-slate-800/90 border border-slate-700/50 shadow-inner rounded-[1px]';
-              } else if (cell) {
-                if (isPositive) {
-                  cellBg = hasRealHammingDistortion
-                    ? 'bg-rose-950/70 border border-rose-500/60 shadow-[inset_0_0_5px_rgba(244,63,94,0.4)]'
-                    : 'bg-rose-950/30 border border-rose-900/40';
-                } else {
-                  cellBg = hasRealHammingDistortion
-                    ? 'bg-blue-950/70 border border-blue-500/60 shadow-[inset_0_0_5px_rgba(59,130,246,0.4)]'
-                    : 'bg-blue-950/30 border border-blue-900/40';
-                }
-              }
-
-              if (showHeatmap && !isWall && visitHeat > 0) {
-                cellBg = visitHeat >= 4 ? 'bg-rose-600/80' : visitHeat >= 2 ? 'bg-amber-500/70' : 'bg-emerald-600/50';
-              }
-
-              if (showDeceptionWaypoints && waypointHit) {
-                cellBg = 'bg-purple-600/90 shadow-[0_0_8px_rgba(168,85,247,0.9)] animate-pulse';
-              }
-
-              if (!isVisible && !isCompleted) {
-                cellBg = 'bg-slate-950/95';
-              }
+                  previewHover.intermediate &&
+                  previewHover.intermediate[0] === x &&
+                  previewHover.intermediate[1] === y
+              );
 
               return (
-                <div
+                <MazeCell
                   key={`${x}-${y}`}
-                  onClick={() => waypointHit && setSelectedWaypoint(waypointHit)}
-                  style={{ width: cellSize, height: cellSize, aspectRatio: '1/1' }}
-                  className={`flex items-center justify-center font-bold text-[8px] transition-colors duration-150 relative ${cellBg} ${
-                    waypointHit ? 'cursor-pointer' : ''
-                  }`}
-                >
-                  {isVisible && !isWall && cell && (
-                    <>
-                      {!isGlitching && (
-                        <span
-                          className={`text-[8px] font-mono select-none ${
-                            hasRealHammingDistortion ? 'opacity-90 font-black' : 'opacity-35'
-                          } ${isPositive ? 'text-rose-300' : 'text-blue-300'}`}
-                        >
-                          {DIR_ARROWS[cell.spin]}
-                        </span>
-                      )}
-
-                      {isStart && <span className="text-emerald-400 text-[9px] font-black absolute z-10">S</span>}
-                      {isEnd && (
-                        <span className="text-amber-400 text-[9px] font-black absolute z-10 animate-pulse">★</span>
-                      )}
-                      {isPseudo && !isEnd && (
-                        <span className="text-purple-400/80 text-[7px] opacity-60 absolute z-10">✦</span>
-                      )}
-                      {(isTwinA || isTwinB) && !isStart && !isEnd && (
-                        <span className="text-amber-400/60 text-[7px] font-bold absolute z-10">♊</span>
-                      )}
-
-                      {isIntermediateSlip && (
-                        <div className="w-full h-full border-2 border-dashed border-amber-400/90 bg-amber-500/20 absolute z-15" />
-                      )}
-
-                      {isPreviewLanding && (
-                        <div className="w-full h-full border-2 border-emerald-400 bg-emerald-500/30 absolute z-15 animate-ping" />
-                      )}
-
-                      {isPlayer && (
-                        <div className="w-[70%] h-[70%] bg-cyan-400 rounded-sm shadow-[0_0_8px_rgba(34,211,238,0.9)] z-20 flex items-center justify-center">
-                          <div className="w-1.5 h-1.5 bg-black rounded-full" />
-                        </div>
-                      )}
-
-                      {isGhost && (
-                        <div
-                          className={`w-[60%] h-[60%] rounded-full z-20 animate-ping ${
-                            ghostMode === 'optimal'
-                              ? 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.9)]'
-                              : 'bg-purple-400'
-                          }`}
-                        />
-                      )}
-                    </>
-                  )}
-                </div>
+                  x={x}
+                  y={y}
+                  val={val}
+                  cellSize={cellSize}
+                  isPlayer={isPlayer}
+                  isGhost={Boolean(isGhost)}
+                  ghostMode={ghostMode}
+                  isVisible={isVisible}
+                  isStart={isStart}
+                  isEnd={isEnd}
+                  isPseudo={isPseudo}
+                  isTwin={isTwinA || isTwinB}
+                  isGlitching={isGlitching}
+                  targetTerminalCharge={targetTerminalCharge}
+                  cell={cell}
+                  hasRealHammingDistortion={hasRealHammingDistortion}
+                  visitHeat={visitHeat}
+                  showHeatmap={showHeatmap}
+                  showDeceptionWaypoints={showDeceptionWaypoints}
+                  waypointHit={waypointHit}
+                  isPreviewLanding={isPreviewLanding}
+                  isIntermediateSlip={isIntermediateSlip}
+                  onWaypointClick={setSelectedWaypoint}
+                />
               );
             })
           )}
