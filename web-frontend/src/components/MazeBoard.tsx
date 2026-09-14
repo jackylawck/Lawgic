@@ -1,4 +1,3 @@
-// web-frontend/src/components/MazeBoard.tsx
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { PuzzleEntity, TierKey } from '../generated';
 import { useLearnerProfile } from '../hooks/useLearnerProfile';
@@ -27,7 +26,6 @@ interface Props {
   tournamentMode?: boolean;
 }
 
-// 確保 cells 擁有保底矩陣生成器，修復 charge (必須為 1 或 -1) 與完整屬性
 const ensureSpecCells = (s: MazeSpec): MazeSpec => {
   if (Array.isArray(s.cells) && s.cells.length > 0) {
     return s;
@@ -115,7 +113,6 @@ export const MazeBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode 
   const [strategicThoughtTime, setStrategicThoughtTime] = useState<number>(0);
   const hasRecordedRef = useRef<boolean>(false);
 
-  // 實體防作弊稽核 Session
   const proctoringRef = useRef<TournamentProctoringSession | null>(null);
 
   useEffect(() => {
@@ -432,7 +429,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode 
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [handlePhysicsMove, handlePhysicsRotate, handlePhysicsUndo, handleFullReset, isCompleted]);
 
-  const cellSize = Math.max(16, Math.min(340 / Math.max(width, height), 26));
+  const cellSize = Math.max(14, Math.min(320 / Math.max(width, height), 24));
 
   const isVisibleInDark = useCallback(
     (x: number, y: number): boolean => {
@@ -524,7 +521,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode 
       {/* 迷宮畫布 */}
       <div className="relative p-2 bg-slate-950 border-2 border-slate-800 rounded-xl shadow-2xl flex flex-col items-center">
         <div
-          className="grid gap-[1px] bg-slate-900/90 p-[2px] rounded border border-slate-800 relative"
+          className="grid gap-[1px] bg-slate-900 p-[2px] rounded border border-slate-800 relative"
           style={{ gridTemplateColumns: `repeat(${width}, minmax(0, 1fr))` }}
         >
           {grid.map((row, y) =>
@@ -557,18 +554,19 @@ export const MazeBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode 
                 previewHover.intermediate[0] === x &&
                 previewHover.intermediate[1] === y;
 
+              // 牆體明確對比度
               let cellBg = 'bg-slate-950';
               if (isWall) {
-                cellBg = 'bg-slate-900';
+                cellBg = 'bg-slate-800/90 border border-slate-700/50 shadow-inner rounded-[1px]';
               } else if (cell) {
                 if (isPositive) {
                   cellBg = hasRealHammingDistortion
-                    ? 'bg-rose-950/60 border border-rose-500/60 shadow-[inset_0_0_5px_rgba(244,63,94,0.4)]'
-                    : 'bg-rose-950/20 border border-rose-900/30';
+                    ? 'bg-rose-950/70 border border-rose-500/60 shadow-[inset_0_0_5px_rgba(244,63,94,0.4)]'
+                    : 'bg-rose-950/30 border border-rose-900/40';
                 } else {
                   cellBg = hasRealHammingDistortion
-                    ? 'bg-blue-950/60 border border-blue-500/60 shadow-[inset_0_0_5px_rgba(59,130,246,0.4)]'
-                    : 'bg-blue-950/20 border border-blue-900/30';
+                    ? 'bg-blue-950/70 border border-blue-500/60 shadow-[inset_0_0_5px_rgba(59,130,246,0.4)]'
+                    : 'bg-blue-950/30 border border-blue-900/40';
                 }
               }
 
@@ -588,7 +586,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode 
                 <div
                   key={`${x}-${y}`}
                   onClick={() => waypointHit && setSelectedWaypoint(waypointHit)}
-                  style={{ width: cellSize, height: cellSize }}
+                  style={{ width: cellSize, height: cellSize, aspectRatio: '1/1' }}
                   className={`flex items-center justify-center font-bold text-[8px] transition-colors duration-150 relative ${cellBg} ${
                     waypointHit ? 'cursor-pointer' : ''
                   }`}
