@@ -1,8 +1,9 @@
+// web-frontend/src/engines/mazeGenerator.ts
 import { PuzzleEntity, TierKey } from '../generated';
 
 export type ExtendedTierKey = TierKey;
 export type StrategyPersona = 'Macro-Planner' | 'Wall-Follower' | 'Intuitive-Explorer';
-export type Direction = 0 | 1 | 2 | 3; // 0: 上 (N), 1: 右 (E), 2: 下 (S), 3: 左 (W)
+export type Direction = 0 | 1 | 2 | 3;
 
 export const DIR_VECTORS: [number, number][] = [
   [0, -1],
@@ -14,16 +15,16 @@ export const DIR_VECTORS: [number, number][] = [
 export const DIR_ARROWS = ['↑', '→', '↓', '←'];
 
 export interface CellState {
-  charge: 1 | -1;          // 1: 正極 (紅), -1: 負極 (藍)
-  spin: Direction;         // 踏入時若進入方向不一致觸發的滑動向量
-  visited: boolean;        // 擾動標記
-  mutationCount: number;   // 累計擾動次數
+  charge: 1 | -1;
+  spin: Direction;
+  visited: boolean;
+  mutationCount: number;
 }
 
 export interface DeceptionWaypoint {
   coordinate: [number, number];
   divergedStep: number;
-  regretCost: number;      // 物理後悔代價：走入分歧後相對於最優解的步數差
+  regretCost: number;
   trapType: 'Straight_Lure' | 'Camouflaged_Bypass' | 'Goal_Keeper_Fork' | 'Twin_Landmark_Trap';
 }
 
@@ -36,9 +37,9 @@ export interface TwinLandmarkPair {
 export interface MazeSpec {
   rows: number;
   cols: number;
-  grid: number[][];            // 0: 通道, 1: 幾何牆壁
-  cells: CellState[][];        // 物理微觀狀態
-  initialCells: CellState[][]; // 初始快照
+  grid: number[][];
+  cells: CellState[][];
+  initialCells: CellState[][];
   width: number;
   height: number;
   size: number;
@@ -68,6 +69,7 @@ export interface MazeSpec {
   hasPhase2MentalGlitch: boolean;
   timeLimitSec: number;
   solving_path: string[];
+  targetTerminalCharge: 1 | -1;
 }
 
 export interface MazeMetrics {
@@ -100,6 +102,7 @@ export interface MazeMetrics {
   solving_path: string[];
   seed: number;
   actualTier: TierKey;
+  rejectionAuditLog?: Record<string, number>;
 }
 
 export interface ActionMove {
@@ -120,7 +123,7 @@ export interface StepResult {
   landing: [number, number];
   intermediate: [number, number] | null;
   changedCells: [number, number][];
-  reason?: 'OUT_OF_BOUNDS' | 'WALL' | 'REPULSION';
+  reason?: 'OUT_OF_BOUNDS' | 'WALL' | 'REPULSION' | 'PARITY_LOCKED';
 }
 
 export interface PreviewResult {
@@ -130,7 +133,7 @@ export interface PreviewResult {
   slid: boolean;
   pathTraversed: [number, number][];
   entropyDelta: number;
-  reason?: 'OUT_OF_BOUNDS' | 'WALL' | 'REPULSION';
+  reason?: 'OUT_OF_BOUNDS' | 'WALL' | 'REPULSION' | 'PARITY_LOCKED';
 }
 
 class ZobristTable {
@@ -172,6 +175,7 @@ export class PlayableMazeEngine {
   public steps: number = 0;
   public undoCount: number = 0;
   public zobristHash: number = 0;
+  public readonly targetTerminalCharge: 1 | -1;
 
   private history: Array<{
     action: MazeAction;
@@ -196,6 +200,7 @@ export class PlayableMazeEngine {
     this.startPos = [spec.start[0], spec.start[1]];
     this.goalPos = [spec.end[0], spec.end[1]];
     this.initialCells = spec.initialCells;
+    this.targetTerminalCharge = spec.targetTerminalCharge ?? 1;
 
     if (initialData) {
       this.pos = [initialData.pos[0], initialData.pos[1]];
@@ -365,8 +370,18 @@ export class PlayableMazeEngine {
       prevHash,
     });
 
-    const hitGoal = this.pos[0] === this.goalPos[0] && this.pos[1] === this.goalPos[1];
-    return { success: true, hitGoal, slid: p.slid, landing: this.pos, intermediate: p.intermediate, changedCells };
+    const isAtGoal = this.pos[0] === this.goalPos[0] && this.pos[1] === this.goalPos[1];
+    const hitGoal = isAtGoal && (this.cells[this.pos[1]][this.pos[0]].charge === this.targetTerminalCharge);
+
+    return { 
+      success: true, 
+      hitGoal, 
+      slid: p.slid, 
+      landing: this.pos, 
+      intermediate: p.intermediate, 
+      changedCells,
+      reason: (isAtGoal && !hitGoal) ? 'PARITY_LOCKED' : undefined 
+    };
   }
 
   public rollback(): boolean {
@@ -454,15 +469,16 @@ interface TierConfig {
   minPhaseGain: number;
   baseIrt: number;
   timeLimitSec: number;
+  baseSearchBudget: number;
 }
 
 const TIER_SPECS: Record<TierKey, TierConfig> = {
-  kids: { size: 9, minCriticalDepth: 3, dynamicLookaheadDepth: 2, maxVisualOptimalOverlap: 0.70, minPhaseGain: 1.05, baseIrt: 0.65, timeLimitSec: 60 },
-  intermediate: { size: 13, minCriticalDepth: 5, dynamicLookaheadDepth: 3, maxVisualOptimalOverlap: 0.55, minPhaseGain: 1.15, baseIrt: 1.45, timeLimitSec: 120 },
-  expert: { size: 17, minCriticalDepth: 7, dynamicLookaheadDepth: 4, maxVisualOptimalOverlap: 0.45, minPhaseGain: 1.25, baseIrt: 2.35, timeLimitSec: 180 },
-  master: { size: 21, minCriticalDepth: 9, dynamicLookaheadDepth: 5, maxVisualOptimalOverlap: 0.40, minPhaseGain: 1.30, baseIrt: 3.15, timeLimitSec: 240 },
-  legendary: { size: 25, minCriticalDepth: 11, dynamicLookaheadDepth: 6, maxVisualOptimalOverlap: 0.38, minPhaseGain: 1.35, baseIrt: 3.75, timeLimitSec: 360 },
-  ultimate: { size: 29, minCriticalDepth: 13, dynamicLookaheadDepth: 7, maxVisualOptimalOverlap: 0.35, minPhaseGain: 1.40, baseIrt: 4.35, timeLimitSec: 480 },
+  kids: { size: 9, minCriticalDepth: 3, dynamicLookaheadDepth: 2, maxVisualOptimalOverlap: 0.70, minPhaseGain: 1.05, baseIrt: 0.65, timeLimitSec: 60, baseSearchBudget: 150000 },
+  intermediate: { size: 13, minCriticalDepth: 5, dynamicLookaheadDepth: 3, maxVisualOptimalOverlap: 0.55, minPhaseGain: 1.15, baseIrt: 1.45, timeLimitSec: 120, baseSearchBudget: 350000 },
+  expert: { size: 17, minCriticalDepth: 7, dynamicLookaheadDepth: 4, maxVisualOptimalOverlap: 0.45, minPhaseGain: 1.25, baseIrt: 2.35, timeLimitSec: 180, baseSearchBudget: 650000 },
+  master: { size: 21, minCriticalDepth: 9, dynamicLookaheadDepth: 5, maxVisualOptimalOverlap: 0.40, minPhaseGain: 1.30, baseIrt: 3.15, timeLimitSec: 240, baseSearchBudget: 950000 },
+  legendary: { size: 25, minCriticalDepth: 11, dynamicLookaheadDepth: 6, maxVisualOptimalOverlap: 0.38, minPhaseGain: 1.35, baseIrt: 3.75, timeLimitSec: 360, baseSearchBudget: 1200000 },
+  ultimate: { size: 29, minCriticalDepth: 13, dynamicLookaheadDepth: 7, maxVisualOptimalOverlap: 0.35, minPhaseGain: 1.40, baseIrt: 4.35, timeLimitSec: 480, baseSearchBudget: 1500000 },
 };
 
 function mulberry32(a: number) {
@@ -478,7 +494,8 @@ export class WebMazeGenerator {
   public static generate(
     tier: TierKey = 'kids',
     personaBias?: StrategyPersona,
-    inputSeed?: number
+    inputSeed?: number,
+    onProgress?: (progress: number) => void
   ): PuzzleEntity {
     const config = TIER_SPECS[tier] || TIER_SPECS.kids;
     const actualSeed = inputSeed !== undefined ? inputSeed : Math.floor(Math.random() * 0x7fffffff);
@@ -486,8 +503,16 @@ export class WebMazeGenerator {
     const width = size;
     const height = size;
 
-    const maxAttempts = 40;
+    const rejectionLog: Record<string, number> = {
+      IDA_UNSOLVABLE_OR_BUDGET: 0,
+      INTUITIVE_STUCK: 0,
+      WAVE_OR_REGRET_REJECTED: 0,
+    };
+
+    const maxAttempts = 30;
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      if (onProgress) onProgress(attempt / maxAttempts);
+
       const attemptSeed = (actualSeed + attempt * 0x9e3779b9) >>> 0;
       const rnd = mulberry32(attemptSeed);
 
@@ -505,8 +530,9 @@ export class WebMazeGenerator {
       const geometricCorridor = this._bfs(grid, width, height, start, end);
       if (geometricCorridor.length < Math.max(3, config.minCriticalDepth - 2)) continue;
 
-      const { cells, initialCells } = this._initializePhysicalLattice(
-        grid, width, height, start, end, geometricCorridor, rnd
+      // 隨機起點/終點宇稱 + 拓撲鎖門物理場初始化
+      const { cells, initialCells, terminalKey } = this._initializeHardcoreLattice(
+        grid, width, height, start, end, geometricCorridor, tier, rnd
       );
 
       const rawSpec: MazeSpec = {
@@ -544,43 +570,45 @@ export class WebMazeGenerator {
         hasPhase2MentalGlitch: tier !== 'kids',
         timeLimitSec: config.timeLimitSec,
         solving_path: [],
+        targetTerminalCharge: terminalKey,
       };
 
-      const adaptiveBudget = Math.max(100000, size * size * 200);
-      let physicalSolution = this._solvePhysicalIDAStar(rawSpec, undefined, size * size * 2, adaptiveBudget);
-
-      if (!physicalSolution) {
-        physicalSolution = {
-          actionLandings: geometricCorridor,
-          actionTypes: geometricCorridor.slice(1).map((curr, idx) => {
-            const prev = geometricCorridor[idx];
-            const dx = curr[0] - prev[0];
-            const dy = curr[1] - prev[1];
-            const dir = DIR_VECTORS.findIndex(([vx, vy]) => vx === dx && vy === dy);
-            return { type: 'MOVE', dir: (dir >= 0 ? dir : 0) as Direction };
-          }),
-        };
+      // 1. 純求解：滿血 IDA* (最高 150 萬節點預算，徹底釋放複雜物理拓撲)
+      const physicalSolution = this._solvePhysicalIDAStar(rawSpec, undefined, size * size * 2, config.baseSearchBudget);
+      if (!physicalSolution || physicalSolution.actionLandings.length < config.minCriticalDepth) {
+        rejectionLog.IDA_UNSOLVABLE_OR_BUDGET++;
+        continue;
       }
 
+      // 2. 短視代理人測試
       const intuitiveResult = this._simulateShortSightedPhysicalGreedy(rawSpec);
-      const intuitiveLandings = intuitiveResult.reachedEnd ? intuitiveResult.actionLandings : geometricCorridor;
-      const intuitiveTypes = intuitiveResult.reachedEnd ? intuitiveResult.actionTypes : physicalSolution.actionTypes;
+      if (!intuitiveResult.reachedEnd) {
+        rejectionLog.INTUITIVE_STUCK++;
+        continue;
+      }
 
+      // 3. 獨立驗收：輕量波浪與真實物理 BFS 後悔分析
       const { waypoints, maxVisualRegret, avgVisualRegret, phaseGain, isWaveCompliant } =
         this._analyzeHistoricalBifurcationsAndWave(
           physicalSolution.actionTypes,
-          intuitiveTypes,
+          intuitiveResult.actionTypes,
           rawSpec,
           config.minPhaseGain
         );
 
-      const overlapRatio = this._computePathOverlapRatio(physicalSolution.actionLandings, intuitiveLandings);
+      const overlapRatio = this._computePathOverlapRatio(physicalSolution.actionLandings, intuitiveResult.actionLandings);
       const wallSim = this._simulateWallFollower(grid, width, height, start, end);
       const divergenceRatio = Number((wallSim.path.length / Math.max(1, physicalSolution.actionLandings.length)).toFixed(2));
       const ambiguityIndex = this._computeLocalAmbiguityIndex(grid, width, height, physicalSolution.actionLandings);
 
       if (attempt < 20 && tier !== 'kids') {
-        if (overlapRatio > config.maxVisualOptimalOverlap + 0.15 || divergenceRatio < 1.05) {
+        if (
+          overlapRatio > config.maxVisualOptimalOverlap ||
+          divergenceRatio < 1.15 ||
+          !isWaveCompliant ||
+          maxVisualRegret < 1.0
+        ) {
+          rejectionLog.WAVE_OR_REGRET_REJECTED++;
           continue;
         }
       }
@@ -601,13 +629,14 @@ export class WebMazeGenerator {
 
       const estimatedTimeSec = Math.min(
         config.timeLimitSec,
-        Math.round(14 + intuitiveLandings.length * 0.45 + turnCount * 0.6 + maxVisualRegret * 0.75)
+        Math.round(14 + intuitiveResult.actionLandings.length * 0.45 + turnCount * 0.6 + maxVisualRegret * 0.75)
       );
 
       const solvingPath = [
-        `Physical Optimal Path: ${physicalSolution.actionLandings.length} steps`,
-        `Cognitive Phase Gain: ${phaseGain.toFixed(2)}x`,
-        `Critical Deception Forks: ${waypoints.length} nodes`,
+        `Verified Hardcore Optimal: ${physicalSolution.actionLandings.length} actions`,
+        `Terminal Key Parity: ${terminalKey === 1 ? 'Positive (+1)' : 'Negative (-1)'}`,
+        `Cognitive Wave Gain: ${phaseGain.toFixed(2)}x (Peak Regret: ≈${maxVisualRegret} steps)`,
+        `Forks Analyzed: ${waypoints.length} verified branches`,
       ];
 
       rawSpec.deceptionWaypoints = waypoints;
@@ -628,7 +657,7 @@ export class WebMazeGenerator {
         turn_count: turnCount,
         mean_dead_end_depth: Number(realDeadEndDepth.toFixed(2)),
         tortuosity: Number(tortuosity.toFixed(3)),
-        human_sim_steps: intuitiveLandings.length,
+        human_sim_steps: intuitiveResult.actionLandings.length,
         baseline_wall_steps: wallSim.path.length,
         wall_follower_completed: wallSim.reachedEnd,
         wall_follower_looped: wallSim.loopDetected,
@@ -649,7 +678,10 @@ export class WebMazeGenerator {
         solving_path: solvingPath,
         seed: actualSeed,
         actualTier: tier,
+        rejectionAuditLog: rejectionLog,
       };
+
+      if (onProgress) onProgress(1.0);
 
       return {
         id: `maze_${tier}_s${actualSeed}_a${attempt}`,
@@ -665,18 +697,84 @@ export class WebMazeGenerator {
           workingMemory: Math.min(1.0, 0.25 + (maxVisualRegret / 30.0) * 0.45),
           inhibition: Math.min(1.0, 0.25 + (1 - overlapRatio) * 0.5),
         },
-        checksum: `MAZE_V21_PROD_READY_${size}x${size}_S${actualSeed}_A${attempt}`,
+        checksum: `MAZE_V23_WORKER_VERIFIED_${size}x${size}_S${actualSeed}_A${attempt}`,
       };
     }
 
     return this._generateSafeFallback(tier, size, actualSeed, config.baseIrt, config.timeLimitSec);
   }
 
+  // --------------------------------------------------------------------------
+  // 起終點隨機化 + 拓撲鎖門物理場初始化
+  // --------------------------------------------------------------------------
+  private static _initializeHardcoreLattice(
+    grid: number[][],
+    width: number,
+    height: number,
+    start: [number, number],
+    end: [number, number],
+    corridor: [number, number][],
+    tier: TierKey,
+    rnd: () => number
+  ): { cells: CellState[][]; initialCells: CellState[][]; terminalKey: 1 | -1 } {
+    const cells: CellState[][] = Array.from({ length: height }, (_, y) =>
+      Array.from({ length: width }, (_, x) => ({
+        charge: (rnd() > 0.5 ? 1 : -1) as (1 | -1),
+        spin: Math.floor(rnd() * 4) as Direction,
+        visited: false,
+        mutationCount: 0,
+      }))
+    );
+
+    // 起點隨機極性與自旋，杜絕先驗反推
+    const startCharge = (rnd() > 0.5 ? 1 : -1) as (1 | -1);
+    cells[start[1]][start[0]] = {
+      charge: startCharge,
+      spin: Math.floor(rnd() * 4) as Direction,
+      visited: true,
+      mutationCount: 0,
+    };
+
+    // 保證第一步有合法踏入點
+    if (corridor.length > 1) {
+      const [p1x, p1y] = corridor[1];
+      cells[p1y][p1x].charge = (startCharge * -1) as (1 | -1);
+    }
+
+    // 注入拓撲同極相斥鎖門
+    if (tier !== 'kids' && corridor.length >= 8) {
+      const chokePoints = [
+        Math.floor(corridor.length * 0.35),
+        Math.floor(corridor.length * 0.70),
+      ];
+
+      for (const cp of chokePoints) {
+        const [cx, cy] = corridor[cp];
+        const [px, py] = corridor[cp - 1];
+        cells[cy][cx].charge = cells[py][px].charge;
+        cells[cy][cx].spin = ((cells[py][px].spin + 1) % 4) as Direction;
+      }
+    }
+
+    // 終點隨機宇稱鑰匙與自旋
+    const [ex, ey] = end;
+    const terminalKey = (rnd() > 0.5 ? 1 : -1) as (1 | -1);
+    cells[ey][ex] = {
+      charge: terminalKey,
+      spin: Math.floor(rnd() * 4) as Direction,
+      visited: false,
+      mutationCount: 0,
+    };
+
+    const initialCells = cells.map((row) => row.map((cell) => ({ ...cell })));
+    return { cells, initialCells, terminalKey };
+  }
+
   private static _solvePhysicalIDAStar(
     spec: MazeSpec,
     overrideEngine?: PlayableMazeEngine,
     maxDepthLimit = 120,
-    nodeBudget = 150000
+    nodeBudget = 300000
   ): { actionLandings: [number, number][]; actionTypes: MazeAction[] } | null {
     const engine = overrideEngine ? overrideEngine.fastClone(spec) : new PlayableMazeEngine(spec);
     const startPos = engine.pos;
@@ -700,7 +798,12 @@ export class WebMazeGenerator {
       const h = calcH(cx, cy);
       const f = g + h;
       if (f > bound) return f;
-      if (cx === endPos[0] && cy === endPos[1]) return 'FOUND';
+
+      if (cx === endPos[0] && cy === endPos[1]) {
+        if (engine.cells[cy][cx].charge === engine.targetTerminalCharge) {
+          return 'FOUND';
+        }
+      }
 
       const stateKey = `${cx},${cy}|${engine.zobristHash}`;
       if (pathStateSet.has(stateKey)) return bound + 1;
@@ -802,7 +905,8 @@ export class WebMazeGenerator {
       }
     }
 
-    const reachedEnd = engine.pos[0] === spec.end[0] && engine.pos[1] === spec.end[1];
+    const isAtGoal = engine.pos[0] === spec.end[0] && engine.pos[1] === spec.end[1];
+    const reachedEnd = isAtGoal && (engine.cells[engine.pos[1]][engine.pos[0]].charge === engine.targetTerminalCharge);
     return { actionLandings, actionTypes, reachedEnd };
   }
 
@@ -957,66 +1061,6 @@ export class WebMazeGenerator {
       if (moveDirs[i] !== moveDirs[i - 1]) turns++;
     }
     return turns;
-  }
-
-  private static _initializePhysicalLattice(
-    grid: number[][],
-    width: number,
-    height: number,
-    start: [number, number],
-    end: [number, number],
-    corridor: [number, number][],
-    rnd: () => number
-  ): { cells: CellState[][]; initialCells: CellState[][] } {
-    // 預設全域棋盤格奇偶交替（基底異極）
-    const cells: CellState[][] = Array.from({ length: height }, (_, y) =>
-      Array.from({ length: width }, (_, x) => ({
-        charge: ((x + y) % 2 === 0 ? 1 : -1) as (1 | -1),
-        spin: Math.floor(rnd() * 4) as Direction,
-        visited: false,
-        mutationCount: 0,
-      }))
-    );
-
-    // 核心走廊嚴格交替賦予（正 -> 負 -> 正 -> 負），保證起點第一步永遠可邁出
-    const corridorSet = new Set<string>();
-    let currentCharge: 1 | -1 = 1;
-    for (let i = 0; i < corridor.length; i++) {
-      const [cx, cy] = corridor[i];
-      corridorSet.add(`${cx},${cy}`);
-      cells[cy][cx].charge = currentCharge;
-      currentCharge = (currentCharge * -1) as (1 | -1);
-
-      if (i < corridor.length - 1) {
-        const [nx, ny] = corridor[i + 1];
-        const dx = nx - cx;
-        const dy = ny - cy;
-        const forwardDir = DIR_VECTORS.findIndex(([vx, vy]) => vx === dx && vy === dy);
-        if (forwardDir !== -1) {
-          cells[cy][cx].spin = forwardDir as Direction;
-        }
-      }
-    }
-
-    // 在分歧死胡同的盲端保留實質同極相斥陷阱
-    for (let y = 1; y < height - 1; y++) {
-      for (let x = 1; x < width - 1; x++) {
-        if (grid[y][x] === 0 && !corridorSet.has(`${x},${y}`) && rnd() < 0.3) {
-          for (const [dx, dy] of DIR_VECTORS) {
-            const adjX = x + dx;
-            const adjY = y + dy;
-            if (grid[adjY]?.[adjX] === 0) {
-              cells[y][x].charge = cells[adjY][adjX].charge;
-              break;
-            }
-          }
-        }
-      }
-    }
-
-    cells[start[1]][start[0]].visited = true;
-    const initialCells = cells.map((row) => row.map((cell) => ({ ...cell })));
-    return { cells, initialCells };
   }
 
   private static _simulateWallFollower(
@@ -1412,7 +1456,6 @@ export class WebMazeGenerator {
   private static _generateSafeFallback(tier: TierKey, size: number, seed: number, baseIrt: number, timeLimitSec: number): PuzzleEntity {
     const grid: number[][] = Array.from({ length: size }, () => Array(size).fill(1));
 
-    // 蛇形走廊連通保底
     for (let y = 1; y <= size - 2; y += 2) {
       for (let x = 1; x <= size - 2; x++) {
         grid[y][x] = 0;
@@ -1427,8 +1470,8 @@ export class WebMazeGenerator {
     const start: [number, number] = [1, 1];
     const end: [number, number] = [size - 2, size - 2];
 
-    const { cells, initialCells } = this._initializePhysicalLattice(
-      grid, size, size, start, end, corridor, mulberry32(seed)
+    const { cells, initialCells, terminalKey } = this._initializeHardcoreLattice(
+      grid, size, size, start, end, corridor, tier, mulberry32(seed)
     );
 
     const spec: MazeSpec = {
@@ -1465,7 +1508,8 @@ export class WebMazeGenerator {
       hasGoalKeeperTrap: false,
       hasPhase2MentalGlitch: false,
       timeLimitSec,
-      solving_path: ['Corridor Snake Path'],
+      solving_path: ['Canonical Fallback Path'],
+      targetTerminalCharge: terminalKey,
     };
 
     return {
@@ -1492,7 +1536,7 @@ export class WebMazeGenerator {
         local_ambiguity_index: 1,
         maxVisualRegretValue: 0.0,
         avgVisualRegretValue: 0.0,
-        visual_optimal_overlap_ratio: 0.5,
+        visualOptimalOverlapRatio: 0.5,
         cognitivePhaseGain: 1.0,
         twin_landmark_count: 0,
         deception_waypoint_count: 0,
@@ -1501,12 +1545,12 @@ export class WebMazeGenerator {
         attempt_iteration: 0,
         irt_logit_difficulty: baseIrt,
         estimated_time_sec: 25,
-        solving_path: ['Corridor Snake Path'],
+        solving_path: ['Canonical Fallback Path'],
         seed,
         actualTier: tier,
       } as any,
       cognitiveLoad: { spatial: 0.3, numeric: 0.0, workingMemory: 0.2, inhibition: 0.1 },
-      checksum: `MAZE_V21_FALLBACK_${size}x${size}_S${seed}`,
+      checksum: `MAZE_V23_FALLBACK_${size}x${size}_S${seed}`,
     };
   }
 }
