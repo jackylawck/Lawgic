@@ -49,7 +49,7 @@ export const ShikakuBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
   const [showSubmitModal, setShowSubmitModal] = useState<boolean>(false);
 
   const startTimeRef = useRef<number>(Date.now());
-  const elapsedSecRef = useRef<number>(0);
+  const [elapsedSec, setElapsedSec] = useState<number>(0);
   const movesCount = useRef<number>(0);
   const lastRectTapRef = useRef<{ idx: number; timestamp: number }>({ idx: -1, timestamp: 0 });
   const hasRecordedRef = useRef<boolean>(false);
@@ -76,7 +76,7 @@ export const ShikakuBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
     setIsSingularityDormant(false);
     setShowSubmitModal(false);
     startTimeRef.current = Date.now();
-    elapsedSecRef.current = 0;
+    setElapsedSec(0);
     movesCount.current = 0;
     hasRecordedRef.current = false;
     setIsFav(VaultManager.isFavorited(actualPuzzle?.id || ''));
@@ -85,7 +85,7 @@ export const ShikakuBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
   useEffect(() => {
     if (isCollapsing || isSingularityDormant) return;
     const timer = setInterval(() => {
-      elapsedSecRef.current = Math.floor((Date.now() - startTimeRef.current) / 1000);
+      setElapsedSec(Math.floor((Date.now() - startTimeRef.current) / 1000));
     }, 1000);
     return () => clearInterval(timer);
   }, [isCollapsing, isSingularityDormant]);
@@ -173,7 +173,7 @@ export const ShikakuBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
     return { defectMask, hasDefects: defectMask.some(Boolean), isResolved };
   }, [placedRects, rows, cols]);
 
-  // 奇異點引力坍縮序列 (Singularity Collapse) + 防重錄守衛 (P2)
+  // 奇異點引力坍縮序列
   useEffect(() => {
     if (octantParity.isResolved && !isCollapsing && !isSingularityDormant && !hasRecordedRef.current) {
       hasRecordedRef.current = true;
@@ -190,7 +190,7 @@ export const ShikakuBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
         setIsSingularityDormant(true);
 
         const duration = Math.max(1, Math.round((Date.now() - startTimeRef.current) / 1000));
-        elapsedSecRef.current = duration;
+        setElapsedSec(duration);
 
         emitSpacetimeHapticTelemetry(duration, movesCount.current);
 
@@ -229,7 +229,7 @@ export const ShikakuBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
     emitSpacetimeHapticTelemetry,
   ]);
 
-  // 雙擊退火蒸發與單擊戰術冷審視
+  // 雙擊退火蒸發與單擊審視
   const handleRectTouch = useCallback((idx: number, e: React.MouseEvent) => {
     e.stopPropagation();
     if (isCollapsing || isSingularityDormant) return;
@@ -284,7 +284,7 @@ export const ShikakuBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
     };
   }, [dragStart, dragCurrent, rows, cols, activeClues]);
 
-  const handlePointerUp = () => {
+  const handlePointerCommit = useCallback(() => {
     if (dragStart && dragCurrent) {
       const minR = Math.min(dragStart[0], dragCurrent[0]);
       const maxR = Math.max(dragStart[0], dragCurrent[0]);
@@ -321,9 +321,23 @@ export const ShikakuBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
     }
     setDragStart(null);
     setDragCurrent(null);
-  };
+  }, [dragStart, dragCurrent, grid]);
 
-  // P2 修復：觸控移動軌跡追蹤
+  // 全局 PointerUp 防止游標拖出棋盤外時卡住
+  useEffect(() => {
+    const handleGlobalUp = () => {
+      if (dragStart) {
+        handlePointerCommit();
+      }
+    };
+    window.addEventListener('mouseup', handleGlobalUp);
+    window.addEventListener('touchend', handleGlobalUp);
+    return () => {
+      window.removeEventListener('mouseup', handleGlobalUp);
+      window.removeEventListener('touchend', handleGlobalUp);
+    };
+  }, [dragStart, handlePointerCommit]);
+
   const handleTouchMove = (e: React.TouchEvent) => {
     if (!dragStart || !gridContainerRef.current) return;
     const touch = e.touches[0];
@@ -339,7 +353,6 @@ export const ShikakuBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
     }
   };
 
-  // P0 修復：標準化金庫收藏對接
   const handleToggleFavorite = () => {
     if (!actualPuzzle) return;
     const vaultItem: VaultItem = {
@@ -348,11 +361,22 @@ export const ShikakuBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
       tier: String(actualPuzzle.tier || 'ultimate'),
       seed: Number(seed),
       steps: movesCount.current,
-      timeSpentSec: elapsedSecRef.current,
+      timeSpentSec: elapsedSec,
       date: new Date().toISOString(),
     };
     const res = VaultManager.toggleFavorite(vaultItem);
     setIsFav(res.isFav);
+  };
+
+  const handleUndo = () => {
+    if (placedRects.length === 0 || isCollapsing || isSingularityDormant) return;
+    setPlacedRects((prev) => prev.slice(0, -1));
+  };
+
+  const handleClearAll = () => {
+    if (isCollapsing || isSingularityDormant) return;
+    setPlacedRects([]);
+    setInspectedIdx(null);
   };
 
   const cci = useMemo(() => {
@@ -364,13 +388,13 @@ export const ShikakuBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
   }, [getCompositeCognitiveIndex]);
 
   if (!actualPuzzle) {
-    return <div className="fixed inset-0 bg-black" />;
+    return null;
   }
 
   return (
-    <div className="fixed inset-0 bg-black flex flex-col items-center justify-center select-none overflow-hidden touch-none font-mono">
-      {/* 頂部極簡 HUD */}
-      <div className="w-full max-w-[340px] mb-3 flex items-center justify-between px-2 text-[9px] text-neutral-400 z-40">
+    <div className="flex flex-col items-center justify-center p-2 select-none font-mono outline-none touch-none w-full max-w-[420px] mx-auto">
+      {/* 頂部 HUD */}
+      <div className="w-full max-w-[340px] mb-2 flex items-center justify-between px-2 text-[9px] text-neutral-400">
         <div className="flex items-center gap-2">
           <span className="text-white font-bold tracking-widest">SHIKAKU</span>
           <button
@@ -388,7 +412,7 @@ export const ShikakuBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
             {isEn ? 'RECTS' : '區塊'}: <b className="text-neutral-200">{placedRects.length}</b>
           </span>
           <span>
-            {isEn ? 'TIME' : '耗時'}: <b className="text-neutral-200">{elapsedSecRef.current}s</b>
+            {isEn ? 'TIME' : '耗時'}: <b className="text-neutral-200">{elapsedSec}s</b>
           </span>
         </div>
       </div>
@@ -396,108 +420,50 @@ export const ShikakuBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
       {/* 物理岩板本體 */}
       <div
         ref={gridContainerRef}
-        onMouseUp={handlePointerUp}
-        onTouchEnd={handlePointerUp}
         onTouchMove={handleTouchMove}
         onClick={() => {
           if (isSingularityDormant) {
-            emitSpacetimeHapticTelemetry(elapsedSecRef.current, movesCount.current);
+            emitSpacetimeHapticTelemetry(elapsedSec, movesCount.current);
           }
         }}
-        className={`relative p-0 transition-all duration-1000 ${
+        className={`relative p-0 transition-all duration-1000 rounded-xl overflow-hidden bg-black border border-neutral-900 shadow-2xl ${
           isSingularityDormant ? 'cursor-pointer' : ''
         }`}
-        style={{ width: 'min(86vw, 44vh)', height: 'min(86vw, 44vh)' }}
+        style={{ width: 'min(86vw, 42vh)', height: 'min(86vw, 42vh)' }}
       >
         {/* 八分節段頂點奇偶光流 */}
         {!isSingularityDormant ? (
-          <div className="absolute -inset-[2px] pointer-events-none z-30">
-            {/* Top (0, 1) */}
+          <div className="absolute -inset-[1px] pointer-events-none z-30">
             <div className="absolute top-0 left-0 w-1/2 h-[2px] flex">
-              <div
-                className={`w-full h-full transition-all duration-300 ${
-                  octantParity.defectMask[0]
-                    ? 'bg-white/95 animate-[pulse_0.22s_infinite] shadow-[0_0_8px_white]'
-                    : 'bg-white/10'
-                }`}
-              />
+              <div className={`w-full h-full transition-all duration-300 ${octantParity.defectMask[0] ? 'bg-white/95 animate-pulse shadow-[0_0_8px_white]' : 'bg-white/10'}`} />
             </div>
             <div className="absolute top-0 right-0 w-1/2 h-[2px] flex">
-              <div
-                className={`w-full h-full transition-all duration-300 ${
-                  octantParity.defectMask[1]
-                    ? 'bg-white/95 animate-[pulse_0.22s_infinite] shadow-[0_0_8px_white]'
-                    : 'bg-white/10'
-                }`}
-              />
+              <div className={`w-full h-full transition-all duration-300 ${octantParity.defectMask[1] ? 'bg-white/95 animate-pulse shadow-[0_0_8px_white]' : 'bg-white/10'}`} />
             </div>
-
-            {/* Right (2, 3) */}
             <div className="absolute top-0 right-0 h-1/2 w-[2px]">
-              <div
-                className={`w-full h-full transition-all duration-300 ${
-                  octantParity.defectMask[2]
-                    ? 'bg-white/95 animate-[pulse_0.22s_infinite] shadow-[0_0_8px_white]'
-                    : 'bg-white/10'
-                }`}
-              />
+              <div className={`w-full h-full transition-all duration-300 ${octantParity.defectMask[2] ? 'bg-white/95 animate-pulse shadow-[0_0_8px_white]' : 'bg-white/10'}`} />
             </div>
             <div className="absolute bottom-0 right-0 h-1/2 w-[2px]">
-              <div
-                className={`w-full h-full transition-all duration-300 ${
-                  octantParity.defectMask[3]
-                    ? 'bg-white/95 animate-[pulse_0.22s_infinite] shadow-[0_0_8px_white]'
-                    : 'bg-white/10'
-                }`}
-              />
+              <div className={`w-full h-full transition-all duration-300 ${octantParity.defectMask[3] ? 'bg-white/95 animate-pulse shadow-[0_0_8px_white]' : 'bg-white/10'}`} />
             </div>
-
-            {/* Bottom (4, 5) */}
             <div className="absolute bottom-0 right-0 w-1/2 h-[2px]">
-              <div
-                className={`w-full h-full transition-all duration-300 ${
-                  octantParity.defectMask[4]
-                    ? 'bg-white/95 animate-[pulse_0.22s_infinite] shadow-[0_0_8px_white]'
-                    : 'bg-white/10'
-                }`}
-              />
+              <div className={`w-full h-full transition-all duration-300 ${octantParity.defectMask[4] ? 'bg-white/95 animate-pulse shadow-[0_0_8px_white]' : 'bg-white/10'}`} />
             </div>
             <div className="absolute bottom-0 left-0 w-1/2 h-[2px]">
-              <div
-                className={`w-full h-full transition-all duration-300 ${
-                  octantParity.defectMask[5]
-                    ? 'bg-white/95 animate-[pulse_0.22s_infinite] shadow-[0_0_8px_white]'
-                    : 'bg-white/10'
-                }`}
-              />
+              <div className={`w-full h-full transition-all duration-300 ${octantParity.defectMask[5] ? 'bg-white/95 animate-pulse shadow-[0_0_8px_white]' : 'bg-white/10'}`} />
             </div>
-
-            {/* Left (6, 7) */}
             <div className="absolute bottom-0 left-0 h-1/2 w-[2px]">
-              <div
-                className={`w-full h-full transition-all duration-300 ${
-                  octantParity.defectMask[6]
-                    ? 'bg-white/95 animate-[pulse_0.22s_infinite] shadow-[0_0_8px_white]'
-                    : 'bg-white/10'
-                }`}
-              />
+              <div className={`w-full h-full transition-all duration-300 ${octantParity.defectMask[6] ? 'bg-white/95 animate-pulse shadow-[0_0_8px_white]' : 'bg-white/10'}`} />
             </div>
             <div className="absolute top-0 left-0 h-1/2 w-[2px]">
-              <div
-                className={`w-full h-full transition-all duration-300 ${
-                  octantParity.defectMask[7]
-                    ? 'bg-white/95 animate-[pulse_0.22s_infinite] shadow-[0_0_8px_white]'
-                    : 'bg-white/10'
-                }`}
-              />
+              <div className={`w-full h-full transition-all duration-300 ${octantParity.defectMask[7] ? 'bg-white/95 animate-pulse shadow-[0_0_8px_white]' : 'bg-white/10'}`} />
             </div>
           </div>
         ) : (
-          /* 事件視界微光（Event Horizon Halo） */
-          <div className="absolute -inset-[1px] pointer-events-none z-30 border border-white/20 animate-[pulse_3.2s_cubic-bezier(0.4,0,0.6,1)_infinite] shadow-[0_0_32px_rgba(255,255,255,0.06)]" />
+          <div className="absolute inset-0 pointer-events-none z-30 border border-white/20 animate-pulse shadow-[0_0_32px_rgba(255,255,255,0.06)]" />
         )}
 
-        {/* 矩形晶體層：引力坍縮、退火蒸發與戰術審視 */}
+        {/* 矩形晶體層 */}
         <div className="absolute inset-0 pointer-events-none z-10 overflow-hidden">
           {placedRects.map((rect, idx) => {
             const isEvaporating = evaporatingIdx === idx;
@@ -523,7 +489,7 @@ export const ShikakuBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
                     ? 'scale-0 opacity-0 duration-150 ease-out border-white'
                     : isInspected
                     ? 'border-white bg-white/20 shadow-[0_0_16px_rgba(255,255,255,0.5)] z-20'
-                    : 'border-white/35 bg-white/[0.02] hover:border-white/70'
+                    : 'border-white/40 bg-white/[0.04] hover:border-white/80'
                 }`}
                 style={{
                   top: `${(rect.r / rows) * 100}%`,
@@ -536,7 +502,7 @@ export const ShikakuBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
             );
           })}
 
-          {/* 因果張量質量場預覽 */}
+          {/* 拖曳預覽框 */}
           {previewPhysics && !isCollapsing && !isSingularityDormant && (
             <div
               className="absolute border border-white pointer-events-none transition-all duration-75"
@@ -552,9 +518,9 @@ export const ShikakuBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
           )}
         </div>
 
-        {/* 靜默底盤矩陣 */}
+        {/* 底層格點矩陣 */}
         <div
-          className={`relative w-full h-full border border-neutral-900/60 transition-opacity duration-1000 ${
+          className={`relative w-full h-full transition-opacity duration-1000 ${
             isSingularityDormant ? 'opacity-0' : 'opacity-100'
           }`}
           style={{
@@ -583,10 +549,10 @@ export const ShikakuBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
                     setDragStart([r, c]);
                     setDragCurrent([r, c]);
                   }}
-                  className="relative flex items-center justify-center border border-neutral-900/30 cursor-crosshair"
+                  className="relative flex items-center justify-center border border-neutral-900/50 cursor-crosshair hover:bg-neutral-900/30"
                 >
                   {val !== null && val !== undefined && (
-                    <span className="text-xs font-light text-neutral-400 pointer-events-none select-none">
+                    <span className="text-xs sm:text-sm font-bold text-neutral-300 pointer-events-none select-none">
                       {val}
                     </span>
                   )}
@@ -597,11 +563,31 @@ export const ShikakuBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
         </div>
       </div>
 
+      {/* 控制按鈕列 */}
+      {!isSingularityDormant && (
+        <div className="flex items-center justify-between w-full max-w-[340px] mt-3 gap-2 text-[8px] font-mono">
+          <button
+            onClick={handleUndo}
+            disabled={placedRects.length === 0}
+            className="flex-1 py-1.5 rounded-lg border border-neutral-800 bg-neutral-950 text-neutral-300 hover:text-white disabled:opacity-30 cursor-pointer"
+          >
+            ↩ {isEn ? 'Undo' : '復原'}
+          </button>
+          <button
+            onClick={handleClearAll}
+            disabled={placedRects.length === 0}
+            className="flex-1 py-1.5 rounded-lg border border-neutral-800 bg-neutral-950 text-neutral-300 hover:text-rose-400 disabled:opacity-30 cursor-pointer"
+          >
+            ✕ {isEn ? 'Clear' : '清空'}
+          </button>
+        </div>
+      )}
+
       {/* 坍縮完成後結算 HUD */}
       {isSingularityDormant && (
         <div className="mt-4 flex flex-col items-center gap-2 animate-fade-in z-40">
           <div className="text-[10px] tracking-widest text-neutral-400 font-mono">
-            {isEn ? 'SINGULARITY ACHIEVED' : '奇異點完全閉合'} · {elapsedSecRef.current}s · Gf {cci.standardIQ}
+            {isEn ? 'SINGULARITY ACHIEVED' : '奇異點完全閉合'} · {elapsedSec}s · Gf {cci.standardIQ}
           </div>
           <button
             onClick={() => setShowSubmitModal(true)}
@@ -623,7 +609,7 @@ export const ShikakuBoard: React.FC<Props> = ({ puzzleData, puzzle, tournamentMo
             puzzleId: actualPuzzle.id,
             engineType: 'shikaku',
             tier: (actualPuzzle.tier as string) || 'ultimate',
-            timeSpentSec: elapsedSecRef.current,
+            timeSpentSec: elapsedSec,
             conflictsCount: 0,
             infractionScore: proctoringRef.current
               ? calculateInfractionScore(proctoringRef.current.getSnapshot())
