@@ -23,7 +23,7 @@ export interface CellState {
 export interface DeceptionWaypoint {
   coordinate: [number, number];
   divergedStep: number;
-  regretCost: number;      // 物理後悔代價：走入分歧後相對於最優解的步數差
+  regretCost: number;
   trapType: 'Straight_Lure' | 'Camouflaged_Bypass' | 'Goal_Keeper_Fork' | 'Twin_Landmark_Trap';
 }
 
@@ -36,9 +36,9 @@ export interface TwinLandmarkPair {
 export interface MazeSpec {
   rows: number;
   cols: number;
-  grid: number[][];            // 0: 通道, 1: 幾何牆壁
-  cells: CellState[][];        // 物理微觀狀態
-  initialCells: CellState[][]; // 初始快照
+  grid: number[][];
+  cells: CellState[][];
+  initialCells: CellState[][];
   width: number;
   height: number;
   size: number;
@@ -244,6 +244,7 @@ export class PlayableMazeEngine {
     const currentCell = this.cells[cy][cx];
     const targetCell = this.cells[ty][tx];
 
+    // 同極相斥阻擋
     if (targetCell.charge === currentCell.charge) {
       return { canMove: false, landing: this.pos, intermediate: null, slid: false, pathTraversed: [this.pos], entropyDelta: 0, reason: 'REPULSION' };
     }
@@ -968,16 +969,18 @@ export class WebMazeGenerator {
     corridor: [number, number][],
     rnd: () => number
   ): { cells: CellState[][]; initialCells: CellState[][] } {
+    // 預設全域棋盤格交替，保障任何連通分支皆能通行
     const cells: CellState[][] = Array.from({ length: height }, (_, y) =>
       Array.from({ length: width }, (_, x) => ({
-        charge: (rnd() > 0.4 ? -1 : 1) as (1 | -1),
+        charge: ((x + y) % 2 === 0 ? 1 : -1) as (1 | -1),
         spin: Math.floor(rnd() * 4) as Direction,
         visited: false,
         mutationCount: 0,
       }))
     );
 
-    let currentCharge: 1 | -1 = -1;
+    // 核心走廊嚴格交替賦予（正 -> 負 -> 正 -> 負），並確保前進 spin 向量相符
+    let currentCharge: 1 | -1 = 1;
     for (let i = 0; i < corridor.length; i++) {
       const [cx, cy] = corridor[i];
       cells[cy][cx].charge = currentCharge;
@@ -1391,9 +1394,8 @@ export class WebMazeGenerator {
 
   private static _generateSafeFallback(tier: TierKey, size: number, seed: number, baseIrt: number, timeLimitSec: number): PuzzleEntity {
     const grid: number[][] = Array.from({ length: size }, () => Array(size).fill(1));
-    const solution: [number, number][] = [];
 
-    // 完整的蛇形拓撲回退，避免單純倒 L 型
+    // 蛇形走廊連通保底
     for (let y = 1; y <= size - 2; y += 2) {
       for (let x = 1; x <= size - 2; x++) {
         grid[y][x] = 0;
