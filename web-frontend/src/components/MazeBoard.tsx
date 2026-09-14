@@ -27,6 +27,25 @@ interface Props {
   tournamentMode?: boolean;
 }
 
+// 確保 cells 擁有保底矩陣生成器，杜絕 PlayableMazeEngine 建構子內 spec.cells.map 崩潰
+const ensureSpecCells = (s: MazeSpec): MazeSpec => {
+  if (Array.isArray(s.cells) && s.cells.length > 0) {
+    return s;
+  }
+  const w = s.width || 17;
+  const h = s.height || 17;
+  const fallbackCells: CellState[][] = Array.from({ length: h }, () =>
+    Array.from({ length: w }, () => ({
+      charge: 0 as const,
+      spin: 0 as const,
+    }))
+  );
+  return {
+    ...s,
+    cells: fallbackCells,
+  };
+};
+
 export const MazeBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode = false }) => {
   const actualPuzzle = puzzleData || puzzle;
   const { lang } = useLanguage();
@@ -48,7 +67,17 @@ export const MazeBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode 
   const engineRef = useRef<PlayableMazeEngine | null>(null);
 
   const [playerPos, setPlayerPos] = useState<[number, number]>(start);
-  const [cellGrid, setCellGrid] = useState<CellState[][]>(spec?.cells || []);
+  const [cellGrid, setCellGrid] = useState<CellState[][]>(() => {
+    if (Array.isArray(spec?.cells) && spec.cells.length > 0) {
+      return spec.cells;
+    }
+    return Array.from({ length: height }, () =>
+      Array.from({ length: width }, () => ({
+        charge: 0 as const,
+        spin: 0 as const,
+      }))
+    );
+  });
   const [playerPath, setPlayerPath] = useState<[number, number][]>([start]);
   const [currentEntropy, setCurrentEntropy] = useState<number>(0);
   const [undoCount, setUndoCount] = useState<number>(0);
@@ -121,8 +150,17 @@ export const MazeBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode 
   }, []);
 
   const handleFullReset = useCallback(() => {
-    if (!spec) return;
-    const newEngine = new PlayableMazeEngine(spec);
+    if (!spec || !spec.grid || spec.grid.length === 0) return;
+
+    const sanitizedSpec = ensureSpecCells(spec);
+    let newEngine: PlayableMazeEngine;
+    try {
+      newEngine = new PlayableMazeEngine(sanitizedSpec);
+    } catch (err) {
+      console.error('[MazeBoard] Engine instantiation failed:', err);
+      return;
+    }
+
     engineRef.current = newEngine;
 
     setPlayerPos([newEngine.pos[0], newEngine.pos[1]]);
@@ -211,7 +249,6 @@ export const MazeBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode 
         setStrategicThoughtTime((prev) => prev + stepDuration);
       }
 
-      // P2 修復：加入 hasRecordedRef 守衛防止重複結算
       if (res.hitGoal && !hasRecordedRef.current) {
         hasRecordedRef.current = true;
         setIsCompleted(true);
@@ -242,7 +279,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode 
     [
       isCompleted,
       end,
-      spec.hasPhase2MentalGlitch,
+      spec?.hasPhase2MentalGlitch,
       isEn,
       startTime,
       optimalSolution.length,
@@ -325,7 +362,6 @@ export const MazeBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode 
     return () => clearInterval(interval);
   }, [ghostMode, optimalSolution, playerPath]);
 
-  // P0 修復：標準化金庫收藏對接
   const handleToggleFavorite = () => {
     if (!actualPuzzle) return;
     const vaultItem: VaultItem = {
@@ -403,6 +439,15 @@ export const MazeBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode 
     },
     [isDarkVision, playerPos]
   );
+
+  // 避免 grid 尚未準備就緒時造成渲染錯誤
+  if (!spec || !spec.grid || spec.grid.length === 0) {
+    return (
+      <div className="flex items-center justify-center p-8 text-xs font-mono text-slate-500">
+        {isEn ? 'Synthesizing maze geometry...' : '迷宮幾何拓撲建構中...'}
+      </div>
+    );
+  }
 
   return (
     <div
@@ -499,7 +544,7 @@ export const MazeBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode 
               const visitHeat = visitedCounts.get(`${x},${y}`) || 0;
 
               const hasRealHammingDistortion =
-                initialCell && (cell.charge !== initialCell.charge || cell.spin !== initialCell.spin);
+                initialCell && (cell?.charge !== initialCell.charge || cell?.spin !== initialCell.spin);
 
               const isPreviewLanding =
                 previewHover?.canMove && previewHover.landing[0] === x && previewHover.landing[1] === y;
@@ -568,24 +613,20 @@ export const MazeBoard: React.FC<Props> = ({ puzzle, puzzleData, tournamentMode 
                         <span className="text-amber-400/60 text-[7px] font-bold absolute z-10">♊</span>
                       )}
 
-                      {/* 中間滑動折射點 */}
                       {isIntermediateSlip && (
                         <div className="w-full h-full border-2 border-dashed border-amber-400/90 bg-amber-500/20 absolute z-15" />
                       )}
 
-                      {/* 最終落點標記 */}
                       {isPreviewLanding && (
                         <div className="w-full h-full border-2 border-emerald-400 bg-emerald-500/30 absolute z-15 animate-ping" />
                       )}
 
-                      {/* 玩家實體標記 */}
                       {isPlayer && (
                         <div className="w-[70%] h-[70%] bg-cyan-400 rounded-sm shadow-[0_0_8px_rgba(34,211,238,0.9)] z-20 flex items-center justify-center">
                           <div className="w-1.5 h-1.5 bg-black rounded-full" />
                         </div>
                       )}
 
-                      {/* 幽靈重播標記 */}
                       {isGhost && (
                         <div
                           className={`w-[60%] h-[60%] rounded-full z-20 animate-ping ${
