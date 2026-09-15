@@ -1,4 +1,3 @@
-// web-frontend/src/engines/slitherlinkGenerator.ts
 import { PuzzleEntity, TierKey } from '../generated';
 
 export type ExtendedTierKey = TierKey;
@@ -181,14 +180,28 @@ function mulberry32(a: number) {
   };
 }
 
-class FastVertexDSU {
-  parent: Int32Array;
-  size: Int32Array;
+export class FastVertexDSU {
+  public parent: Int32Array;
+  public size: Int32Array;
+  private capacity: number;
 
-  constructor(n: number) {
-    this.parent = new Int32Array(n);
-    this.size = new Int32Array(n).fill(1);
-    for (let i = 0; i < n; i++) this.parent[i] = i;
+  constructor(maxCapacity: number = 256) {
+    this.capacity = maxCapacity;
+    this.parent = new Int32Array(maxCapacity);
+    this.size = new Int32Array(maxCapacity);
+    this.reset(maxCapacity);
+  }
+
+  public reset(n: number): void {
+    if (n > this.capacity) {
+      this.capacity = n;
+      this.parent = new Int32Array(n);
+      this.size = new Int32Array(n);
+    }
+    for (let i = 0; i < n; i++) {
+      this.parent[i] = i;
+      this.size[i] = 1;
+    }
   }
 
   find(i: number): number {
@@ -218,22 +231,51 @@ class FastVertexDSU {
   }
 }
 
+export class SlitherlinkExecutionContext {
+  public dsu: FastVertexDSU;
+  public degree: Uint8Array;
+  public deadlineMs: number;
+
+  constructor(maxVertices: number = 512, timeBudgetMs: number = 2500) {
+    this.dsu = new FastVertexDSU(maxVertices);
+    this.degree = new Uint8Array(maxVertices);
+    const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    this.deadlineMs = now + timeBudgetMs;
+  }
+
+  public checkDeadline(): boolean {
+    const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    return now > this.deadlineMs;
+  }
+
+  public ensureCapacity(requiredVertices: number): void {
+    if (requiredVertices > this.degree.length) {
+      this.degree = new Uint8Array(requiredVertices * 2);
+    }
+    this.dsu.reset(requiredVertices);
+  }
+}
+
 export class WebSlitherlinkGenerator {
   public static isStrictSingleLoop(
     hEdges: boolean[][],
     vEdges: boolean[][],
     rows: number,
-    cols: number
+    cols: number,
+    ctx: SlitherlinkExecutionContext
   ): boolean {
     const ptCols = cols + 1;
-    const pointDegree = new Uint8Array((rows + 1) * ptCols);
+    const totalVertices = (rows + 1) * ptCols;
+    ctx.ensureCapacity(totalVertices);
+    ctx.degree.fill(0, 0, totalVertices);
+
     let totalEdges = 0;
 
     for (let r = 0; r <= rows; r++) {
       for (let c = 0; c < cols; c++) {
         if (hEdges[r]?.[c]) {
-          pointDegree[r * ptCols + c]++;
-          pointDegree[r * ptCols + c + 1]++;
+          ctx.degree[r * ptCols + c]++;
+          ctx.degree[r * ptCols + c + 1]++;
           totalEdges++;
         }
       }
@@ -242,8 +284,8 @@ export class WebSlitherlinkGenerator {
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c <= cols; c++) {
         if (vEdges[r]?.[c]) {
-          pointDegree[r * ptCols + c]++;
-          pointDegree[(r + 1) * ptCols + c]++;
+          ctx.degree[r * ptCols + c]++;
+          ctx.degree[(r + 1) * ptCols + c]++;
           totalEdges++;
         }
       }
@@ -255,7 +297,7 @@ export class WebSlitherlinkGenerator {
     let startC = -1;
     for (let r = 0; r <= rows; r++) {
       for (let c = 0; c <= cols; c++) {
-        const deg = pointDegree[r * ptCols + c];
+        const deg = ctx.degree[r * ptCols + c];
         if (deg !== 0 && deg !== 2) return false;
         if (deg === 2 && startR === -1) {
           startR = r;
@@ -305,9 +347,11 @@ export class WebSlitherlinkGenerator {
     rows: number,
     cols: number,
     hEdges: boolean[][],
-    vEdges: boolean[][]
+    vEdges: boolean[][],
+    ctx?: SlitherlinkExecutionContext
   ): boolean {
-    return this.isStrictSingleLoop(hEdges, vEdges, rows, cols);
+    const localCtx = ctx ?? new SlitherlinkExecutionContext((rows + 1) * (cols + 1));
+    return this.isStrictSingleLoop(hEdges, vEdges, rows, cols, localCtx);
   }
 
   private static generateOrganicValidLoop(
@@ -419,22 +463,24 @@ export class WebSlitherlinkGenerator {
     cols: number,
     clues: (number | null)[][],
     curH: number[][],
-    curV: number[][]
+    curV: number[][],
+    ctx: SlitherlinkExecutionContext
   ): Map<string, { edge: SlitherEdge; state: 1 | 2; type: SlitherDeductionType; rationale: string; humanReadable: { zh: string; en: string } }> {
     const deductions = new Map<string, { edge: SlitherEdge; state: 1 | 2; type: SlitherDeductionType; rationale: string; humanReadable: { zh: string; en: string } }>();
     const ptCols = cols + 1;
     const totalVertices = (rows + 1) * ptCols;
-    const dsu = new FastVertexDSU(totalVertices);
-    const degree = new Uint8Array(totalVertices);
+
+    ctx.ensureCapacity(totalVertices);
+    ctx.degree.fill(0, 0, totalVertices);
 
     for (let r = 0; r <= rows; r++) {
       for (let c = 0; c < cols; c++) {
         if (curH[r][c] === 1) {
           const u = r * ptCols + c;
           const v = r * ptCols + (c + 1);
-          degree[u]++;
-          degree[v]++;
-          dsu.union(u, v);
+          ctx.degree[u]++;
+          ctx.degree[v]++;
+          ctx.dsu.union(u, v);
         }
       }
     }
@@ -443,9 +489,9 @@ export class WebSlitherlinkGenerator {
         if (curV[r][c] === 1) {
           const u = r * ptCols + c;
           const v = (r + 1) * ptCols + c;
-          degree[u]++;
-          degree[v]++;
-          dsu.union(u, v);
+          ctx.degree[u]++;
+          ctx.degree[v]++;
+          ctx.dsu.union(u, v);
         }
       }
     }
@@ -465,14 +511,14 @@ export class WebSlitherlinkGenerator {
       }
     }
 
-    // 定式 1: 嚴格早熟死環防禦 (Premature Avoidance)
+    // 定式 1: 拓撲防早熟閉環死鎖
     for (let r = 0; r <= rows; r++) {
       for (let c = 0; c < cols; c++) {
         if (curH[r][c] === 0) {
           const u = r * ptCols + c;
           const v = r * ptCols + (c + 1);
-          if (degree[u] === 1 && degree[v] === 1 && dsu.find(u) === dsu.find(v)) {
-            if (remainingClueDemand > 0 || dsu.size[dsu.find(u)] < totalVertices * 0.3) {
+          if (ctx.degree[u] === 1 && ctx.degree[v] === 1 && ctx.dsu.find(u) === ctx.dsu.find(v)) {
+            if (remainingClueDemand > 0 || ctx.dsu.size[ctx.dsu.find(u)] < totalVertices * 0.3) {
               deductions.set(`h_${r}_${c}`, {
                 edge: { type: 'h', r, c },
                 state: 2,
@@ -494,8 +540,8 @@ export class WebSlitherlinkGenerator {
         if (curV[r][c] === 0) {
           const u = r * ptCols + c;
           const v = (r + 1) * ptCols + c;
-          if (degree[u] === 1 && degree[v] === 1 && dsu.find(u) === dsu.find(v)) {
-            if (remainingClueDemand > 0 || dsu.size[dsu.find(u)] < totalVertices * 0.3) {
+          if (ctx.degree[u] === 1 && ctx.degree[v] === 1 && ctx.dsu.find(u) === ctx.dsu.find(v)) {
+            if (remainingClueDemand > 0 || ctx.dsu.size[ctx.dsu.find(u)] < totalVertices * 0.3) {
               deductions.set(`v_${r}_${c}`, {
                 edge: { type: 'v', r, c },
                 state: 2,
@@ -618,7 +664,7 @@ export class WebSlitherlinkGenerator {
       }
     }
 
-    // 定式 5: 相鄰 1-3 互斥與對偶定式
+    // 定式 5: 相鄰 1-3 互斥
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         if (c + 1 < cols) {
@@ -643,7 +689,7 @@ export class WebSlitherlinkGenerator {
       }
     }
 
-    // 定式 6: 對角雙 2 定式 (Diagonal 2-2 Lock)
+    // 定式 6: 對角雙 2 定式
     for (let r = 0; r < rows - 1; r++) {
       for (let c = 0; c < cols - 1; c++) {
         if (clues[r][c] === 2 && clues[r + 1][c + 1] === 2) {
@@ -744,7 +790,11 @@ export class WebSlitherlinkGenerator {
         if (r > 0) edges.push({ type: 'v', er: r - 1, ec: c, val: curV[r - 1][c] });
         if (r < rows) edges.push({ type: 'v', er: r, ec: c, val: curV[r][c] });
 
-        const activeCount = edges.filter((e) => e.val === 1).length;
+        let activeCount = 0;
+        for (let i = 0; i < edges.length; i++) {
+          if (edges[i].val === 1) activeCount++;
+        }
+
         if (activeCount === 2) {
           for (let i = 0; i < edges.length; i++) {
             const e = edges[i];
@@ -792,37 +842,44 @@ export class WebSlitherlinkGenerator {
             { type: 'v', er: r, ec: c + 1, val: curV[r][c + 1] },
           ];
 
-          const active = edges.filter((e) => e.val === 1).length;
-          const blocked = edges.filter((e) => e.val === 2).length;
-          const open = edges.filter((e) => e.val === 0);
+          let active = 0;
+          let blocked = 0;
+          for (let i = 0; i < 4; i++) {
+            if (edges[i].val === 1) active++;
+            else if (edges[i].val === 2) blocked++;
+          }
 
-          if (active === clue && open.length > 0) {
-            for (let i = 0; i < open.length; i++) {
-              const op = open[i];
-              deductions.set(`${op.type}_${op.er}_${op.ec}`, {
-                edge: { type: op.type, r: op.er, c: op.ec },
-                state: 2,
-                type: 'clue_completion',
-                rationale: `線索 ${clue} 已滿足，剩餘空白邊全數標叉`,
-                humanReadable: {
-                  zh: `單元格已滿足線索 ${clue}，其餘邊全部標記叉號 (x)。`,
-                  en: `Cell has reached clue ${clue}; remaining open edges crossed out.`,
-                },
-              });
+          if (active === clue && active + blocked < 4) {
+            for (let i = 0; i < 4; i++) {
+              const op = edges[i];
+              if (op.val === 0) {
+                deductions.set(`${op.type}_${op.er}_${op.ec}`, {
+                  edge: { type: op.type, r: op.er, c: op.ec },
+                  state: 2,
+                  type: 'clue_completion',
+                  rationale: `線索 ${clue} 已滿足，剩餘空白邊全數標叉`,
+                  humanReadable: {
+                    zh: `單元格已滿足線索 ${clue}，其餘邊全部標記叉號 (x)。`,
+                    en: `Cell has reached clue ${clue}; remaining open edges crossed out.`,
+                  },
+                });
+              }
             }
-          } else if (4 - blocked === clue && open.length > 0) {
-            for (let i = 0; i < open.length; i++) {
-              const op = open[i];
-              deductions.set(`${op.type}_${op.er}_${op.ec}`, {
-                edge: { type: op.type, r: op.er, c: op.ec },
-                state: 1,
-                type: 'clue_completion',
-                rationale: `線索 ${clue} 扣除叉號後剩餘邊界全數必通`,
-                humanReadable: {
-                  zh: `排除叉號後剛好剩 ${clue} 條邊，必須全部連線！`,
-                  en: `Exactly ${clue} edges remain; all must connect!`,
-                },
-              });
+          } else if (4 - blocked === clue && active < clue) {
+            for (let i = 0; i < 4; i++) {
+              const op = edges[i];
+              if (op.val === 0) {
+                deductions.set(`${op.type}_${op.er}_${op.ec}`, {
+                  edge: { type: op.type, r: op.er, c: op.ec },
+                  state: 1,
+                  type: 'clue_completion',
+                  rationale: `線索 ${clue} 扣除叉號後剩餘邊界全數必通`,
+                  humanReadable: {
+                    zh: `排除叉號後剛好剩 ${clue} 條邊，必須全部連線！`,
+                    en: `Exactly ${clue} edges remain; all must connect!`,
+                  },
+                });
+              }
             }
           }
         }
@@ -837,12 +894,14 @@ export class WebSlitherlinkGenerator {
     cols: number,
     clues: (number | null)[][],
     hEdges: (EdgeState | number)[][],
-    vEdges: (EdgeState | number)[][]
+    vEdges: (EdgeState | number)[][],
+    ctx?: SlitherlinkExecutionContext
   ): SlitherlinkHintStep | null {
+    const localCtx = ctx ?? new SlitherlinkExecutionContext((rows + 1) * (cols + 1));
     const curH = hEdges.map((row) => [...row]);
     const curV = vEdges.map((row) => [...row]);
 
-    const deductions = this.getStrictDeductions(rows, cols, clues, curH, curV);
+    const deductions = this.getStrictDeductions(rows, cols, clues, curH, curV, localCtx);
     if (deductions.size === 0) return null;
 
     const first = deductions.values().next().value;
@@ -866,19 +925,22 @@ export class WebSlitherlinkGenerator {
     cols: number,
     clues: (number | null)[][],
     h: number[][],
-    v: number[][]
+    v: number[][],
+    ctx: SlitherlinkExecutionContext
   ): { conflict: boolean; reason: string } {
     const ptCols = cols + 1;
-    const dsu = new FastVertexDSU((rows + 1) * ptCols);
-    const deg = new Uint8Array((rows + 1) * ptCols);
+    const totalVertices = (rows + 1) * ptCols;
+
+    ctx.ensureCapacity(totalVertices);
+    ctx.degree.fill(0, 0, totalVertices);
 
     for (let r = 0; r <= rows; r++) {
       for (let c = 0; c < cols; c++) {
         if (h[r][c] === 1) {
           const u = r * ptCols + c;
           const w = r * ptCols + c + 1;
-          if (++deg[u] > 2 || ++deg[w] > 2) return { conflict: true, reason: '度數溢出 (Degree > 2)' };
-          dsu.union(u, w);
+          if (++ctx.degree[u] > 2 || ++ctx.degree[w] > 2) return { conflict: true, reason: '度數溢出 (Degree > 2)' };
+          ctx.dsu.union(u, w);
         }
       }
     }
@@ -887,8 +949,8 @@ export class WebSlitherlinkGenerator {
         if (v[r][c] === 1) {
           const u = r * ptCols + c;
           const w = (r + 1) * ptCols + c;
-          if (++deg[u] > 2 || ++deg[w] > 2) return { conflict: true, reason: '度數溢出 (Degree > 2)' };
-          dsu.union(u, w);
+          if (++ctx.degree[u] > 2 || ++ctx.degree[w] > 2) return { conflict: true, reason: '度數溢出 (Degree > 2)' };
+          ctx.dsu.union(u, w);
         }
       }
     }
@@ -911,7 +973,7 @@ export class WebSlitherlinkGenerator {
         if (h[r][c] === 0) {
           const u = r * ptCols + c;
           const w = r * ptCols + c + 1;
-          if (deg[u] === 1 && deg[w] === 1 && dsu.find(u) === dsu.find(w) && remainingClueDemand > 0) {
+          if (ctx.degree[u] === 1 && ctx.degree[w] === 1 && ctx.dsu.find(u) === ctx.dsu.find(w) && remainingClueDemand > 0) {
             return { conflict: true, reason: '局部提前閉環死鎖' };
           }
         }
@@ -926,7 +988,8 @@ export class WebSlitherlinkGenerator {
     cols: number,
     clues: (number | null)[][],
     curH: number[][],
-    curV: number[][]
+    curV: number[][],
+    ctx: SlitherlinkExecutionContext
   ): {
     edge: SlitherEdge;
     state: 2;
@@ -947,65 +1010,86 @@ export class WebSlitherlinkGenerator {
     const BEAM_WIDTH = 3;
 
     for (const cand of edgeCandidates) {
-      const rootH = curH.map((row) => [...row]);
-      const rootV = curV.map((row) => [...row]);
-      if (cand.type === 'h') rootH[cand.r][cand.c] = 1;
-      else rootV[cand.r][cand.c] = 1;
-
-      interface ProbeState {
-        h: number[][];
-        v: number[][];
-        chain: ContradictionNode[];
-        depth: number;
+      if (ctx.checkDeadline()) {
+        throw new Error('TIMEOUT_EXCEEDED');
       }
 
-      const frontier: ProbeState[] = [{
-        h: rootH,
-        v: rootV,
-        chain: [{ edge: cand, assumedState: 1, step: 0, reason: '假設實線' }],
-        depth: 0,
-      }];
+      const isH = cand.type === 'h';
+      if (isH) curH[cand.r][cand.c] = 1;
+      else curV[cand.r][cand.c] = 1;
 
-      while (frontier.length > 0) {
-        const current = frontier.shift()!;
-        const conflictCheck = this.checkImmediateConflict(rows, cols, clues, current.h, current.v);
+      const chain: ContradictionNode[] = [{ edge: cand, assumedState: 1, step: 0, reason: '假設實線' }];
+      const undoStack: { type: EdgeType; r: number; c: number; oldVal: number }[] = [
+        { type: cand.type, r: cand.r, c: cand.c, oldVal: 0 },
+      ];
 
-        if (conflictCheck.conflict) {
-          return {
-            edge: cand,
-            state: 2,
-            chain: current.chain,
-            depth: current.depth,
-            rationale: `第 ${current.depth} 步觸發矛盾：${conflictCheck.reason}`,
-            humanReadable: {
-              zh: `可追溯反證：前向推演 ${current.depth} 步引發${conflictCheck.reason}，此處強制標叉 (x)！`,
-              en: `Human Traceable Proof: Depth ${current.depth} leads to ${conflictCheck.reason}; forced cross (x)!`,
-            },
-          };
+      let foundConflict: { conflict: boolean; reason: string; depth: number } | null = null;
+
+      const probeDfs = (currentDepth: number): boolean => {
+        if (ctx.checkDeadline()) {
+          throw new Error('TIMEOUT_EXCEEDED');
         }
 
-        if (current.depth >= MAX_HUMAN_DEPTH) continue;
+        const check = this.checkImmediateConflict(rows, cols, clues, curH, curV, ctx);
+        if (check.conflict) {
+          foundConflict = { conflict: true, reason: check.reason, depth: currentDepth };
+          return true;
+        }
 
-        const deductions = this.getStrictDeductions(rows, cols, clues, current.h, current.v);
-        if (deductions.size === 0) continue;
+        if (currentDepth >= MAX_HUMAN_DEPTH) return false;
 
-        const sortedDeductions = Array.from(deductions.values())
+        const deductions = this.getStrictDeductions(rows, cols, clues, curH, curV, ctx);
+        if (deductions.size === 0) return false;
+
+        const sorted = Array.from(deductions.values())
           .sort((a, b) => (TECHNIQUE_WEIGHTS[b.type] || 0) - (TECHNIQUE_WEIGHTS[a.type] || 0))
           .slice(0, BEAM_WIDTH);
 
-        for (const d of sortedDeductions) {
-          const nextH = current.h.map((r) => [...r]);
-          const nextV = current.v.map((r) => [...r]);
-          if (d.edge.type === 'h') nextH[d.edge.r][d.edge.c] = d.state;
-          else nextV[d.edge.r][d.edge.c] = d.state;
+        for (const d of sorted) {
+          const dt = d.edge.type;
+          const dr = d.edge.r;
+          const dc = d.edge.c;
+          const oldVal = dt === 'h' ? curH[dr][dc] : curV[dr][dc];
 
-          frontier.push({
-            h: nextH,
-            v: nextV,
-            chain: [...current.chain, { edge: d.edge, assumedState: d.state, step: current.depth + 1, reason: d.rationale }],
-            depth: current.depth + 1,
-          });
+          if (dt === 'h') curH[dr][dc] = d.state;
+          else curV[dr][dc] = d.state;
+
+          undoStack.push({ type: dt, r: dr, c: dc, oldVal });
+          chain.push({ edge: d.edge, assumedState: d.state, step: currentDepth + 1, reason: d.rationale });
+
+          const hit = probeDfs(currentDepth + 1);
+          if (hit) return true;
+
+          chain.pop();
+          const lastUndo = undoStack.pop()!;
+          if (lastUndo.type === 'h') curH[lastUndo.r][lastUndo.c] = lastUndo.oldVal;
+          else curV[lastUndo.r][lastUndo.c] = lastUndo.oldVal;
         }
+
+        return false;
+      };
+
+      const hasContradiction = probeDfs(0);
+
+      while (undoStack.length > 0) {
+        const u = undoStack.pop()!;
+        if (u.type === 'h') curH[u.r][u.c] = u.oldVal;
+        else curV[u.r][u.c] = u.oldVal;
+      }
+
+      if (hasContradiction && foundConflict) {
+        const fc = foundConflict as { conflict: boolean; reason: string; depth: number };
+        return {
+          edge: cand,
+          state: 2,
+          chain: [...chain],
+          depth: fc.depth,
+          rationale: `第 ${fc.depth} 步觸發矛盾：${fc.reason}`,
+          humanReadable: {
+            zh: `可追溯反證：前向推演 ${fc.depth} 步引發${fc.reason}，此處強制標叉 (x)！`,
+            en: `Human Traceable Proof: Depth ${fc.depth} leads to ${fc.reason}; forced cross (x)!`,
+          },
+        };
       }
     }
 
@@ -1015,7 +1099,8 @@ export class WebSlitherlinkGenerator {
   public static countSolutionsCognitivelyBounded(
     rows: number,
     cols: number,
-    clues: (number | null)[][]
+    clues: (number | null)[][],
+    ctx: SlitherlinkExecutionContext
   ): { count: number; steps: SlitherStep[] } {
     const curH: number[][] = Array.from({ length: rows + 1 }, () => Array(cols).fill(0));
     const curV: number[][] = Array.from({ length: rows }, () => Array(cols + 1).fill(0));
@@ -1025,8 +1110,12 @@ export class WebSlitherlinkGenerator {
     let progressed = true;
 
     while (progressed) {
+      if (ctx.checkDeadline()) {
+        throw new Error('TIMEOUT_EXCEEDED');
+      }
+
       progressed = false;
-      const deductions = this.getStrictDeductions(rows, cols, clues, curH, curV);
+      const deductions = this.getStrictDeductions(rows, cols, clues, curH, curV, ctx);
 
       if (deductions.size > 0) {
         let chosen = Array.from(deductions.values()).find(
@@ -1052,7 +1141,7 @@ export class WebSlitherlinkGenerator {
 
         progressed = true;
       } else {
-        const contra = this.probeHumanBoundedContradiction(rows, cols, clues, curH, curV);
+        const contra = this.probeHumanBoundedContradiction(rows, cols, clues, curH, curV, ctx);
         if (contra) {
           if (contra.edge.type === 'h') curH[contra.edge.r][contra.edge.c] = 2;
           else curV[contra.edge.r][contra.edge.c] = 2;
@@ -1078,7 +1167,7 @@ export class WebSlitherlinkGenerator {
 
     const finalH = curH.map((r) => r.map((cell) => cell === 1));
     const finalV = curV.map((r) => r.map((cell) => cell === 1));
-    const isSingleLoop = this.isStrictSingleLoop(finalH, finalV, rows, cols);
+    const isSingleLoop = this.isStrictSingleLoop(finalH, finalV, rows, cols, ctx);
 
     let allCluesSatisfied = true;
     for (let r = 0; r < rows; r++) {
@@ -1151,7 +1240,8 @@ export class WebSlitherlinkGenerator {
     const midR = rows / 2;
     const midC = cols / 2;
 
-    for (const s of steps) {
+    for (let i = 0; i < n; i++) {
+      const s = steps[i];
       const domain = TECHNIQUE_DOMAINS[s.type] || 'candidate';
       domainCounts[domain]++;
       techFreq.set(s.type, (techFreq.get(s.type) || 0) + 1);
@@ -1260,7 +1350,11 @@ export class WebSlitherlinkGenerator {
     };
   }
 
-  public static generate(tier: TierKey = 'expert', inputSeed?: number): PuzzleEntity {
+  public static generate(
+    tier: TierKey = 'expert',
+    inputSeed?: number,
+    ctx: SlitherlinkExecutionContext = new SlitherlinkExecutionContext()
+  ): PuzzleEntity {
     const config = TIER_SPECS[tier] || TIER_SPECS.expert;
     const { rows, cols, clueRemovalRate, minTechniqueWeight, allowSymmetry, baseIrt, timeLimitSec } = config;
     const seed = inputSeed ?? Math.floor(Math.random() * 0x7fffffff);
@@ -1269,85 +1363,92 @@ export class WebSlitherlinkGenerator {
     let attempts = 0;
     const maxAttempts = 40;
 
-    while (attempts++ < maxAttempts) {
-      const { hEdges, vEdges } = this.generateOrganicValidLoop(rows, cols, allowSymmetry, rnd);
-      if (!this.isStrictSingleLoop(hEdges, vEdges, rows, cols)) continue;
+    try {
+      while (attempts++ < maxAttempts) {
+        if (ctx.checkDeadline()) {
+          throw new Error('TIMEOUT_EXCEEDED');
+        }
 
-      const fullClues = this.extractClues(rows, cols, hEdges, vEdges);
-      const puzzleClues = fullClues.map((row) => [...row]);
+        const { hEdges, vEdges } = this.generateOrganicValidLoop(rows, cols, allowSymmetry, rnd);
+        if (!this.isStrictSingleLoop(hEdges, vEdges, rows, cols, ctx)) continue;
 
-      for (let r = 0; r < rows; r++) {
-        for (let c = 0; c < cols; c++) {
-          if (rnd() < clueRemovalRate) {
-            puzzleClues[r][c] = null;
-            if (allowSymmetry) puzzleClues[rows - 1 - r][cols - 1 - c] = null;
+        const fullClues = this.extractClues(rows, cols, hEdges, vEdges);
+        const puzzleClues = fullClues.map((row) => [...row]);
+
+        for (let r = 0; r < rows; r++) {
+          for (let c = 0; c < cols; c++) {
+            if (rnd() < clueRemovalRate) {
+              puzzleClues[r][c] = null;
+              if (allowSymmetry) puzzleClues[rows - 1 - r][cols - 1 - c] = null;
+            }
           }
         }
-      }
 
-      const curHInit = Array.from({ length: rows + 1 }, () => Array(cols).fill(0));
-      const curVInit = Array.from({ length: rows }, () => Array(cols + 1).fill(0));
-      const initialDeductions = this.getStrictDeductions(rows, cols, puzzleClues, curHInit, curVInit);
-      const startingAnchors = initialDeductions.size;
-      if (startingAnchors === 0) continue;
+        const curHInit = Array.from({ length: rows + 1 }, () => Array(cols).fill(0));
+        const curVInit = Array.from({ length: rows }, () => Array(cols + 1).fill(0));
+        const initialDeductions = this.getStrictDeductions(rows, cols, puzzleClues, curHInit, curVInit, ctx);
+        const startingAnchors = initialDeductions.size;
+        if (startingAnchors === 0) continue;
 
-      const boundedResult = this.countSolutionsCognitivelyBounded(rows, cols, puzzleClues);
-      if (boundedResult.count !== 1) continue;
+        const boundedResult = this.countSolutionsCognitivelyBounded(rows, cols, puzzleClues, ctx);
+        if (boundedResult.count !== 1) continue;
 
-      const totalWeight = boundedResult.steps.reduce((acc, s) => acc + s.complexityWeight, 0);
-      if (totalWeight < minTechniqueWeight) continue;
+        const totalWeight = boundedResult.steps.reduce((acc, s) => acc + s.complexityWeight, 0);
+        if (totalWeight < minTechniqueWeight) continue;
 
-      const wpcReport = this.evaluateWpcMastery(rows, cols, boundedResult.steps, startingAnchors);
+        const wpcReport = this.evaluateWpcMastery(rows, cols, boundedResult.steps, startingAnchors);
+        if ((tier === 'master' || tier === 'legendary' || tier === 'ultimate') && wpcReport.wpcGrade === 'C') {
+          continue;
+        }
 
-      if ((tier === 'master' || tier === 'legendary' || tier === 'ultimate') && wpcReport.wpcGrade === 'C') {
-        continue;
-      }
-
-      const puzzleId = `slither_${tier}_s${seed}`;
-      const spec: SlitherlinkSpec = {
-        rows,
-        cols,
-        clues: puzzleClues,
-        grid: puzzleClues,
-        solutionH: hEdges,
-        solutionV: vEdges,
-        solvingSteps: boundedResult.steps,
-        maxForcedChain: boundedResult.steps.length,
-        pureDeductionRate: wpcReport.pureRate,
-        topologicalEntropy: wpcReport.spatialEntropy,
-        isSymmetric180: allowSymmetry,
-        seed,
-        tier,
-        wpcReport,
-      };
-
-      return {
-        id: puzzleId,
-        category: 'loop_logic',
-        engine_type: 'slitherlink',
-        tier,
-        checksum: `SLITHER_${rows}x${cols}_MYTHIC_${seed}`,
-        puzzle: spec,
-        solution: { solutionH: hEdges, solutionV: vEdges },
-        cognitiveLoad: {
-          spatial: 0.98,
-          numeric: 0.3,
-          workingMemory: Number(Math.min(1.0, 0.4 + (totalWeight / 180) * 0.5).toFixed(2)),
-          inhibition: 0.95,
-        },
-        metrics: {
-          grid_size: rows,
+        const puzzleId = `slither_${tier}_s${seed}`;
+        const spec: SlitherlinkSpec = {
           rows,
           cols,
-          estimated_time_sec: timeLimitSec,
-          irt_logit_difficulty: baseIrt,
-          wpc_grade: wpcReport.wpcGrade,
-          human_traceability_score: wpcReport.humanTraceabilityScore,
-          spatial_entropy: wpcReport.spatialEntropy,
+          clues: puzzleClues,
+          grid: puzzleClues,
+          solutionH: hEdges,
+          solutionV: vEdges,
+          solvingSteps: boundedResult.steps,
+          maxForcedChain: boundedResult.steps.length,
+          pureDeductionRate: wpcReport.pureRate,
+          topologicalEntropy: wpcReport.spatialEntropy,
+          isSymmetric180: allowSymmetry,
           seed,
-          actualTier: tier,
-        } as any,
-      };
+          tier,
+          wpcReport,
+        };
+
+        return {
+          id: puzzleId,
+          category: 'loop_logic',
+          engine_type: 'slitherlink',
+          tier,
+          checksum: `SLITHER_${rows}x${cols}_MYTHIC_${seed}`,
+          puzzle: spec,
+          solution: { solutionH: hEdges, solutionV: vEdges },
+          cognitiveLoad: {
+            spatial: 0.98,
+            numeric: 0.3,
+            workingMemory: Number(Math.min(1.0, 0.4 + (totalWeight / 180) * 0.5).toFixed(2)),
+            inhibition: 0.95,
+          },
+          metrics: {
+            grid_size: rows,
+            rows,
+            cols,
+            estimated_time_sec: timeLimitSec,
+            irt_logit_difficulty: baseIrt,
+            wpc_grade: wpcReport.wpcGrade,
+            human_traceability_score: wpcReport.humanTraceabilityScore,
+            spatial_entropy: wpcReport.spatialEntropy,
+            seed,
+            actualTier: tier,
+          } as any,
+        };
+      }
+    } catch (e: any) {
+      if (e?.message !== 'TIMEOUT_EXCEEDED') throw e;
     }
 
     return this._generateFallback(tier, rows, cols, seed, baseIrt, timeLimitSec);
