@@ -1,4 +1,3 @@
-// web-frontend/src/engines/nonogramGenerator.ts
 import { PuzzleEntity, TierKey } from '../generated';
 
 export type ExtendedTierKey = TierKey;
@@ -12,7 +11,7 @@ export type NonogramTechnique =
   | 'two_dimensional_flood_contradiction';
 
 export interface DAGNode {
-  cellId: string; // "r,c"
+  cellId: string;
   step: number;
   r: number;
   c: number;
@@ -95,7 +94,6 @@ const TECHNIQUE_WEIGHTS: Record<NonogramTechnique, number> = {
   two_dimensional_flood_contradiction: 18,
 };
 
-// 專業向量剪影與對應的洞察字典
 const THEMATIC_TEMPLATES = [
   {
     nameZh: '極境雄鷹',
@@ -136,6 +134,35 @@ function mulberry32(a: number) {
   };
 }
 
+export class NonogramExecutionContext {
+  public memoFilled: Int32Array;
+  public memoCross: Int32Array;
+  public memoCount: Int32Array;
+  public minSpaceSuffix: Int32Array;
+  public deadlineMs: number;
+
+  constructor(maxSize: number = 20, timeBudgetMs: number = 2500) {
+    const maxEntries = (maxSize + 1) << 6;
+    this.memoFilled = new Int32Array(maxEntries);
+    this.memoCross = new Int32Array(maxEntries);
+    this.memoCount = new Int32Array(maxEntries);
+    this.minSpaceSuffix = new Int32Array(maxSize + 1);
+
+    const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    this.deadlineMs = now + timeBudgetMs;
+  }
+
+  public checkDeadline(): boolean {
+    const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    return now > this.deadlineMs;
+  }
+
+  public resetMemo(cluesLen: number): void {
+    const maxKeys = (cluesLen + 1) << 6;
+    this.memoCount.fill(-1, 0, maxKeys);
+  }
+}
+
 export class WebNonogramGenerator {
   public static extractLineClues(line: boolean[]): number[] {
     const clues: number[] = [];
@@ -152,13 +179,11 @@ export class WebNonogramGenerator {
     return clues.length > 0 ? clues : [0];
   }
 
-  /**
-   * 真·DP 線段約束求解器（帶 Memoization 與位元狀態壓縮）
-   */
   public static solveLineDPFast(
     length: number,
     clues: number[],
-    currentLine: CellState[]
+    currentLine: CellState[],
+    ctx: NonogramExecutionContext
   ): { commonFilledMask: number; commonCrossMask: number; hasValid: boolean; validCount: number } {
     if (clues.length === 1 && clues[0] === 0) {
       let valid = true;
@@ -168,42 +193,40 @@ export class WebNonogramGenerator {
           break;
         }
       }
-      const fullMask = (1 << length) - 1;
-      return { commonFilledMask: 0, commonCrossMask: fullMask, hasValid: valid, validCount: valid ? 1 : 0 };
+      return { commonFilledMask: 0, commonCrossMask: (1 << length) - 1, hasValid: valid, validCount: valid ? 1 : 0 };
     }
 
-    const memo = new Map<string, { filledMask: number; crossMask: number; count: number } | null>();
+    ctx.resetMemo(clues.length);
 
-    const minSpaceSuffix: number[] = new Array(clues.length + 1).fill(0);
+    ctx.minSpaceSuffix[clues.length] = 0;
     for (let i = clues.length - 1; i >= 0; i--) {
-      minSpaceSuffix[i] = minSpaceSuffix[i + 1] + clues[i] + (i < clues.length - 1 ? 1 : 0);
+      ctx.minSpaceSuffix[i] = ctx.minSpaceSuffix[i + 1] + clues[i] + (i < clues.length - 1 ? 1 : 0);
     }
 
-    const dp = (
-      clueIdx: number,
-      pos: number
-    ): { filledMask: number; crossMask: number; count: number } | null => {
-      const key = `${clueIdx},${pos}`;
-      if (memo.has(key)) return memo.get(key)!;
+    const dp = (clueIdx: number, pos: number): boolean => {
+      const key = (clueIdx << 6) | pos;
+      if (ctx.memoCount[key] !== -1) {
+        return ctx.memoCount[key] > 0;
+      }
 
       if (clueIdx === clues.length) {
         for (let i = pos; i < length; i++) {
           if (currentLine[i] === 1) {
-            memo.set(key, null);
-            return null;
+            ctx.memoCount[key] = 0;
+            return false;
           }
         }
         let tailCross = 0;
         for (let i = pos; i < length; i++) tailCross |= (1 << i);
-        const res = { filledMask: 0, crossMask: tailCross, count: 1 };
-        memo.set(key, res);
-        return res;
+        ctx.memoFilled[key] = 0;
+        ctx.memoCross[key] = tailCross;
+        ctx.memoCount[key] = 1;
+        return true;
       }
 
-      const needed = minSpaceSuffix[clueIdx];
-      if (length - pos < needed) {
-        memo.set(key, null);
-        return null;
+      if (length - pos < ctx.minSpaceSuffix[clueIdx]) {
+        ctx.memoCount[key] = 0;
+        return false;
       }
 
       const blockLen = clues[clueIdx];
@@ -213,13 +236,16 @@ export class WebNonogramGenerator {
       let accumAnyCross = 0;
       let accumAllCross = -1;
 
-      // 分支 A：此格為 Cross (留空)
+      // 分支 A: 標記為 Cross
       if (currentLine[pos] !== 1) {
-        const sub = dp(clueIdx, pos + 1);
-        if (sub) {
-          totalCount += sub.count;
-          const currentCross = sub.crossMask | (1 << pos);
-          const currentFilled = sub.filledMask;
+        if (dp(clueIdx, pos + 1)) {
+          const subKey = (clueIdx << 6) | (pos + 1);
+          const subCount = ctx.memoCount[subKey];
+          totalCount += subCount;
+
+          const currentCross = ctx.memoCross[subKey] | (1 << pos);
+          const currentFilled = ctx.memoFilled[subKey];
+
           accumAnyFilled |= currentFilled;
           accumAllFilled = accumAllFilled === -1 ? currentFilled : (accumAllFilled & currentFilled);
           accumAnyCross |= currentCross;
@@ -227,10 +253,11 @@ export class WebNonogramGenerator {
         }
       }
 
-      // 分支 B：此處放置 Block
+      // 分支 B: 放置 Block
       let canPlace = true;
-      if (pos + blockLen > length) canPlace = false;
-      else {
+      if (pos + blockLen > length) {
+        canPlace = false;
+      } else {
         for (let i = 0; i < blockLen; i++) {
           if (currentLine[pos + i] === 2) {
             canPlace = false;
@@ -249,11 +276,14 @@ export class WebNonogramGenerator {
         if (pos + blockLen < length) gapCross |= (1 << (pos + blockLen));
 
         const nextPos = pos + blockLen + (pos + blockLen < length ? 1 : 0);
-        const sub = dp(clueIdx + 1, nextPos);
-        if (sub) {
-          totalCount += sub.count;
-          const currentFilled = sub.filledMask | blockFilled;
-          const currentCross = sub.crossMask | gapCross;
+        if (dp(clueIdx + 1, nextPos)) {
+          const subKey = ((clueIdx + 1) << 6) | nextPos;
+          const subCount = ctx.memoCount[subKey];
+          totalCount += subCount;
+
+          const currentFilled = ctx.memoFilled[subKey] | blockFilled;
+          const currentCross = ctx.memoCross[subKey] | gapCross;
+
           accumAnyFilled |= currentFilled;
           accumAllFilled = accumAllFilled === -1 ? currentFilled : (accumAllFilled & currentFilled);
           accumAnyCross |= currentCross;
@@ -262,35 +292,31 @@ export class WebNonogramGenerator {
       }
 
       if (totalCount === 0) {
-        memo.set(key, null);
-        return null;
+        ctx.memoCount[key] = 0;
+        return false;
       }
 
-      const result = {
-        filledMask: accumAllFilled === -1 ? 0 : accumAllFilled,
-        crossMask: accumAllCross === -1 ? 0 : accumAllCross,
-        count: totalCount,
-      };
-      memo.set(key, result);
-      return result;
+      ctx.memoFilled[key] = accumAllFilled === -1 ? 0 : accumAllFilled;
+      ctx.memoCross[key] = accumAllCross === -1 ? 0 : accumAllCross;
+      ctx.memoCount[key] = totalCount;
+      return true;
     };
 
-    const outcome = dp(0, 0);
-    if (!outcome || outcome.count === 0) {
+    const hasValid = dp(0, 0);
+    const rootKey = 0;
+
+    if (!hasValid || ctx.memoCount[rootKey] === 0) {
       return { commonFilledMask: 0, commonCrossMask: 0, hasValid: false, validCount: 0 };
     }
 
     return {
-      commonFilledMask: outcome.filledMask,
-      commonCrossMask: outcome.crossMask,
+      commonFilledMask: ctx.memoFilled[rootKey],
+      commonCrossMask: ctx.memoCross[rootKey],
       hasValid: true,
-      validCount: outcome.count,
+      validCount: ctx.memoCount[rootKey],
     };
   }
 
-  /**
-   * 生成具備高辨識度的特徵剪影
-   */
   private static generateThematicOrganicSkeleton(
     size: number,
     targetDensity: number,
@@ -344,9 +370,6 @@ export class WebNonogramGenerator {
     };
   }
 
-  /**
-   * 雙向遞迴矛盾探測（Bidirectional Lookahead Contradiction Probe）
-   */
   private static probeBidirectionalContradiction(
     size: number,
     rowClues: number[][],
@@ -355,16 +378,31 @@ export class WebNonogramGenerator {
     hypoR: number,
     hypoC: number,
     hypoState: 1 | 2,
-    maxDepth: number
+    maxDepth: number,
+    ctx: NonogramExecutionContext
   ): { isConflict: boolean; depthReached: number } {
-    const sandbox = masterBoard.map((row) => [...row]);
-    sandbox[hypoR][hypoC] = hypoState;
+    if (ctx.checkDeadline()) {
+      throw new Error('TIMEOUT_EXCEEDED');
+    }
+
+    const undoStack: { r: number; c: number; prev: CellState }[] = [];
+    masterBoard[hypoR][hypoC] = hypoState;
+    undoStack.push({ r: hypoR, c: hypoC, prev: 0 });
 
     const pendingRows = new Set<number>([hypoR]);
     const pendingCols = new Set<number>([hypoC]);
     let depth = 0;
+    let isConflict = false;
 
     while ((pendingRows.size > 0 || pendingCols.size > 0) && depth < maxDepth) {
+      if (ctx.checkDeadline()) {
+        while (undoStack.length > 0) {
+          const op = undoStack.pop()!;
+          masterBoard[op.r][op.c] = op.prev;
+        }
+        throw new Error('TIMEOUT_EXCEEDED');
+      }
+
       depth++;
 
       if (pendingRows.size > 0) {
@@ -372,15 +410,19 @@ export class WebNonogramGenerator {
         const r = rIter.value!;
         pendingRows.delete(r);
 
-        const res = this.solveLineDPFast(size, rowClues[r], sandbox[r]);
-        if (!res.hasValid) return { isConflict: true, depthReached: depth };
+        const res = this.solveLineDPFast(size, rowClues[r], masterBoard[r], ctx);
+        if (!res.hasValid) {
+          isConflict = true;
+          break;
+        }
 
         for (let c = 0; c < size; c++) {
-          if (sandbox[r][c] === 0) {
+          if (masterBoard[r][c] === 0) {
             const isFilled = (res.commonFilledMask & (1 << c)) !== 0;
             const isCross = (res.commonCrossMask & (1 << c)) !== 0;
             if (isFilled || isCross) {
-              sandbox[r][c] = isFilled ? 1 : 2;
+              undoStack.push({ r, c, prev: 0 });
+              masterBoard[r][c] = isFilled ? 1 : 2;
               pendingCols.add(c);
             }
           }
@@ -393,17 +435,21 @@ export class WebNonogramGenerator {
         pendingCols.delete(c);
 
         const colLine: CellState[] = [];
-        for (let r = 0; r < size; r++) colLine.push(sandbox[r][c]);
+        for (let r = 0; r < size; r++) colLine.push(masterBoard[r][c]);
 
-        const res = this.solveLineDPFast(size, colClues[c], colLine);
-        if (!res.hasValid) return { isConflict: true, depthReached: depth };
+        const res = this.solveLineDPFast(size, colClues[c], colLine, ctx);
+        if (!res.hasValid) {
+          isConflict = true;
+          break;
+        }
 
         for (let r = 0; r < size; r++) {
-          if (sandbox[r][c] === 0) {
+          if (masterBoard[r][c] === 0) {
             const isFilled = (res.commonFilledMask & (1 << r)) !== 0;
             const isCross = (res.commonCrossMask & (1 << r)) !== 0;
             if (isFilled || isCross) {
-              sandbox[r][c] = isFilled ? 1 : 2;
+              undoStack.push({ r, c, prev: 0 });
+              masterBoard[r][c] = isFilled ? 1 : 2;
               pendingRows.add(r);
             }
           }
@@ -411,22 +457,27 @@ export class WebNonogramGenerator {
       }
     }
 
-    return { isConflict: false, depthReached: depth };
+    while (undoStack.length > 0) {
+      const op = undoStack.pop()!;
+      masterBoard[op.r][op.c] = op.prev;
+    }
+
+    return { isConflict, depthReached: depth };
   }
 
-  /**
-   * 即時單步引導提示生成器（供 NonogramBoard 調用）
-   */
   public static getNextForcedDeduction(
     rows: number,
     cols: number,
     rowClues: number[][],
     colClues: number[][],
-    currentGrid: CellState[][]
+    currentGrid: CellState[][],
+    ctx?: NonogramExecutionContext
   ): NonogramHintStep | null {
+    const localCtx = ctx ?? new NonogramExecutionContext(Math.max(rows, cols));
+
     for (let r = 0; r < rows; r++) {
       const line = currentGrid[r];
-      const res = this.solveLineDPFast(cols, rowClues[r], line);
+      const res = this.solveLineDPFast(cols, rowClues[r], line, localCtx);
       if (res.hasValid) {
         for (let c = 0; c < cols; c++) {
           if (line[c] === 0) {
@@ -461,7 +512,7 @@ export class WebNonogramGenerator {
     for (let c = 0; c < cols; c++) {
       const colLine: CellState[] = [];
       for (let r = 0; r < rows; r++) colLine.push(currentGrid[r][c]);
-      const res = this.solveLineDPFast(rows, colClues[c], colLine);
+      const res = this.solveLineDPFast(rows, colClues[c], colLine, localCtx);
       if (res.hasValid) {
         for (let r = 0; r < rows; r++) {
           if (colLine[r] === 0) {
@@ -496,16 +547,14 @@ export class WebNonogramGenerator {
     return null;
   }
 
-  /**
-   * 競技級認知心流解題模擬器
-   */
   private static simulateChampionshipSolving(
     size: number,
     rowClues: number[][],
     colClues: number[][],
     allowContradiction: boolean,
     dynamicLookaheadDepth: number,
-    minFinisherRatio: number
+    minFinisherRatio: number,
+    ctx: NonogramExecutionContext
   ): {
     board: CellState[][];
     steps: NonogramHintStep[];
@@ -536,15 +585,19 @@ export class WebNonogramGenerator {
     let masterKeyStepIndex = -1;
 
     while (pendingRows.size > 0 || pendingCols.size > 0) {
+      if (ctx.checkDeadline()) {
+        throw new Error('TIMEOUT_EXCEEDED');
+      }
+
       let progressed = false;
 
-      // 1. 行事件連鎖 (優先推導)
+      // 1. 行事件連鎖
       if (pendingRows.size > 0) {
         const rIter = pendingRows.values().next();
         const r = rIter.value!;
         pendingRows.delete(r);
 
-        const res = this.solveLineDPFast(size, rowClues[r], board[r]);
+        const res = this.solveLineDPFast(size, rowClues[r], board[r], ctx);
         if (!res.hasValid) {
           return { board, steps, logicalComplexityScore: 0, highestTechnique: 'line_overlap', criticalPathDepth: 0, bottleneckBranchingFactor: 0, hasFinisherCascade: false, masterKeyCoord: null, pureRate: 0 };
         }
@@ -626,7 +679,7 @@ export class WebNonogramGenerator {
         const colLine: CellState[] = [];
         for (let r = 0; r < size; r++) colLine.push(board[r][c]);
 
-        const res = this.solveLineDPFast(size, colClues[c], colLine);
+        const res = this.solveLineDPFast(size, colClues[c], colLine, ctx);
         if (!res.hasValid) {
           return { board, steps, logicalComplexityScore: 0, highestTechnique: 'line_overlap', criticalPathDepth: 0, bottleneckBranchingFactor: 0, hasFinisherCascade: false, masterKeyCoord: null, pureRate: 0 };
         }
@@ -699,17 +752,15 @@ export class WebNonogramGenerator {
         }
       }
 
-      // 3. 雙向反證法（當線性推導完全卡死時觸發）
+      // 3. 雙向因果反證法
       if (!progressed && allowContradiction && pendingRows.size === 0 && pendingCols.size === 0) {
         outerContradiction: for (let r = 0; r < size; r++) {
           for (let c = 0; c < size; c++) {
             if (board[r][c] === 0) {
-              // 探測 A: 假設填黑 (1)，看是否產生矛盾
               const probeFill = this.probeBidirectionalContradiction(
-                size, rowClues, colClues, board, r, c, 1, dynamicLookaheadDepth
+                size, rowClues, colClues, board, r, c, 1, dynamicLookaheadDepth, ctx
               );
               if (probeFill.isConflict) {
-                // 假設黑產生矛盾 => 必為叉 (2)
                 board[r][c] = 2;
                 stepCount++;
                 complexityScore += TECHNIQUE_WEIGHTS.two_dimensional_flood_contradiction;
@@ -745,12 +796,10 @@ export class WebNonogramGenerator {
                 break outerContradiction;
               }
 
-              // 探測 B: 假設標叉 (2)，看是否產生矛盾
               const probeCross = this.probeBidirectionalContradiction(
-                size, rowClues, colClues, board, r, c, 2, dynamicLookaheadDepth
+                size, rowClues, colClues, board, r, c, 2, dynamicLookaheadDepth, ctx
               );
               if (probeCross.isConflict) {
-                // 假設叉產生矛盾 => 必為黑 (1)
                 board[r][c] = 1;
                 stepCount++;
                 complexityScore += TECHNIQUE_WEIGHTS.two_dimensional_flood_contradiction;
@@ -791,7 +840,12 @@ export class WebNonogramGenerator {
       }
     }
 
-    const filledCount = board.flat().filter((v) => v !== 0).length;
+    let filledCount = 0;
+    for (let r = 0; r < size; r++) {
+      for (let c = 0; c < size; c++) {
+        if (board[r][c] !== 0) filledCount++;
+      }
+    }
     const total = size * size;
     const pureRate = Number((filledCount / total).toFixed(2));
 
@@ -816,7 +870,11 @@ export class WebNonogramGenerator {
     };
   }
 
-  public static generate(tier: TierKey = 'kids', inputSeed?: number): PuzzleEntity {
+  public static generate(
+    tier: TierKey = 'kids',
+    inputSeed?: number,
+    ctx: NonogramExecutionContext = new NonogramExecutionContext()
+  ): PuzzleEntity {
     const config = TIER_SPECS[tier] || TIER_SPECS.kids;
     const { size, targetDensity, minCriticalDepth, dynamicLookaheadDepth, minFinisherRatio, allowContradiction, baseIrt, timeLimitSec } = config;
     const actualSeed = inputSeed !== undefined ? inputSeed : Math.floor(Math.random() * 0x7fffffff);
@@ -825,92 +883,100 @@ export class WebNonogramGenerator {
     let attempts = 0;
     const maxAttempts = 40;
 
-    while (attempts++ < maxAttempts) {
-      const { grid: solution, themeZh, themeEn, insightZh, insightEn } = this.generateThematicOrganicSkeleton(size, targetDensity, rnd);
+    try {
+      while (attempts++ < maxAttempts) {
+        if (ctx.checkDeadline()) {
+          throw new Error('TIMEOUT_EXCEEDED');
+        }
 
-      const rowClues: number[][] = [];
-      for (let r = 0; r < size; r++) rowClues.push(this.extractLineClues(solution[r]));
-      const colClues: number[][] = [];
-      for (let c = 0; c < size; c++) {
-        const col: boolean[] = [];
-        for (let r = 0; r < size; r++) col.push(solution[r][c]);
-        colClues.push(this.extractLineClues(col));
-      }
+        const { grid: solution, themeZh, themeEn, insightZh, insightEn } = this.generateThematicOrganicSkeleton(size, targetDensity, rnd);
 
-      const sim = this.simulateChampionshipSolving(
-        size,
-        rowClues,
-        colClues,
-        allowContradiction,
-        dynamicLookaheadDepth,
-        minFinisherRatio
-      );
+        const rowClues: number[][] = [];
+        for (let r = 0; r < size; r++) rowClues.push(this.extractLineClues(solution[r]));
+        const colClues: number[][] = [];
+        for (let c = 0; c < size; c++) {
+          const col: boolean[] = [];
+          for (let r = 0; r < size; r++) col.push(solution[r][c]);
+          colClues.push(this.extractLineClues(col));
+        }
 
-      // 嚴格過濾：純邏輯推導必須達到 100% (數學 Soundness 保證唯一解)
-      if (sim.pureRate < 1.0) continue;
-      if (tier !== 'kids' && sim.criticalPathDepth < minCriticalDepth) continue;
+        const sim = this.simulateChampionshipSolving(
+          size,
+          rowClues,
+          colClues,
+          allowContradiction,
+          dynamicLookaheadDepth,
+          minFinisherRatio,
+          ctx
+        );
 
-      const dynamicIrt = Number(
-        (baseIrt + (sim.criticalPathDepth / size) * 0.40 + Math.log2(Math.max(1, sim.logicalComplexityScore / 30)) * 0.30).toFixed(2)
-      );
+        if (sim.pureRate < 1.0) continue;
+        if (tier !== 'kids' && sim.criticalPathDepth < minCriticalDepth) continue;
 
-      const spec: NonogramSpec = {
-        rows: size,
-        cols: size,
-        rowClues,
-        colClues,
-        grid: sim.board,
-        solution,
-        solvingSteps: sim.steps,
-        pureDeductionRate: 1.0,
-        highestTechnique: sim.highestTechnique,
-        criticalPathDepth: sim.criticalPathDepth,
-        bottleneckBranchingFactor: sim.bottleneckBranchingFactor,
-        logicalComplexityScore: sim.logicalComplexityScore,
-        hasFinisherCascade: sim.hasFinisherCascade,
-        masterKeyCoordinates: sim.masterKeyCoord,
-        themeTitleZh: themeZh,
-        themeTitleEn: themeEn,
-        tier,
-        seed: actualSeed,
-        pedagogicalPattern: {
-          primaryInsight: sim.highestTechnique,
-          coreInsightZh: insightZh,
-          coreInsightEn: insightEn,
-        },
-      };
+        const dynamicIrt = Number(
+          (baseIrt + (sim.criticalPathDepth / size) * 0.40 + Math.log2(Math.max(1, sim.logicalComplexityScore / 30)) * 0.30).toFixed(2)
+        );
 
-      return {
-        id: `nonogram_${tier}_s${actualSeed}`,
-        category: 'spatial_logic',
-        engine_type: 'nonogram',
-        tier,
-        checksum: `NONO_${size}x${size}_WSC_CERTIFIED_${actualSeed}`,
-        puzzle: spec as any,
-        solution: solution as any,
-        cognitiveLoad: {
-          spatial: 0.95,
-          numeric: 0.85,
-          workingMemory: Number(Math.min(1.0, 0.4 + (sim.criticalPathDepth / 22) * 0.55).toFixed(2)),
-          inhibition: 0.92,
-        },
-        metrics: {
-          grid_size: size,
+        const spec: NonogramSpec = {
           rows: size,
           cols: size,
-          estimated_time_sec: timeLimitSec,
-          irt_logit_difficulty: dynamicIrt,
-          human_sim_steps: sim.steps.length,
-          critical_path_depth: sim.criticalPathDepth,
-          bottleneck_branching: sim.bottleneckBranchingFactor,
-          has_finisher_cascade: sim.hasFinisherCascade,
-          master_key_coord: sim.masterKeyCoord,
-          theme_title_zh: themeZh,
-          theme_title_en: themeEn,
+          rowClues,
+          colClues,
+          grid: sim.board,
+          solution,
+          solvingSteps: sim.steps,
+          pureDeductionRate: 1.0,
+          highestTechnique: sim.highestTechnique,
+          criticalPathDepth: sim.criticalPathDepth,
+          bottleneckBranchingFactor: sim.bottleneckBranchingFactor,
+          logicalComplexityScore: sim.logicalComplexityScore,
+          hasFinisherCascade: sim.hasFinisherCascade,
+          masterKeyCoordinates: sim.masterKeyCoord,
+          themeTitleZh: themeZh,
+          themeTitleEn: themeEn,
+          tier,
           seed: actualSeed,
-          actualTier: tier,
-        } as any,
-      };
+          pedagogicalPattern: {
+            primaryInsight: sim.highestTechnique,
+            coreInsightZh: insightZh,
+            coreInsightEn: insightEn,
+          },
+        };
+
+        return {
+          id: `nonogram_${tier}_s${actualSeed}`,
+          category: 'spatial_logic',
+          engine_type: 'nonogram',
+          tier,
+          checksum: `NONO_${size}x${size}_WSC_CERTIFIED_${actualSeed}`,
+          puzzle: spec as any,
+          solution: solution as any,
+          cognitiveLoad: {
+            spatial: 0.95,
+            numeric: 0.85,
+            workingMemory: Number(Math.min(1.0, 0.4 + (sim.criticalPathDepth / 22) * 0.55).toFixed(2)),
+            inhibition: 0.92,
+          },
+          metrics: {
+            grid_size: size,
+            rows: size,
+            cols: size,
+            estimated_time_sec: timeLimitSec,
+            irt_logit_difficulty: dynamicIrt,
+            human_sim_steps: sim.steps.length,
+            critical_path_depth: sim.criticalPathDepth,
+            bottleneck_branching: sim.bottleneckBranchingFactor,
+            has_finisher_cascade: sim.hasFinisherCascade,
+            master_key_coord: sim.masterKeyCoord,
+            theme_title_zh: themeZh,
+            theme_title_en: themeEn,
+            seed: actualSeed,
+            actualTier: tier,
+          } as any,
+        };
+      }
+    } catch (e: any) {
+      if (e?.message !== 'TIMEOUT_EXCEEDED') throw e;
     }
 
     return this._generateAdaptiveFallback(tier, size, actualSeed, baseIrt, timeLimitSec, rnd);
@@ -935,7 +1001,8 @@ export class WebNonogramGenerator {
       colClues.push(this.extractLineClues(col));
     }
 
-    const sim = this.simulateChampionshipSolving(size, rowClues, colClues, true, 4, 0.15);
+    const localCtx = new NonogramExecutionContext(size, 1000);
+    const sim = this.simulateChampionshipSolving(size, rowClues, colClues, true, 4, 0.15, localCtx);
 
     const spec: NonogramSpec = {
       rows: size,
