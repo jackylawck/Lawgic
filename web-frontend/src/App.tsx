@@ -1,5 +1,5 @@
 // web-frontend/src/App.tsx
-import React, { useState, useRef, useEffect, useCallback, memo } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useMemo, memo } from 'react';
 import { ErrorBoundary } from 'react-error-boundary';
 import { LanguageProvider, useLanguage } from './contexts/LanguageContext';
 import {
@@ -194,9 +194,11 @@ const MainDashboard: React.FC = () => {
       if ('serviceWorker' in navigator) {
         const reg = await navigator.serviceWorker.getRegistration();
         if (reg?.waiting) {
-          navigator.serviceWorker.addEventListener('controllerchange', controllerChangeHandler, {
-            once: true,
-          });
+          navigator.serviceWorker.addEventListener(
+            'controllerchange',
+            controllerChangeHandler,
+            { once: true }
+          );
 
           reg.waiting.postMessage({ type: 'SKIP_WAITING' });
 
@@ -233,7 +235,6 @@ const MainDashboard: React.FC = () => {
     [t, isEn, showToast, announce]
   );
 
-  // 注意：需確保 usePuzzlePool 內部已切換為 Worker 呼叫而非主線程計算
   const {
     activeList,
     activePuzzle,
@@ -244,20 +245,20 @@ const MainDashboard: React.FC = () => {
   } = usePuzzlePool(selectedType, currentLevel, handleChallengeLoaded);
 
   const handlePrevPuzzle = useCallback(() => {
-    if (activeList.length === 0) return;
+    if (activeList.length === 0 || isGenerating) return;
     playSound('step');
     safeVibrate(8);
     setPuzzleIndex((prev) => (prev - 1 + activeList.length) % activeList.length);
     boardContainerRef.current?.focus();
-  }, [activeList.length, playSound, safeVibrate, setPuzzleIndex]);
+  }, [activeList.length, isGenerating, playSound, safeVibrate, setPuzzleIndex]);
 
   const handleNextPuzzle = useCallback(() => {
-    if (activeList.length === 0) return;
+    if (activeList.length === 0 || isGenerating) return;
     playSound('step');
     safeVibrate(10);
     setPuzzleIndex((prev) => (prev + 1) % activeList.length);
     boardContainerRef.current?.focus();
-  }, [activeList.length, playSound, safeVibrate, setPuzzleIndex]);
+  }, [activeList.length, isGenerating, playSound, safeVibrate, setPuzzleIndex]);
 
   const handleLiveGenerate = useCallback(async () => {
     if (tournamentMode || isGenerating) return;
@@ -303,6 +304,7 @@ const MainDashboard: React.FC = () => {
 
   const handleTierJump = useCallback(
     (steps: number) => {
+      if (isGenerating) return;
       playSound('hint');
       safeVibrate([20, 30, 20]);
       const currentIdx = LEVEL_KEYS.indexOf(currentLevel);
@@ -312,10 +314,11 @@ const MainDashboard: React.FC = () => {
         setPuzzleIndex(0);
       }
     },
-    [currentLevel, playSound, safeVibrate, setPuzzleIndex]
+    [currentLevel, isGenerating, playSound, safeVibrate, setPuzzleIndex]
   );
 
   const handleSmartDrill = useCallback(() => {
+    if (isGenerating) return;
     const recommendation = getRecommendedSchedulePuzzle();
     if (recommendation) {
       playSound('hint');
@@ -327,7 +330,7 @@ const MainDashboard: React.FC = () => {
       showToast(msg, 3500);
       announce(msg, 'polite');
     }
-  }, [getRecommendedSchedulePuzzle, playSound, safeVibrate, setPuzzleIndex, showToast, announce]);
+  }, [getRecommendedSchedulePuzzle, isGenerating, playSound, safeVibrate, setPuzzleIndex, showToast, announce]);
 
   const handleShareVaultBadge = useCallback(() => {
     if (!activePuzzle) return;
@@ -364,7 +367,7 @@ const MainDashboard: React.FC = () => {
 
   const handleJoystickMove = useCallback((x: number, y: number) => {
     const now = performance.now();
-    if (now - lastMoveTimeRef.current < 120) return; // 調整至 120ms 提升手感反應
+    if (now - lastMoveTimeRef.current < 120) return;
 
     const threshold = 0.45;
     let dx = 0;
@@ -421,7 +424,7 @@ const MainDashboard: React.FC = () => {
     }
   }, []);
 
-  // 最佳化：使用 useMemo 避免每次重新渲染重複遍歷歷史 Profile
+  // 避免重複遍歷計算 IQ 指標
   const cci = useMemo(() => getCompositeCognitiveIndex(), [getCompositeCognitiveIndex]);
 
   return (
@@ -501,7 +504,8 @@ const MainDashboard: React.FC = () => {
           )}
           <button
             onClick={handleSmartDrill}
-            className="px-1.5 py-0.5 rounded bg-purple-950/60 border border-purple-700/60 text-purple-300 font-bold hover:bg-purple-900 transition cursor-pointer outline-none focus-visible:ring-1 focus-visible:ring-purple-400"
+            disabled={isGenerating}
+            className="px-1.5 py-0.5 rounded bg-purple-950/60 border border-purple-700/60 text-purple-300 font-bold hover:bg-purple-900 disabled:opacity-50 transition cursor-pointer outline-none focus-visible:ring-1 focus-visible:ring-purple-400"
           >
             ⚡ {t.actions.smartDrill}
           </button>
@@ -530,12 +534,13 @@ const MainDashboard: React.FC = () => {
         <div className="flex items-center gap-1.5 flex-1 min-w-0">
           <select
             value={selectedType}
+            disabled={isGenerating}
             aria-label={isEn ? 'Select game type' : '選擇遊戲類型'}
             onChange={(e) => {
               setSelectedType(e.target.value);
               setPuzzleIndex(0);
             }}
-            className="flex-1 min-w-0 bg-slate-900 border border-slate-700 text-slate-200 text-xs rounded px-2 py-1 outline-none focus:border-indigo-500 cursor-pointer"
+            className="flex-1 min-w-0 bg-slate-900 border border-slate-700 text-slate-200 text-xs rounded px-2 py-1 outline-none focus:border-indigo-500 disabled:opacity-50 cursor-pointer"
           >
             {ALL_GAMES.map((game) => (
               <option key={game.id} value={game.id} className="bg-slate-900 text-slate-200">
@@ -546,12 +551,13 @@ const MainDashboard: React.FC = () => {
 
           <select
             value={currentLevel}
+            disabled={isGenerating}
             aria-label={isEn ? 'Select difficulty tier' : '選擇難度等級'}
             onChange={(e) => {
               setCurrentLevel(e.target.value as ExtendedTierKey);
               setPuzzleIndex(0);
             }}
-            className="w-28 shrink-0 bg-slate-900 border border-slate-700 text-cyan-300 text-xs font-bold rounded px-2 py-1 outline-none focus:border-cyan-500 cursor-pointer"
+            className="w-28 shrink-0 bg-slate-900 border border-slate-700 text-cyan-300 text-xs font-bold rounded px-2 py-1 outline-none focus:border-cyan-500 disabled:opacity-50 cursor-pointer"
           >
             {LEVEL_KEYS.map((tierKey) => (
               <option key={tierKey} value={tierKey} className="bg-slate-900 text-cyan-300">
@@ -573,7 +579,8 @@ const MainDashboard: React.FC = () => {
           <div className="mb-2 grid grid-cols-3 gap-1.5 w-full">
             <button
               onClick={handlePrevPuzzle}
-              className="py-2 bg-slate-900 hover:bg-slate-800 active:scale-95 text-slate-300 text-[10px] font-bold border border-slate-800 rounded-lg transition cursor-pointer shadow-sm outline-none focus-visible:ring-1 focus-visible:ring-slate-400"
+              disabled={isGenerating}
+              className="py-2 bg-slate-900 hover:bg-slate-800 disabled:opacity-50 active:scale-95 text-slate-300 text-[10px] font-bold border border-slate-800 rounded-lg transition cursor-pointer shadow-sm outline-none focus-visible:ring-1 focus-visible:ring-slate-400"
             >
               {t.actions.prev}
             </button>
@@ -591,7 +598,8 @@ const MainDashboard: React.FC = () => {
             </button>
             <button
               onClick={handleNextPuzzle}
-              className="py-2 bg-indigo-600 hover:bg-indigo-500 active:scale-95 text-white font-black text-[10px] border border-indigo-400 rounded-lg shadow-md transition cursor-pointer outline-none focus-visible:ring-1 focus-visible:ring-indigo-300"
+              disabled={isGenerating}
+              className="py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 active:scale-95 text-white font-black text-[10px] border border-indigo-400 rounded-lg shadow-md transition cursor-pointer outline-none focus-visible:ring-1 focus-visible:ring-indigo-300"
             >
               {t.actions.next}
             </button>
@@ -623,7 +631,8 @@ const MainDashboard: React.FC = () => {
             {currentLevel !== 'kids' && (
               <button
                 onClick={() => handleTierJump(-1)}
-                className="flex-1 py-1.5 bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-400 hover:text-slate-200 text-[10px] font-bold rounded-lg transition shadow flex items-center justify-center gap-1 cursor-pointer outline-none focus-visible:ring-1 focus-visible:ring-slate-400"
+                disabled={isGenerating}
+                className="flex-1 py-1.5 bg-slate-900 hover:bg-slate-800 disabled:opacity-50 border border-slate-700 text-slate-400 hover:text-slate-200 text-[10px] font-bold rounded-lg transition shadow flex items-center justify-center gap-1 cursor-pointer outline-none focus-visible:ring-1 focus-visible:ring-slate-400"
               >
                 <span>🔽</span>
                 <span>{t.actions.tierStepDown}</span>
@@ -632,7 +641,8 @@ const MainDashboard: React.FC = () => {
             {currentLevel !== 'ultimate' && (
               <button
                 onClick={() => handleTierJump(1)}
-                className="flex-1 py-1.5 bg-gradient-to-r from-indigo-950 via-purple-950 to-slate-900 hover:from-indigo-900 border border-indigo-700/60 text-indigo-300 text-[10px] font-bold rounded-lg transition shadow flex items-center justify-center gap-1 cursor-pointer outline-none focus-visible:ring-1 focus-visible:ring-indigo-400"
+                disabled={isGenerating}
+                className="flex-1 py-1.5 bg-gradient-to-r from-indigo-950 via-purple-950 to-slate-900 hover:from-indigo-900 disabled:opacity-50 border border-indigo-700/60 text-indigo-300 text-[10px] font-bold rounded-lg transition shadow flex items-center justify-center gap-1 cursor-pointer outline-none focus-visible:ring-1 focus-visible:ring-indigo-400"
               >
                 <span>🚀</span>
                 <span>{t.actions.tierStepUp}</span>
